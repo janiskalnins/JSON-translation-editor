@@ -4132,19 +4132,19 @@ class FontSettingsDialog(QDialog):
 
 
 class FilePropertiesDialog(QDialog):
-    """File -> Properties…: edit the sidecar header's language name and version and show read-only
-    facts about the open file. Culture is shown but never edited. A form dialog (no bands), same
+    """File -> Properties…: edit the sidecar header's language code, language name and version and
+    show read-only facts about the open file. A form dialog (no bands), same
     __init__ -> _build_ui() -> _load_values() shape as the other settings dialogs; the caller reads
-    display_language()/version_parts() after exec() and applies them."""
+    language_code()/display_language()/version_parts() after exec() and applies them."""
 
-    def __init__(self, culture: str, display_language: str, version: str, facts: FileFacts,
+    def __init__(self, language: str, display_language: str, version: str, facts: FileFacts,
                  has_unsaved: bool, parent=None):
         super().__init__(parent)
         self.setWindowTitle("File Properties")
         self.setMinimumWidth(420)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self._mw = parent
-        self._culture = culture
+        self._language = language
         self._stored_language = display_language
         self._stored_version = version
         self._stored_parts = parse_version_parts(version)
@@ -4164,14 +4164,20 @@ class FilePropertiesDialog(QDialog):
         form = QFormLayout(header)
         form.setSpacing(8)
         self._header_form = form
-        culture_row = QHBoxLayout()
-        culture_row.setSpacing(8)
+        code_row = QHBoxLayout()
+        code_row.setSpacing(8)
+        self._code_edit = QLineEdit()
+        self._code_edit.setPlaceholderText("e.g. es-AR")
+        self._code_edit.setMaxLength(35)
+        self._code_edit.textChanged.connect(self._on_code_changed)
         self._culture_label = QLabel()
-        self._culture_code = QLabel()
-        culture_row.addWidget(self._culture_label)
-        culture_row.addWidget(self._culture_code)
-        culture_row.addStretch()
-        form.addRow("Culture:", culture_row)
+        code_row.addWidget(self._code_edit)
+        code_row.addWidget(self._culture_label)
+        code_row.addStretch()
+        form.addRow("Language code:", code_row)
+        self._code_warning = QLabel("Use a code like es, es-AR or zh-Hant-TW.")
+        self._code_warning.setWordWrap(True)
+        form.addRow(QLabel(), self._code_warning)
 
         self._lang_edit = QLineEdit()
         self._lang_edit.setMaxLength(DISPLAY_LANGUAGE_MAX_LEN)
@@ -4234,16 +4240,7 @@ class FilePropertiesDialog(QDialog):
         self._ok_btn.setDefault(True)
 
     def _load_values(self):
-        name = describe_culture(self._culture)
-        if name:
-            self._culture_label.setText(name)
-            self._culture_code.setText(self._culture)
-        elif self._culture:
-            self._culture_label.setText(self._culture)
-            self._culture_code.setText("(unknown language)")
-        else:
-            self._culture_label.setText("—")
-
+        self._code_edit.setText(self._language)
         self._lang_edit.setText(self._stored_language)
         for spin, value in zip(self._version_spins, self._stored_parts or (0, 0, 0)):
             spin.setValue(value)
@@ -4291,10 +4288,24 @@ class FilePropertiesDialog(QDialog):
         self._version_touched = True
         self._validate()
 
+    def _on_code_changed(self, text: str):
+        code = text.strip()
+        name = describe_culture(code) if LANGUAGE_CODE_RE.match(code) else ""
+        self._culture_label.setText(name or ("(unknown language)" if code else ""))
+        self._validate()
+
+    def language_code(self) -> str:
+        return self._code_edit.text().strip()
+
     def _validate(self, *_args):
+        # Runs from the code edit's textChanged before the OK button is built.
+        if not hasattr(self, "_ok_btn"):
+            return
         version_ok = self._stored_parts is not None or self._version_touched
+        code_ok = bool(LANGUAGE_CODE_RE.match(self.language_code()))
         self._version_warning.setVisible(not version_ok)
-        self._ok_btn.setEnabled(bool(self._lang_edit.text().strip()) and version_ok)
+        self._code_warning.setVisible(not code_ok)
+        self._ok_btn.setEnabled(bool(self._lang_edit.text().strip()) and version_ok and code_ok)
 
     def eventFilter(self, obj, event):
         # '.' moves on to the next part, so typing 4.1.1220 across the three boxes just works.
@@ -4327,7 +4338,9 @@ class FilePropertiesDialog(QDialog):
             {_field_state_qss(t)}
         """)
         dim = f"color: {t['fg_dim']}; font-size: {pt_small}pt;"
-        self._culture_code.setStyleSheet(dim)
+        self._culture_label.setStyleSheet(dim)
+        self._code_warning.setStyleSheet(f"color: {t['text_warn']};")
+        self._code_edit.setFixedWidth(self._code_edit.fontMetrics().horizontalAdvance("zh-Hant-TW") + 24)
         self._unsaved_note.setStyleSheet(dim)
         self._version_warning.setStyleSheet(f"color: {t['text_warn']};")
         # One caption width for both group boxes, so their value columns line up.
@@ -9403,13 +9416,16 @@ class MainWindow(QMainWindow):
             return
         language = dlg.display_language()
         parts = dlg.version_parts()
+        code = dlg.language_code()
+        code_changed = code != self.target_culture
         language_changed = language != self.display_language
         # Compared as numbers, so a stored "04.1.1140" is not rewritten when nothing was changed.
         version_changed = parts != parse_version_parts(self.file_version)
-        if not (language_changed or version_changed):
+        if not (code_changed or language_changed or version_changed):
             return
         self.header = replace(
             self.header,
+            language=code if code_changed else self.header.language,
             language_name=language if language_changed else self.header.language_name,
             version=format_version(parts) if version_changed else self.header.version)
         self.is_modified = True

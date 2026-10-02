@@ -205,6 +205,21 @@ def check_dialog(failures):
         check(failures, f"{theme}: '.' jumps to the next box", spins[1].hasFocus())
         dlg.close()
 
+        code_dlg = _dialog(stub)
+        check(failures, f"{theme}: language code is editable and prefilled", code_dlg._code_edit.text() == "es",
+              repr(code_dlg._code_edit.text()))
+        code_dlg._code_edit.setText("es-AR")
+        check(failures, f"{theme}: language name follows the code", "Argentina" in code_dlg._culture_label.text(),
+              repr(code_dlg._culture_label.text()))
+        code_dlg._code_edit.setText("not a code!")
+        check(failures, f"{theme}: an invalid code disables OK", not code_dlg._ok_btn.isEnabled(), "OK enabled")
+        check(failures, f"{theme}: an invalid code shows the hint", not code_dlg._code_warning.isHidden(),
+              "hint hidden")
+        code_dlg._code_edit.setText(" pt-BR ")
+        check(failures, f"{theme}: language_code() returns the trimmed code", code_dlg.language_code() == "pt-BR",
+              repr(code_dlg.language_code()))
+        code_dlg.close()
+
         bad = _dialog(stub, version="4.1.1140.2")
         check(failures, f"{theme}: invalid stored version opens at 0.0.0",
               [s.value() for s in bad._version_spins] == [0, 0, 0])
@@ -217,19 +232,21 @@ def check_dialog(failures):
 
         missing = _dialog(stub, lang="", version="", culture="")
         check(failures, f"{theme}: missing everything blocks OK", not missing._ok_btn.isEnabled())
-        check(failures, f"{theme}: empty culture shows a dash", missing._culture_label.text() == "—",
+        check(failures, f"{theme}: empty code shows no language name", missing._culture_label.text() == "",
               missing._culture_label.text())
         missing.close()
         stub.close()
 
 
-def _run_dialog(win, language=None, parts=None, accept=True):
+def _run_dialog(win, language=None, parts=None, accept=True, code=None):
     """Open File -> Properties on *win* with exec() replaced: set the fields, then accept/cancel."""
     real_exec = jte.FilePropertiesDialog.exec
     seen = []
 
     def fake_exec(dlg):
         seen.append(dlg)
+        if code is not None:
+            dlg._code_edit.setText(code)
         if language is not None:
             dlg._lang_edit.setText(language)
         if parts is not None:
@@ -303,6 +320,13 @@ def check_main_window(failures):
     check(failures, "reopen",
           (header2.language, header2.language_name, header2.version) == ("es", "Español de España", "4.2.7"),
           repr(header2))
+
+    win.is_modified = False
+    _run_dialog(win, code="es-AR")
+    check(failures, "a changed code marks the file modified", win.is_modified, "not modified")
+    win._save()
+    check(failures, "the code is saved in the sidecar", jte.read_file_header(path).language == "es-AR",
+          repr(jte.read_file_header(path)))
 
     win.is_modified = False
     win.close()
