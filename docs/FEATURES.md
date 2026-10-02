@@ -135,7 +135,7 @@ The filter panel narrows the visible entries in real time. All filters apply sim
 | Status | Show only `New`, `Review`, `Complete`, or all |
 | Translator | Filter by translator name (partial match) |
 | Date range | Show entries modified within a date range — enable each bound with its checkbox. Dates are compared in the current regional format (see [Date Formatting](#date-formatting)). |
-| Check | **All**, or **Placeholder mismatch**: only entries whose `{placeholders}` differ between the source and the translation (see [Placeholder check](#placeholder-check)) |
+| Check | **All**, or **Placeholders**: only entries whose `{placeholders}` differ between the source and the translation (see [Placeholder check](#placeholder-check)) |
 
 The **From Date** defaults to 01.01.2025. When you change it, the value is saved to settings and restored on the next launch.
 
@@ -199,7 +199,7 @@ When **nothing is changed**, clicking Save (or navigating away) writes nothing �
 
 #### Placeholder check
 
-Many strings hold `{placeholders}` (`{name}`, `{n}`, `{}`) that the program fills in when it runs. A translation that drops or misspells one can break the string, so the Edit window compares the `{…}` tokens of the source and the translation as you type. When they differ, an amber line under the translation box says what is wrong, e.g. `Missing: {name} · Extra: {nme}`; it disappears as soon as they agree. Order and repeats do not matter, and text such as `<path>` is not a placeholder (it is translated on purpose). The check never blocks saving. To find every affected entry at once, set the filter bar's **Check** filter to **Placeholder mismatch**.
+Many strings hold `{placeholders}` (`{name}`, `{n}`, `{}`) that the program fills in when it runs. A translation that drops or misspells one can break the string, so the Edit window compares the `{…}` tokens of the source and the translation as you type. When they differ, an amber line under the translation box says what is wrong, e.g. `Missing: {name} · Extra: {nme}`; it disappears as soon as they agree. Order and repeats do not matter, and text such as `<path>` is not a placeholder (it is translated on purpose). The check never blocks saving. To find every affected entry at once, set the filter bar's **Check** filter to **Placeholders**.
 
 #### Navigation
 

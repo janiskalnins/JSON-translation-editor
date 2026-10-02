@@ -2088,7 +2088,7 @@ the file's language code, language name and version. It is JSON in a file whose 
   (`_placeholder_label`), hidden while the sets agree, refreshed on every keystroke, on loading an
   entry and on a theme switch. It never blocks Save.
 - **Filter bar:** the column that held "Is tablet" is **Check**, a `_WidePopupComboBox`
-  (`check_combo`) with *All* / *Placeholder mismatch*. `FilterEngine.check` is `"All"` or
+  (`check_combo`) with *All* / *Placeholders*. `FilterEngine.check` is `"All"` or
   `"placeholders"`; `matches()` rejects an entry whose `placeholder_warning()` is empty in that
   mode. It takes part in the active dot and border (`_refresh_active_indicators()`), is reset by
   Reset All with its signals blocked, and, like Status, is not persisted.
@@ -2351,18 +2351,16 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Pick Mode = **Contains** + In: = **Source**, restart app, verify both selections are restored from `settings.search`
 - [ ] Maximise the window — verify the Search field grows (most space) and Translator field grows (less space); other filter groups keep their natural width
 - [ ] Craft a sidecar with `"modified": "2016-05-06"` for one entry and open it — verify the Date column shows it in this machine's short-date format, a date-range filter that excludes May 6, 2016 hides the entry, and the file opens with no "Unsaved changes"
-- [ ] Craft a sidecar with `"modified": "06/05/2016"` (not ISO) — verify the warning "Metadata: 1 unrecognized date(s) (e.g. '06/05/2016')", the date shows as stored, and it is written back unchanged after an unrelated Save
-- [ ] Open a file with a mix of legacy date formats (trailing-period dot, slash, dash, 2-digit year) — verify the "Loaded: …" message reports the correct normalized/unrecognized counts, and the file shows "Unsaved changes" immediately after open; Save, reopen it, and verify the message no longer mentions "normalized" and the file does *not* show "Unsaved changes"
+- [ ] Craft a sidecar with `"modified": "06/05/2016"` (not ISO) — verify the warning "Metadata: 1 unrecognized date(s) (e.g. '06/05/2016')" and that the date shows as stored; after an unrelated Save, verify the sidecar holds it as an ISO date read in this machine's day-first or month-first order (`_date_to_sidecar()`), or as written when it cannot be parsed
 - [ ] Open **File → Restore from Backup…** — verify backup slots appear; restore a slot as copy and confirm the restored file opens
 - [ ] Open **View → Autosave & Backup…** — verify the Backup location dropdown appears (default "Next to file + Root"), persists after restart, and is disabled when backup itself is disabled
 - [ ] Set location mode to "Both", open a versioned JSON file (sidecar with a `version`) — verify independent backup slots exist at both the file's own folder and the editor root, each with its own complete `backup_info.json` (open one and confirm `version`/`culture`/`display_language`/`location`/`backup_key`/`trigger` are all populated)
 - [ ] Open two JSON files sharing a filename but with different sidecar `version` values — verify distinct backup keys (`<stem>__v<version1>` vs `<stem>__v<version2>`) and no interleaving
-- [ ] Open a file with no `Version` attribute — verify it still uses the plain `<stem>` key
+- [ ] Open a file whose sidecar has no `version` — verify it still uses the plain `<stem>` backup key
 - [ ] Set location mode to "Next to file only", point at a folder where writing fails (e.g. simulate by pre-creating a file at the `JSON_Translation_file_Backups` path) — verify the backup falls back to the root location with `is_fallback: true` recorded, and the info bar shows "Backup next to file: failed …" in red, then "Backup in root (fallback): saved at …" in amber
 - [ ] Open **File → Restore from Backup…** — verify the tree nests Filename → Version → timestamped slots with a working Location column, and the dialog renders in the active theme (not default Qt styling)
 - [ ] In **File → Restore from Backup…**, select a filename or version group header — verify **Delete Selected** stays disabled; select a leaf slot — verify it enables. Click it, decline the confirmation — verify nothing is deleted. Click it again, confirm — verify the slot's folder is gone from disk, the dialog stays open, and the tree refreshes without it (showing the "only backup remaining" warning first if it was the last slot for that file+location)
 - [ ] Restore a backup choosing "Overwrite original" over a file that currently exists — verify a new `pre_restore_safety`-triggered backup of the pre-overwrite state appears first
-- [ ] Restore a backup created before this change (old flat, unversioned folder) — verify it appears nested under "(unversioned)" and restores correctly
 - [ ] Change only "Keep last N backups" in **View → Autosave & Backup…**, Save, restart — verify `known_next_to_file_dirs` (populated by any earlier next-to-file backup) was not wiped
 - [ ] Open **File → Merge from File…** on a file with only additions — verify the dialog now appears (additions are reviewable, not auto-applied), every addition row defaults to Accept and green-tinted, and switching one to Reject before clicking Apply & Close excludes exactly that string
 - [ ] On the same additions-only merge, verify row coloring updates live: switching a row's Resolution combo between Accept and Reject immediately toggles its tint on/off in both dark and light theme
@@ -2373,7 +2371,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Merge a file with only metadata differences (same text, different modified date) — verify silent auto-resolve and a correct summary count
 - [ ] Merge a file with a genuine text conflict — verify `MergeConflictDialog` appears, the default selection matches the newer modified date, and both Keep-open/Keep-incoming choices apply correctly
 - [ ] Merge a file missing a string that exists locally — verify it appears as a deletion row defaulted to Keep, and choosing Delete removes it from the visible list with a clean save (no stray `<string>` element)
-- [ ] Merge a file with a different `Culture` — verify the warning dialog appears and Cancel truly aborts (open file completely unchanged)
+- [ ] Merge a file whose language code (sidecar `language`, else file name) differs — verify the warning dialog appears and Cancel truly aborts (open file completely unchanged)
 - [ ] Merge a file containing duplicate source strings — verify the error dialog names the correct duplicated text and no changes are made
 - [ ] Full merge round-trip: merge, resolve a mix of conflicts/deletions, Save, reopen the file — verify all resolutions persisted correctly and the file reloads without errors
 - [ ] Click the **Select** button of a column (Additions, Conflicts or Deletions) on a merge with 2+ rows of that type — verify ALL matching rows become selected (not just the last one), both via the button and by checking the table highlight
@@ -2444,9 +2442,9 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Run `python tests/check_file_properties.py` — verify `PASSED: 0 failure(s)` and exit code 0
 - [ ] Open `es.json`, **File → Properties…** — verify Language code reads "es" with "Spanish" beside it (guessed from the file name when the sidecar has none), Language name and Version boxes show the sidecar's values, and the facts (file, folder, size, modified, strings, status shares, untranslated) are filled in; hover the folder for the full path
 - [ ] In the Version boxes: click the arrows, scroll the wheel, and type — verify the first two stop at 99 and the last at 99999 (a sixth digit is refused), no value is ever shown as `04` or padded, and typing `7.2.15` from the first box moves on at each `.` (also the numeric keypad's decimal key)
-- [ ] Change the language and version, click OK — verify the info bar shows the new language and `v…` at once, the title shows ●, and "File properties updated" appears; Ctrl+S, reopen — verify the root tag holds the new values and nothing else in it moved
+- [ ] Change the language and version, click OK — verify the info bar shows the new language and `v…` at once, the title shows ●, and "File properties updated" appears; Ctrl+S, reopen — verify the sidecar holds the new `language`, `language_name` and `version` and the language file itself is untouched
 - [ ] Open File → Properties and click OK without changing anything, and separately Cancel after changing things — verify no ● and no change
-- [ ] Clear the language name — verify OK disables; hand-edit a file to `Version="4.1"` and open it — verify the amber warning, boxes at 0.0.0 and OK disabled until a box changes
+- [ ] Clear the language name — verify OK disables; hand-edit a sidecar to `"version": "4.1"` and open the file — verify the amber warning, boxes at 0.0.0 and OK disabled until a box changes
 - [ ] With no file open, **File → Properties…** — verify a warning and no dialog
 - [ ] Look at File → Properties in both themes at 10 and 14 pt — verify the version boxes show their full value next to visible arrows, the two groups' values line up, and nothing sits on a dark strip
 - [ ] Run `python tests/check_groupbox_title.py`, then again with `QT_QPA_PLATFORM=windows` set — verify `PASSED: 0 failure(s)` both times
@@ -2548,7 +2546,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] File → New Language… with a file open — verify a code prompt (a bad code such as `x` is refused), a Save dialog proposing `<code>.json` beside the open file, and afterwards the new file open with every entry `New`, every translation equal to its source, in the open file's key order and style, and a sidecar holding the code; try it with unsaved changes (Save writes them first; Discard copies the keys on disk, not the unsaved edits) and with no file open (warning)
 - [ ] File → Sync Keys from File… against a file with extra and missing keys — verify the dialog is titled "Sync Keys" with Additions and Deletions columns only and no auto-resolve checkbox, additions default to Accept and deletions to Keep, a deletion row shows its current value, Apply & Close inserts each new key after its nearest preceding reference key with value = key and status `New`, and "Synced keys: N added, M deleted" appears; against an identical-key file verify "Keys already match …" and no dialog
 - [ ] Edit an entry whose source holds `{name}`: remove it from the translation — verify an amber "Missing: {name}" line under the box that disappears when it is typed back, and that Save still works; add `{nme}` — verify "Extra: {nme}"
-- [ ] Set the filter bar's Check combo to **Placeholder mismatch** — verify only entries whose `{…}` sets differ remain, the combo gets the active border and dot, F5 behaviour matches the other filters, and Reset All clears it
+- [ ] Set the filter bar's Check combo to **Placeholders** — verify only entries whose `{…}` sets differ remain, the combo gets the active border and dot, F5 behaviour matches the other filters, and Reset All clears it
 - [ ] Start Robo-Translate on a New entry followed by a New entry whose translation was typed in (text differs from the key) and one still equal to its key — verify the typed one is skipped and the untranslated one is translated
 - [ ] File → Properties: change the language code to `es-AR` — verify "Spanish (Argentina)" beside the field, an invalid code (`x`, `es--AR`) shows the amber line and disables OK, and after Save the sidecar holds `"language": "es-AR"`
 - [ ] Paste text with leading/trailing spaces into the translation of an entry whose source starts or ends with a space — verify the status line says the paste was trimmed

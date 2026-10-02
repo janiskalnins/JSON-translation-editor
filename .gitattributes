@@ -8,6 +8,9 @@ tests/hooks/* text eol=lf
 *.json text eol=lf
 *.json.meta text eol=lf
 
+# Batch files stay CRLF whatever the cloner's autocrlf says (cmd.exe needs it)
+*.bat text eol=crlf
+
 # Kept out of GitHub's "Source code" zip/tar.gz (git archive): dev-only files.
 .claude         export-ignore
 .swarm          export-ignore
