@@ -281,6 +281,7 @@ def _surfaces(win):
     dels = [E("Delete me", "C", "Complete", "03.03.2024", "false", "Dzest")]
     fp = win.filter_panel
     yield "filter bar status combo", fp.status_combo, None
+    yield "filter bar check combo", fp.check_combo, None
     yield "filter bar mode combo", fp.mode_combo, None
     yield "filter bar field combo", fp.field_combo, None
     yield "filter bar date from", fp.date_from, None

@@ -580,5 +580,29 @@ class RoboSkipTests(unittest.TestCase):
         self.assertEqual(started, ["D"])
 
 
+
+class PlaceholderLabelTests(unittest.TestCase):
+    def _dialog(self, win):
+        return jte.EditDialog(win.model, 0, win.settings.get_font(), shortcuts={},
+                              target_culture="es", transl_cfg={}, parent=win)
+
+    def test_label_shows_a_missing_placeholder(self):
+        path = cs.write_pair(cs.temp_dir(), "es", {"{name} saved": "{name} guardado"})
+        with cs.open_window(path) as (win, _modals):
+            dlg = self._dialog(win)
+            dlg.trans_edit.setPlainText("guardado")
+            text = dlg._placeholder_label.text()
+            dlg.reject()
+        self.assertEqual(text, "Missing: {name}")
+
+    def test_label_is_hidden_when_placeholders_match(self):
+        path = cs.write_pair(cs.temp_dir(), "es", {"{name} saved": "{name} guardado"})
+        with cs.open_window(path) as (win, _modals):
+            dlg = self._dialog(win)
+            hidden = dlg._placeholder_label.isHidden()
+            dlg.reject()
+        self.assertTrue(hidden)
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))

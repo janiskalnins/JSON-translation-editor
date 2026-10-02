@@ -117,5 +117,28 @@ class NoTabletColumnTests(unittest.TestCase):
         self.assertNotIn("Tablet", jte.HEADERS)
 
 
+
+class PlaceholderTests(unittest.TestCase):
+    def test_warning_text(self):
+        cases = {
+            "same set": ("Path {n}", "Trazado {n}", ""),
+            "missing": ("{name} saved", "guardado", "Missing: {name}"),
+            "extra": ("saved", "{nme} guardado", "Extra: {nme}"),
+            "both": ("{a} {b}", "{a} {c}", "Missing: {b} · Extra: {c}"),
+            "order and repeats ignored": ("{a} {b}", "{b} {a} {a}", ""),
+            "angle brackets are not placeholders": ("<path>", "<trazado>", ""),
+            "empty braces count": ("{}", "", "Missing: {}"),
+        }
+        for label, (source, translation, expected) in cases.items():
+            with self.subTest(label):
+                self.assertEqual(jte.placeholder_warning(source, translation), expected)
+
+    def test_filter_keeps_only_mismatches(self):
+        engine = jte.FilterEngine()
+        engine.check = "placeholders"
+        entries = [cs.make_entry(name="{n} a", text="{n} b"), cs.make_entry(name="{n} c", text="d")]
+        self.assertEqual([e.text for e in entries if engine.matches(e)], ["d"])
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))

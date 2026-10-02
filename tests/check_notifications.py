@@ -24,7 +24,7 @@
     nothing. At startup these play after the recovery dialog, which is still shown, and before
     the translator message.
 
-A real MainWindow from a throwaway folder on a 1920 x 1080 offscreen screen, with the startup
+A real MainWindow from a throwaway folder on a 2560 x 1080 offscreen screen, with the startup
 modals patched and the glyph cache isolated. Timing tests patch NOTIFY_MIN_TURN_MS to 100 ms.
 
 Run:  python tests/check_notifications.py      (exit code 0 = all passed)
@@ -42,11 +42,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SCRATCH = Path(tempfile.mkdtemp(prefix="xte_notifications_"))
-# A 1920 x 1080 offscreen screen: on the default 800 x 600 one the 1280 x 760 main window, and
-# with it the history button, would reach below the screen. Qt splits the platform string on
+# A 2560 x 1080 offscreen screen: on the default 800 x 600 one the 1280 x 760 main window, and
+# with it the history button, would reach below the screen; offscreen text is drawn as boxes, so
+# the filter bar makes the window ~2100 px wide and a 1920 px screen cut the history popup off. Qt splits the platform string on
 # ':', so the config path is relative: the script runs from SCRATCH.
 (SCRATCH / "screen.json").write_text(json.dumps({"screens": [{
-    "name": "check", "x": 0, "y": 0, "width": 1920, "height": 1080,
+    "name": "check", "x": 0, "y": 0, "width": 2560, "height": 1080,
     "logicalDpi": 96, "logicalBaseDpi": 96, "dpr": 1}]}), encoding="utf-8")
 os.chdir(SCRATCH)
 os.environ["QT_QPA_PLATFORM"] = "offscreen:configfile=screen.json"

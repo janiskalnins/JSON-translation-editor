@@ -1981,12 +1981,35 @@ class TranslationModel(QAbstractTableModel):
 #  FILTER ENGINE
 # ══════════════════════════════════════════════════════════════
 
+# A {placeholder} the program fills in at run time ({name}, {n}, {}); a translation that drops or
+# misspells one can break the string. <path>-style text is translated on purpose, so it does not count.
+_PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
+
+
+def placeholder_mismatch(source: str, translation: str) -> Tuple[List[str], List[str]]:
+    """(missing, extra): the {…} tokens only in the source and only in the translation, sorted.
+    Compared as sets, so order and repeats do not matter."""
+    src, tr = set(_PLACEHOLDER_RE.findall(source)), set(_PLACEHOLDER_RE.findall(translation))
+    return sorted(src - tr), sorted(tr - src)
+
+
+def placeholder_warning(source: str, translation: str) -> str:
+    missing, extra = placeholder_mismatch(source, translation)
+    parts = []
+    if missing:
+        parts.append("Missing: " + " ".join(missing))
+    if extra:
+        parts.append("Extra: " + " ".join(extra))
+    return " · ".join(parts)
+
+
 class FilterEngine:
     def __init__(self):
         self.search_text = ""
         self.search_field = "both"          # "source", "translated", "both"
         self.search_mode  = "starts_with"   # "starts_with" | "contains"
         self.status = "All"
+        self.check = "All"                  # "All" | "placeholders"
         self.translator = ""
         self.date_from: Optional[date] = None
         self.date_to:   Optional[date] = None
@@ -2041,6 +2064,9 @@ class FilterEngine:
             except Exception:
                 pass  # malformed date — don't filter it out
 
+        # Check
+        if self.check == "placeholders" and not placeholder_warning(entry.name, entry.text):
+            return False
 
         return True
 
@@ -2247,6 +2273,16 @@ class FilterPanel(QFrame):
         date_row.addWidget(self.date_to)
         self._add_column(outer, "date", "Date range", date_row)
 
+        # ── Check column ──────────────────────────
+        self.check_combo = _WidePopupComboBox()
+        self.check_combo.addItems(["All", "Placeholder mismatch"])
+        self.check_combo.setItemData(
+            1, "Entries whose {placeholders} differ between source and translation", Qt.ToolTipRole)
+        self.check_combo.currentIndexChanged.connect(self._on_filter)
+        check_row = QHBoxLayout()
+        check_row.addWidget(self.check_combo)
+        self._add_column(outer, "check", "Check", check_row)
+
         # ── Reset column ──────────────────────────
         # Icon set by fit_to_font(). The leading space is the icon gap: Fusion leaves ~1 px, and a
         # space scales with the font.
@@ -2260,8 +2296,8 @@ class FilterPanel(QFrame):
         # Every control fills the shared control row (see the layout comment above): a vertical
         # Expanding policy makes the row's tallest natural height the height of all of them.
         for w in (self.search_edit, self.clear_btn, self.mode_combo, self.field_combo,
-                  self.status_combo, self.user_edit, self.date_from, self.date_to,
-                  self.reset_btn):
+                  self.status_combo, self.check_combo, self.user_edit, self.date_from,
+                  self.date_to, self.reset_btn):
             policy = w.sizePolicy()
             policy.setVerticalPolicy(QSizePolicy.Expanding)
             w.setSizePolicy(policy)
@@ -2272,7 +2308,7 @@ class FilterPanel(QFrame):
         padding and drop-down strip already match the new font. Fixed pixel widths
         clipped the dates from 12 pt up ("01.01.20") and left Mode 40-70 px wider than its text."""
         fm = QFontMetrics(font)
-        for combo in (self.mode_combo, self.field_combo, self.status_combo):
+        for combo in (self.mode_combo, self.field_combo, self.status_combo, self.check_combo):
             items = [combo.itemText(i) for i in range(combo.count())]
             combo.setFixedWidth(_width_for_text(combo, fm, items))
         for picker in (self.date_from, self.date_to):
@@ -2350,6 +2386,9 @@ class FilterPanel(QFrame):
         self.status_combo.blockSignals(True)
         self.status_combo.setCurrentIndex(0)
         self.status_combo.blockSignals(False)
+        self.check_combo.blockSignals(True)
+        self.check_combo.setCurrentIndex(0)
+        self.check_combo.blockSignals(False)
         self.user_edit.blockSignals(True)
         self.user_edit.clear()
         self.user_edit.blockSignals(False)
@@ -2368,6 +2407,7 @@ class FilterPanel(QFrame):
         e.search_field = ["both", "source", "translated"][self.field_combo.currentIndex()]
         e.search_mode  = "starts_with" if self.mode_combo.currentIndex() == 0 else "contains"
         e.status       = self.status_combo.currentText()
+        e.check        = "placeholders" if self.check_combo.currentIndex() == 1 else "All"
         e.translator   = self.user_edit.text().strip()
         e.date_from    = (self.date_from.date().toPython() if self.date_from_chk.isChecked() else None)
         e.date_to      = (self.date_to.date().toPython()   if self.date_to_chk.isChecked()   else None)
@@ -2384,6 +2424,7 @@ class FilterPanel(QFrame):
         state = {
             "search":     (bool(e.search_text), [self.search_edit]),
             "status":     (e.status != "All", [self.status_combo]),
+            "check":      (e.check != "All", [self.check_combo]),
             "translator": (bool(e.translator), [self.user_edit]),
             "date":       (bool(date_fields), date_fields),
         }
@@ -2392,7 +2433,7 @@ class FilterPanel(QFrame):
             self._active_dots[key].setVisible(active)
             if active:
                 marked.update(id(w) for w in fields)
-        for w in (self.search_edit, self.status_combo, self.user_edit,
+        for w in (self.search_edit, self.status_combo, self.check_combo, self.user_edit,
                   self.date_from, self.date_to):
             self._set_active(w, id(w) in marked)
 
@@ -4869,6 +4910,7 @@ class EditDialog(QDialog):
         self.user_edit.textChanged.connect(self._on_translator_typed)
         # Live character-count indicator
         self.trans_edit.textChanged.connect(self._update_char_count)
+        self.trans_edit.textChanged.connect(self._update_placeholder_warning)
         self._update_char_count()
 
     # ------------------------------------------------------------------
@@ -5180,6 +5222,7 @@ class EditDialog(QDialog):
         self.auto_date_info.setStyleSheet(
             f"color: {t['dlg_info_fg']}; padding: 2px 0;")
         self._transl_status.setStyleSheet(f"color: {t['fg_dim']};")
+        self._placeholder_label.setStyleSheet(f"color: {t['text_warn']};")
         self.date_edit.fit_to_font(QFontMetrics(self.app_font))
         # Re-color the character-count indicator on theme switch.
         if hasattr(self, "_char_count_label"):
@@ -5249,6 +5292,11 @@ class EditDialog(QDialog):
             "Red   = exceeds concern threshold.")
         tr_bar.addWidget(self._char_count_label)
         tg.addLayout(tr_bar)
+        self._placeholder_label = QLabel("")
+        self._placeholder_label.setWordWrap(True)
+        self._placeholder_label.setFont(self.app_font)
+        self._placeholder_label.hide()
+        tg.addWidget(self._placeholder_label)
         main.addWidget(tr_grp)
 
         # Meta row
@@ -5462,6 +5510,13 @@ class EditDialog(QDialog):
         # the very first time _build() is called from __init__.
         if hasattr(self, "_char_count_label"):
             self._update_char_count()
+        if hasattr(self, "_placeholder_label"):
+            self._update_placeholder_warning()
+
+    def _update_placeholder_warning(self):
+        text = placeholder_warning(self.entry.name, self.trans_edit.toPlainText())
+        self._placeholder_label.setText(text)
+        self._placeholder_label.setVisible(bool(text))
 
     def _save(self):
         self._commit_current()
