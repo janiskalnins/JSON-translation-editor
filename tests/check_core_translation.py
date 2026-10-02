@@ -378,5 +378,18 @@ class NoConsoleWindowTests(unittest.TestCase):
         self.assertEqual(calls, [subprocess.CREATE_NO_WINDOW])
 
 
+class PlaceholderPromptTests(unittest.TestCase):
+    def test_claude_prompt_asks_to_keep_placeholders(self):
+        sent = {}
+
+        def fake_urlopen(req, timeout=None):
+            sent["body"] = json.loads(req.data)
+            return _Response({"content": [{"text": "x"}]})
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            jte._translate_claude("{name} saved", "es", "key", "model")
+        self.assertIn(jte._PLACEHOLDER_PROMPT, sent["body"]["messages"][0]["content"])
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))

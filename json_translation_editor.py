@@ -2869,6 +2869,10 @@ def _match_glossary(text: str, glossary: List[GlossaryEntry]) -> List[GlossaryEn
     return matched
 
 
+_PLACEHOLDER_PROMPT = ("Keep every {placeholder} (text in curly braces) and every line break exactly "
+                       "as in the source.  ")
+
+
 def _format_glossary_prompt_block(matched: List[GlossaryEntry]) -> str:
     """Build the extra prompt text for matched glossary entries, or ''
     if nothing matched (so the prompt is byte-identical to today's when a
@@ -2902,6 +2906,7 @@ def _translate_claude(text: str, target_culture: str, api_key: str, model: str,
         f"Translate the following UI string from English to the language with "
         f"BCP-47 code '{lang_tag}'.  "
         f"Return ONLY the translated text — no explanation, no quotes, no commentary."
+        f"  {_PLACEHOLDER_PROMPT}"
         f"{_format_glossary_prompt_block(glossary or [])}\n\n"
         f"{text}"
     )
@@ -3406,6 +3411,7 @@ class ClaudeSubscriptionSession:
             f"Translate the following UI string from English to the language "
             f"with BCP-47 code '{target_culture}'.  "
             f"Return ONLY the translated text — no explanation, no quotes, no commentary."
+            f"  {_PLACEHOLDER_PROMPT}"
             f"{_format_glossary_prompt_block(glossary or [])}\n\n"
             f"{text}"
         )
@@ -4886,12 +4892,16 @@ class _DatePickerField(QDateEdit):
 class PlainPasteTextEdit(QTextEdit):
     """QTextEdit that always pastes as plain text with trimmed whitespace."""
 
+    paste_trimmed = Signal()   # a paste lost leading or trailing whitespace
+
     def insertFromMimeData(self, source):
         """Strip rich text and surrounding whitespace from any paste."""
-        text = source.text()
-        text = text.strip()
+        raw = source.text()
+        text = raw.strip()
         if text:
             self.insertPlainText(text)
+        if text != raw:
+            self.paste_trimmed.emit()
 
 class EditDialog(QDialog):
     def __init__(self, model, row_index: int, app_font: QFont,
@@ -4956,6 +4966,7 @@ class EditDialog(QDialog):
         self.user_edit.textChanged.connect(self._on_translator_typed)
         # Live character-count indicator
         self.trans_edit.textChanged.connect(self._update_char_count)
+        self.trans_edit.paste_trimmed.connect(self._on_paste_trimmed)
         self.trans_edit.textChanged.connect(self._update_placeholder_warning)
         self._update_char_count()
 
@@ -5597,6 +5608,11 @@ class EditDialog(QDialog):
     # ------------------------------------------------------------------
     # Character-count length indicator
     # ------------------------------------------------------------------
+    def _on_paste_trimmed(self):
+        # A key like " (copy)" starts with a space the program relies on; a trimmed paste drops it.
+        if self.entry.name != self.entry.name.strip():
+            self._transl_status.setText("Note: the source starts or ends with a space; the paste was trimmed.")
+
     def _update_char_count(self):
         """Update the source-vs-translated character-count label.
 

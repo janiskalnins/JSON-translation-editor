@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QMimeData, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
@@ -713,6 +713,20 @@ class NewLanguageTests(unittest.TestCase):
         with cs.open_window(path, text="lv", save_path=str(path)) as (win, modals):
             win._new_language()
         self.assertEqual(modals.titles("warning"), ["New Language"])
+
+
+class TrimmedPasteTests(unittest.TestCase):
+    def test_trimmed_paste_is_noted_when_the_source_has_outer_spaces(self):
+        path = cs.write_pair(cs.temp_dir(), "es", {" (copy)": " (copia)"})
+        with cs.open_window(path) as (win, _modals):
+            dlg = jte.EditDialog(win.model, 0, win.settings.get_font(), shortcuts={},
+                                 target_culture="es", transl_cfg={}, parent=win)
+            mime = QMimeData()
+            mime.setText(" (copia) ")
+            dlg.trans_edit.insertFromMimeData(mime)
+            status = dlg._transl_status.text()
+            dlg.reject()
+        self.assertIn("trimmed", status)
 
 
 if __name__ == "__main__":
