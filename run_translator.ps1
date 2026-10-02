@@ -115,7 +115,7 @@ $appArgs   = $args   # defined early -- used by both fast and full paths
 
 # == ASCII banner ===============================================================
 # Best-effort: a missing/unreadable art file just means no banner, never an error.
-$AsciiArtPath = Join-Path $ScriptDir "Resources\xml_translation_editor_ascii.txt"
+$AsciiArtPath = Join-Path $ScriptDir "Resources\json_translation_editor_ascii.txt"
 $script:_asciiBanner = $null
 if (Test-Path $AsciiArtPath) {
     try { $script:_asciiBanner = @(Get-Content $AsciiArtPath -ErrorAction Stop) } catch { $script:_asciiBanner = $null }

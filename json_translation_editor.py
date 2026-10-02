@@ -80,8 +80,8 @@ def _resource_path(*parts: str) -> Path:
     return base.joinpath(*parts)
 
 
-APP_ICON_PATH = _resource_path("Resources", "xml_translation_editor.ico")
-APP_LOGO_PATH = _resource_path("Resources", "xml_translation_editor.png")
+APP_ICON_PATH = _resource_path("Resources", "json_translation_editor.ico")
+APP_LOGO_PATH = _resource_path("Resources", "json_translation_editor.png")
 
 
 def _log_error(context: str, exc: BaseException) -> None:

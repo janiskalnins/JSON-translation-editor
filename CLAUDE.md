@@ -118,6 +118,11 @@ Current contents (the offscreen checks moved to [tests/](#tests-folder)):
   `--old-readme <file>` it also lists old README headings that went missing. Run it after any
   edit that adds, renames or moves a heading in those files. `test_check_doc_links.py` is its
   unit test.
+- **`make_splash.py`** — draws `Resources/json_translation_editor_splash.png` (460 × 320): the
+  logo, the app name and "Starting…" on the dark theme's background, in Segoe UI. The layout
+  was measured from the XML editor's hand-made splash; rendering its old title
+  (`render("XML Translation Editor")`) reproduces that image pixel for pixel. Pillow only, and
+  the Windows fonts. Re-run it if the app name or logo changes, then rebuild the exe.
 
 **How to verify after any change to `build_user_guide.py`:** rasterize pages with PyMuPDF/`fitz`
 for a visual check (no page-image viewer is otherwise available in this
@@ -977,7 +982,7 @@ This is a separate concern from `_table_stack`'s own table/empty-filter-label
 switching (`_update_count()`) — that one only matters while the editor page
 (index 1) is showing.
 
-`WelcomeScreen`'s centered logo uses `APP_LOGO_PATH` (`Resources/xml_translation_editor.png`),
+`WelcomeScreen`'s centered logo uses `APP_LOGO_PATH` (`Resources/json_translation_editor.png`),
 resolved via the same `_resource_path()` helper as `APP_ICON_PATH` — relative to the script's
 own directory (or PyInstaller's `_MEIPASS` when frozen), never the current working directory,
 so it renders correctly regardless of which folder the app is launched from. The `.ico` and
@@ -2113,7 +2118,7 @@ while the application is running.
 
 ### Application icon
 
-`Resources\xml_translation_editor.ico` is used in two independent places, each solving a
+`Resources\json_translation_editor.ico` is used in two independent places, each solving a
 different problem:
 
 - **`build_exe.ps1`** passes it to PyInstaller as `--icon $IconPath`, which sets the
@@ -2132,13 +2137,13 @@ different problem:
 to the script's own directory. This matters because a onefile build extracts bundled data
 to a temp dir at runtime, not next to the exe — so for `QIcon()` to find the icon inside
 the frozen exe, `build_exe.ps1` must also bundle it via `--add-data "$IconPath;Resources"`
-(same relative `Resources/xml_translation_editor.ico` path `_resource_path()` expects).
+(same relative `Resources/json_translation_editor.ico` path `_resource_path()` expects).
 Without that `--add-data` flag, the frozen exe's window icon would silently fall back to
 default even though the exe's own file icon (set via `--icon`) is correct — the two flags
 look redundant but serve different consumers (Explorer vs. `QIcon` at runtime).
 
 **The Welcome screen's logo needs the identical treatment, separately.**
-`APP_LOGO_PATH` (`Resources/xml_translation_editor.png`, see
+`APP_LOGO_PATH` (`Resources/json_translation_editor.png`, see
 [Welcome screen / editor page switch](#welcome-screen--editor-page-switch)) is resolved through the same
 `_resource_path()`/`_MEIPASS` mechanism as `APP_ICON_PATH`, but `--icon` only ever
 bundles the `.ico` — it says nothing about the `.png`. `build_exe.ps1` therefore
@@ -2171,7 +2176,7 @@ or Qt exist, so a normal in-app `QSplashScreen` can never cover it. PyInstaller'
 native `--splash <image>` flag solves exactly this: a small bundled Tcl/Tk runtime
 shows the image immediately, while extraction and interpreter startup happen behind
 it. `build_exe.ps1` (and `build_exe.bat`'s direct-Python fallback) pass
-`--splash "Resources\xml_translation_editor_splash.png"`; the image is embedded
+`--splash "Resources\json_translation_editor_splash.png"`; the image is embedded
 directly into the bootloader, so — unlike the icon/logo — no `--add-data` is needed
 for it, and end users never need Tcl/Tk installed themselves. `main()` closes it with
 a best-effort `import pyi_splash; pyi_splash.close()` right after `win.show()`, so
@@ -2185,7 +2190,7 @@ requires a text position/color to be pre-configured, which in turn requires a
 maintained `.spec` file — a structural change this build script deliberately avoids
 (it drives PyInstaller with pure CLI flags and deletes any `.spec` file at the start
 of every build). Any messaging has to be baked into the image itself instead; the
-current asset bakes in "Starting…" beneath the app name.
+current asset bakes in "Starting…" beneath the app name. `Tools/make_splash.py` draws it.
 
 **Tcl/Tk is a build-machine-only requirement, and it's non-fatal if missing.** Unlike
 the icon/logo (which just degrade gracefully if their files are missing), passing
@@ -2501,11 +2506,11 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Run the built `dist\JSONTranslationEditor.exe` and close any open file so the Welcome screen shows — verify the centered logo renders (not a blank space), confirming the `.png`'s own `--add-data` bundling also reaches `_MEIPASS` in the frozen exe
 - [ ] After `build_exe.ps1` completes, verify `dist\User_Guide.pdf` exists alongside the `.exe`
 - [ ] After `build_exe.ps1` completes, verify `dist\JSONTranslationEditor.exe` is ~170 MB (not ~360 MB) and that `python -m PyInstaller.utils.cliutils.archive_viewer -l dist\JSONTranslationEditor.exe` lists no `WebEngine` entries — confirms `--collect-all PySide6` hasn't crept back into the build command
-- [ ] Temporarily rename `Resources\xml_translation_editor.ico`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built app still runs (just without a custom icon); restore the file afterward
-- [ ] Temporarily rename `Resources\xml_translation_editor.png`, run `build_exe.ps1` — verify it completes with a `[WARN]`, the exe still builds, and the Welcome screen just shows no logo; restore the file afterward
+- [ ] Temporarily rename `Resources\json_translation_editor.ico`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built app still runs (just without a custom icon); restore the file afterward
+- [ ] Temporarily rename `Resources\json_translation_editor.png`, run `build_exe.ps1` — verify it completes with a `[WARN]`, the exe still builds, and the Welcome screen just shows no logo; restore the file afterward
 - [ ] Temporarily rename `Resources\User_Guide.pdf`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and `dist\` simply has no `User_Guide.pdf`; restore the file afterward
 - [ ] Run the built `dist\JSONTranslationEditor.exe` — verify the splash screen (logo, app name, "Starting…") appears promptly and stays visible through the onefile unpacking delay, then closes cleanly with no blank gap right as the main window (or Welcome screen) appears
-- [ ] Temporarily rename `Resources\xml_translation_editor_splash.png`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built exe still launches normally with no splash screen; restore the file afterward
+- [ ] Temporarily rename `Resources\json_translation_editor_splash.png`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built exe still launches normally with no splash screen; restore the file afterward
 - [ ] Launch `python json_translation_editor.py` directly from source — verify no error or delay from the splash-close code (`pyi_splash` isn't present when unfrozen, so it's a silent no-op)
 - [ ] Open a large JSON file — verify the window is interactive immediately (scroll/click the table with no freeze) and the "Backup: …" message arrives a moment later rather than before the table paints
 - [ ] Restore a backup choosing "Overwrite original" — verify the restore still completes correctly and a `pre_restore_safety`-triggered slot capturing the pre-overwrite state still appears

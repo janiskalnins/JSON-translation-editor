@@ -294,8 +294,8 @@ echo   [ OK ] PyInstaller available.
 :: with a working window icon and Welcome-screen logo. Non-fatal if either
 :: file is missing -- the build just proceeds without it.
 set "ICON_ARGS="
-if exist "Resources\xml_translation_editor.ico" set ICON_ARGS=--icon "Resources\xml_translation_editor.ico" --add-data "Resources\xml_translation_editor.ico;Resources"
-if exist "Resources\xml_translation_editor.png" set ICON_ARGS=%ICON_ARGS% --add-data "Resources\xml_translation_editor.png;Resources"
+if exist "Resources\json_translation_editor.ico" set ICON_ARGS=--icon "Resources\json_translation_editor.ico" --add-data "Resources\json_translation_editor.ico;Resources"
+if exist "Resources\json_translation_editor.png" set ICON_ARGS=%ICON_ARGS% --add-data "Resources\json_translation_editor.png;Resources"
 
 :: Splash screen: same non-fatal reasoning as the icon/logo above, plus a
 :: Tcl/Tk check -- PyInstaller's --splash is rendered by a small bundled
@@ -304,7 +304,7 @@ if exist "Resources\xml_translation_editor.png" set ICON_ARGS=%ICON_ARGS% --add-
 :: gracefully on their own). End users never need Tcl/Tk themselves.
 set "SPLASH_ARGS="
 "%PYTHON%" -c "import tkinter" >nul 2>&1
-if not errorlevel 1 if exist "Resources\xml_translation_editor_splash.png" set SPLASH_ARGS=--splash "Resources\xml_translation_editor_splash.png"
+if not errorlevel 1 if exist "Resources\json_translation_editor_splash.png" set SPLASH_ARGS=--splash "Resources\json_translation_editor_splash.png"
 
 echo.
 echo   [ .. ] Running PyInstaller build...

@@ -36,7 +36,7 @@ set "PS1=%LAUNCH_DIR%run_translator.ps1"
 set "APP=%LAUNCH_DIR%json_translation_editor.py"
 set "CACHE_JSON=%LAUNCH_DIR%launcher_cache.json"
 set "CACHE_DATA=%LAUNCH_DIR%bat_launcher_cache.txt"
-set "ASCII_ART=%LAUNCH_DIR%Resources\xml_translation_editor_ascii.txt"
+set "ASCII_ART=%LAUNCH_DIR%Resources\json_translation_editor_ascii.txt"
 set "ERRCODE=0"
 
 :: -- Resize console for the ASCII banner (skip under Windows Terminal, which --

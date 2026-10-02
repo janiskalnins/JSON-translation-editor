@@ -54,9 +54,9 @@ function Write-Sep   {           Write-Host "  ---------------------------------
 # ==============================================================================
 $APP_SCRIPT  = "json_translation_editor.py"
 $APP_NAME    = "JSONTranslationEditor"
-$ICON_FILE   = "Resources\xml_translation_editor.ico"
-$LOGO_FILE   = "Resources\xml_translation_editor.png"
-$SPLASH_FILE = "Resources\xml_translation_editor_splash.png"
+$ICON_FILE   = "Resources\json_translation_editor.ico"
+$LOGO_FILE   = "Resources\json_translation_editor.png"
+$SPLASH_FILE = "Resources\json_translation_editor_splash.png"
 $USER_GUIDE_FILE = "Resources\User_Guide.pdf"
 $DIST_DIR    = "dist"
 $BUILD_DIR   = "build"

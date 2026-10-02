@@ -141,7 +141,7 @@ The build script performs a full pre-flight check before building:
 2. Verifies Python ≥ 3.9.
 3. Upgrades `pip` if needed — uses `importlib.metadata` for reliable package detection.
 4. Checks and installs `setuptools`, `wheel`, `PySide6`, `pyinstaller-hooks-contrib`, `PyInstaller`, and Windows runtime dependencies (`altgraph`, `pefile`, `pywin32-ctypes`).
-5. Runs PyInstaller `--onefile --windowed` to produce a single portable `.exe` in the `dist\` subfolder, bundling the application icon and the Welcome-screen logo (`Resources\xml_translation_editor.ico` / `.png`) into the exe itself, plus a startup splash screen (`Resources\xml_translation_editor_splash.png`) if the build machine has Tcl/Tk available.
+5. Runs PyInstaller `--onefile --windowed` to produce a single portable `.exe` in the `dist\` subfolder, bundling the application icon and the Welcome-screen logo (`Resources\json_translation_editor.ico` / `.png`) into the exe itself, plus a startup splash screen (`Resources\json_translation_editor_splash.png`) if the build machine has Tcl/Tk available.
 6. Verifies the output file exists, copies `Resources\User_Guide.pdf` next to it in `dist\` (best-effort — a missing guide only logs a warning), and offers to launch it for a smoke test.
 
 The script handles non-interactive environments (scheduled tasks, CI) without throwing errors.
