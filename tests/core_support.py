@@ -8,6 +8,7 @@ real settings file, backups or cache.
 """
 
 import html
+import json
 import os
 import shutil
 import sys
@@ -95,6 +96,27 @@ def assert_xml_intact(tc: unittest.TestCase, path: Path, expected_names: List[st
     duplicates = sorted({n for n in names if names.count(n) > 1})
     tc.assertEqual(duplicates, [], f"{path.name} holds a name twice")
     tc.assertEqual(names, list(expected_names))
+
+
+def json_doc(pairs, indent: Optional[str] = " ", newline: str = "\n", bom: bool = False) -> bytes:
+    """A language file as bytes, written with the json module (not the app), in the given style.
+    *pairs* is a dict or a list of (key, value)."""
+    text = json.dumps(dict(pairs), ensure_ascii=False, indent=indent) + "\n"
+    data = text.replace("\n", newline).encode("utf-8")
+    return b"\xef\xbb\xbf" + data if bom else data
+
+
+def assert_json_intact(tc: unittest.TestCase, path: Path, expected_names: List[str]) -> None:
+    """The independent judge of a saved language file: the json module must read one object whose
+    keys are exactly *expected_names*, in order, none twice, every value a string."""
+    try:
+        pairs = json.loads(path.read_bytes().decode("utf-8-sig"), object_pairs_hook=list)
+    except ValueError as e:
+        tc.fail(f"{path.name} is not valid JSON: {e}")
+    names = [k for k, _v in pairs]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    tc.assertEqual((duplicates, all(isinstance(v, str) for _k, v in pairs), names),
+                   ([], True, list(expected_names)))
 
 
 # ── Qt helpers ──────────────────────────────────────────────────────────────

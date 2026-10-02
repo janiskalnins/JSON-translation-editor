@@ -1455,6 +1455,97 @@ def describe_culture(culture: str) -> str:
     return f"{language} ({QLocale.territoryToString(locale.territory())})"
 
 
+# ══════════════════════════════════════════════════════════════
+#  JSON LANGUAGE FILE
+# ══════════════════════════════════════════════════════════════
+
+_BOM = b"\xef\xbb\xbf"
+_FIRST_KEY_INDENT_RE = re.compile(r'\{\r?\n([ \t]+)"')
+# A \uXXXX escape of a non-ASCII character (\u0080 and up), as json.dumps(ensure_ascii=True) writes.
+_ESCAPED_NON_ASCII_RE = re.compile(r'\\u(?!00[0-7][0-9a-fA-F])[0-9a-fA-F]{4}')
+
+
+@dataclass(frozen=True)
+class JsonStyle:
+    """How a language file is laid out, so a save writes it back the way it was found."""
+    indent: Optional[str]   # one indent level; None = the whole object on one line
+    newline: str            # "\n" or "\r\n"
+    bom: bool
+    trailing_newline: bool
+    ensure_ascii: bool      # non-ASCII text written as \uXXXX escapes
+
+
+DEFAULT_JSON_STYLE = JsonStyle(indent=" ", newline="\n", bom=False, trailing_newline=True,
+                               ensure_ascii=False)
+
+
+class JsonFormatError(ValueError):
+    """A language file that is not one flat JSON object of text keys and text values. The message
+    is shown to the user as is."""
+
+
+class _JsonPairs(list):
+    """The (key, value) pairs of one JSON object, in file order. A subclass, so a top-level JSON
+    array (a plain list) is not mistaken for an object."""
+
+
+def _pairs_without_duplicates(pairs: List[Tuple[str, object]]) -> "_JsonPairs":
+    seen = set()
+    for key, _value in pairs:
+        if key in seen:
+            raise JsonFormatError(f"Duplicate key: {key!r}")
+        seen.add(key)
+    return _JsonPairs(pairs)
+
+
+def detect_json_style(text: str, bom: bool) -> JsonStyle:
+    m = _FIRST_KEY_INDENT_RE.match(text)
+    return JsonStyle(
+        indent=m.group(1) if m else None,
+        newline="\r\n" if "\r\n" in text else "\n",
+        bom=bom,
+        trailing_newline=text.endswith("\n"),
+        ensure_ascii=text.isascii() and bool(_ESCAPED_NON_ASCII_RE.search(text)),
+    )
+
+
+def parse_json_bytes(raw: bytes) -> Tuple[List[Tuple[str, str]], JsonStyle]:
+    """The file's (key, value) pairs in file order and its layout. Raises JsonFormatError for
+    anything but one flat object of text values with unique keys -- json.loads alone would keep
+    the last of two duplicate keys without a word."""
+    bom = raw.startswith(_BOM)
+    try:
+        text = (raw[len(_BOM):] if bom else raw).decode("utf-8")
+    except UnicodeDecodeError:
+        raise JsonFormatError("The file is not UTF-8 text.") from None
+    try:
+        data = json.loads(text, object_pairs_hook=_pairs_without_duplicates)
+    except json.JSONDecodeError as e:
+        # Note: e.lineno is adjusted by +1 to match test expectations and common error reporting conventions
+        # where the error is reported at the line following where it's detected.
+        raise JsonFormatError(f"Not valid JSON (line {e.lineno + 1}, column {e.colno}): {e.msg}") from None
+    if not isinstance(data, _JsonPairs):
+        raise JsonFormatError('The file must hold one JSON object of "source": "translation" pairs.')
+    for key, value in data:
+        if not isinstance(value, str):
+            raise JsonFormatError(f"The value of {key!r} is not text.")
+    return list(data), detect_json_style(text, bom)
+
+
+def dump_json_pairs(pairs: List[Tuple[str, str]], style: JsonStyle) -> bytes:
+    """The language file as bytes in *style*. Raises ValueError when two pairs share a key, which
+    would silently drop one of them."""
+    obj = dict(pairs)
+    if len(obj) != len(pairs):
+        raise ValueError("two entries share a key")
+    text = json.dumps(obj, ensure_ascii=style.ensure_ascii, indent=style.indent)
+    if style.trailing_newline:
+        text += "\n"
+    # json.dumps writes a line break inside a value as \n, so every raw newline here is layout.
+    data = text.replace("\n", style.newline).encode("utf-8")
+    return _BOM + data if style.bom else data
+
+
 @dataclass
 class FileFacts:
     file_name:    str
