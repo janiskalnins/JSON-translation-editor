@@ -35,12 +35,15 @@ indent, non-ASCII written literally, trailing newline. Each is byte-identical to
 - **One verbatim commit first**: the XML editor's tracked files at `c7c44e2`, with the message
   naming the source version and commit. All adaptation goes in later commits, so the JSON changes
   can be reviewed as a diff against the original. No XML git history is imported.
-- **Copied**: the app, `tests/` (minus XML samples, `reports/`, `data/real/` contents), `Resources/`
+- **Copied**: the app, `tests/` (minus `reports/` and `data/real/` contents), `Resources/`
   (minus `User_Guide.pdf`), `run_translator.ps1/.bat`, `build_exe.ps1/.bat`, `docs/FEATURES.md`,
   `docs/BUILDING.md`, `docs/images/` (regenerated later), `CLAUDE.md`, `.claude/rules/`, and the
   `Tools/` scripts (`Tools/` stays gitignored, as in the XML repo).
-- **Not copied**: `docs/superpowers/` of the XML project, `Latvian.xml`, settings files and their
-  archives, backup folders, `error_log.txt`, launcher caches.
+- **Not copied**: `docs/superpowers/` and `docs/architecture/` of the XML project (they describe
+  XML internals; `CLAUDE.md` is the reference), `Latvian.xml`, `.swarm/`, `desktop.ini`,
+  `.claude/settings.local.json`, settings files and their archives, backup folders,
+  `error_log.txt`, launcher caches. The XML samples in `tests/data/` are copied with the
+  verbatim commit (its checks need them) and replaced by JSON samples in the switch-over.
 - **Own identity**, so both editors run side by side:
 
   | | XML editor | JSON fork |
@@ -183,7 +186,7 @@ Unchanged: `<stem>.glossary.csv` (`es.glossary.csv`).
 | Sidecar unreadable as JSON or wrong shape | Moved aside as `es.json.meta.corrupt-<time>` (copied if locked); error message in the info bar; file opens all `New` |
 | Sidecar entry whose key is not in the file | Warning "Metadata: N entries for keys no longer in the file"; dropped on next save |
 | Unknown status in the sidecar | `New`, one warning |
-| Unparseable date in the sidecar | Shown blank, written back unchanged unless that entry is edited, one warning |
+| Unparseable date in the sidecar | Shown as stored (as the XML editor shows a bad date), written back unchanged unless that entry is edited, one warning |
 | File does not round-trip in its style | Reformat prompt before the first save |
 | JSON write fails | Error dialog, stays modified, sidecar untouched |
 | JSON written, sidecar write fails | Error dialog: translations saved, metadata not; stays modified |
