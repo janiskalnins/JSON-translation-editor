@@ -211,7 +211,14 @@ def check_dialog(failures):
         code_dlg._code_edit.setText("es-AR")
         check(failures, f"{theme}: language name follows the code", "Argentina" in code_dlg._culture_label.text(),
               repr(code_dlg._culture_label.text()))
+        valid_height = code_dlg._header_form.sizeHint().height()
+        blank = code_dlg._header_form.itemAt(code_dlg._code_warning_row, jte.QFormLayout.LabelRole).widget()
+        check(failures, f"{theme}: a valid code hides the hint row's blank label", blank.isHidden(), "visible")
         code_dlg._code_edit.setText("not a code!")
+        QApplication.processEvents()
+        grown = code_dlg._header_form.sizeHint().height() - valid_height
+        check(failures, f"{theme}: the hint row takes height only while shown",
+              grown >= code_dlg._code_warning.sizeHint().height(), f"grew by {grown}")
         check(failures, f"{theme}: an invalid code disables OK", not code_dlg._ok_btn.isEnabled(), "OK enabled")
         check(failures, f"{theme}: an invalid code shows the hint", not code_dlg._code_warning.isHidden(),
               "hint hidden")

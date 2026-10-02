@@ -10,6 +10,7 @@ import core_support as cs  # first: offscreen Qt, scratch working folder, isolat
 
 import hashlib
 import json
+import os
 import sys
 import unittest
 from contextlib import ExitStack
@@ -241,14 +242,14 @@ class CloseFileTests(WindowTestCase):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Cancel
         self.win._close_file()
-        self.assertEqual(self.win.current_file, path)
+        self.assertEqual(self.win.current_file, path.resolve())
 
     def test_failed_save_keeps_the_file_open(self):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
         with mock.patch.object(jte, "save_translation_file", side_effect=OSError("locked")):
             self.win._close_file()
-        self.assertEqual(self.win.current_file, path)
+        self.assertEqual(self.win.current_file, path.resolve())
 
     def test_failed_sidecar_save_keeps_the_file_open(self):
         path, _ = self._load_modified()
@@ -256,7 +257,7 @@ class CloseFileTests(WindowTestCase):
         with mock.patch.object(jte, "save_translation_file",
                                side_effect=jte.MetadataWriteError("locked")):
             self.win._close_file()
-        self.assertEqual(self.win.current_file, path)
+        self.assertEqual(self.win.current_file, path.resolve())
 
 
 class SaveTests(WindowTestCase):
@@ -295,6 +296,32 @@ class SaveTests(WindowTestCase):
         self._load_with_unreadable_sidecar()
         self.win._save()
         self.assertFalse(self.win.is_modified)
+
+    def test_unreadable_sidecar_is_left_untouched_by_save(self):
+        path = self._load_with_unreadable_sidecar()
+        self.win._save()
+        self.assertTrue(jte.meta_path_for(path).is_dir())
+
+    def _last_notice(self):
+        return self.win._notice_history[-1]
+
+    def test_save_with_an_unreadable_sidecar_warns_that_metadata_was_not_saved(self):
+        self._load_with_unreadable_sidecar()
+        self.win._save()
+        notice = self._last_notice()
+        self.assertEqual((notice.level, "metadata not saved" in notice.text), ("warning", True))
+
+    def test_autosave_with_an_unreadable_sidecar_warns_that_metadata_was_not_saved(self):
+        self._load_with_unreadable_sidecar()
+        self.win._autosave_tick()
+        notice = self._last_notice()
+        self.assertEqual((notice.level, "metadata not saved" in notice.text), ("warning", True))
+
+    def test_ordinary_save_is_not_a_warning(self):
+        self.load()
+        self.win.is_modified = True
+        self.win._save()
+        self.assertEqual(self._last_notice().level, "info")
 
     def test_unreadable_sidecar_still_saves_an_intact_language_file(self):
         path = self._load_with_unreadable_sidecar()
@@ -564,6 +591,23 @@ class ReformatTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), ODD)
 
 
+class RelativePathTests(unittest.TestCase):
+    def test_save_as_onto_the_open_file_still_asks_before_reformatting(self):
+        folder = cs.temp_dir()
+        cs.write_exact(folder / "es.json", ODD)
+        before = Path.cwd()
+        try:
+            os.chdir(folder)
+            with cs.open_window(question=QMessageBox.No) as (win, modals):
+                win._load(Path("es.json"))
+                modals.answers["save_path"] = str(folder / "es.json")
+                win._save_as()
+                asked = modals.titles("question")
+        finally:
+            os.chdir(before)
+        self.assertEqual(asked, ["Reformat File"])
+
+
 class RoboSkipTests(unittest.TestCase):
     def test_chain_translates_only_new_untranslated_entries(self):
         path = cs.write_pair(cs.temp_dir(), "es",
@@ -639,7 +683,7 @@ class NewLanguageTests(unittest.TestCase):
         with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
             win._new_language()
             opened = win.current_file
-        self.assertEqual(opened, folder / "lv.json")
+        self.assertEqual(opened, (folder / "lv.json").resolve())
 
     def test_cancelled_code_writes_nothing(self):
         folder = cs.temp_dir()

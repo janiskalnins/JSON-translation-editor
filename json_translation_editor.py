@@ -1299,6 +1299,12 @@ def parse_json_bytes(raw: bytes) -> Tuple[List[Tuple[str, str]], JsonStyle]:
     for key, value in data:
         if not isinstance(value, str):
             raise JsonFormatError(f"The value of {key!r} is not text.")
+        for what, text_part in (("key", key), ("value of", value)):
+            try:
+                text_part.encode("utf-8")
+            except UnicodeEncodeError:
+                raise JsonFormatError(
+                    f"The {what} {key!r} is not valid text (lone surrogate).") from None
     return list(data), detect_json_style(text, bom)
 
 
@@ -1347,7 +1353,10 @@ def meta_path_for(json_path: Path) -> Path:
 def guess_language(json_path: Path) -> str:
     """'es' for es.json, 'pt-BR' for pt-BR.json, '' when the name is not a language code."""
     stem = json_path.stem
-    return stem if _GUESSABLE_LANGUAGE_RE.match(stem) else ""
+    if not _GUESSABLE_LANGUAGE_RE.match(stem):
+        return ""
+    # A name like app.json or new.json fits the pattern but is no language.
+    return stem if QLocale(stem).language() != QLocale.C else ""
 
 
 def effective_language(header: FileHeader, json_path: Optional[Path]) -> str:
@@ -1397,6 +1406,12 @@ def _date_from_sidecar(raw: str, bad_dates: List[str]) -> str:
 def _date_to_sidecar(shown: str) -> str:
     if not shown:
         return ""
+    try:
+        # The exact inverse of format_date_for_storage; parse_date strips a trailing ". ", which
+        # some locales' short dates end in.
+        return datetime.strptime(shown, DATE_FMT).date().isoformat()
+    except ValueError:
+        pass
     parsed = parse_date(shown)
     return parsed.isoformat() if parsed is not None else shown
 
@@ -2321,7 +2336,7 @@ class FilterPanel(QFrame):
 
         # ── Check column ──────────────────────────
         self.check_combo = _WidePopupComboBox()
-        self.check_combo.addItems(["All", "Placeholder mismatch"])
+        self.check_combo.addItems(["All", "Placeholders"])
         self.check_combo.setItemData(
             1, "Entries whose {placeholders} differ between source and translation", Qt.ToolTipRole)
         self.check_combo.currentIndexChanged.connect(self._on_filter)
@@ -4271,6 +4286,7 @@ class FilePropertiesDialog(QDialog):
         self._code_warning = QLabel("Use a code like es, es-AR or zh-Hant-TW.")
         self._code_warning.setWordWrap(True)
         form.addRow(QLabel(), self._code_warning)
+        self._code_warning_row = form.rowCount() - 1
 
         self._lang_edit = QLineEdit()
         self._lang_edit.setMaxLength(DISPLAY_LANGUAGE_MAX_LEN)
@@ -4298,6 +4314,7 @@ class FilePropertiesDialog(QDialog):
         self._version_warning = QLabel()
         self._version_warning.setWordWrap(True)
         form.addRow(self._version_warning)
+        self._version_warning_row = form.rowCount() - 1
         lay.addWidget(header)
 
         about = QGroupBox("About this file")
@@ -4396,8 +4413,9 @@ class FilePropertiesDialog(QDialog):
             return
         version_ok = self._stored_parts is not None or self._version_touched
         code_ok = bool(LANGUAGE_CODE_RE.match(self.language_code()))
-        self._version_warning.setVisible(not version_ok)
-        self._code_warning.setVisible(not code_ok)
+        self._header_form.setRowVisible(self._version_warning_row, not version_ok)
+        # The whole row: its blank label would otherwise keep the row's height and spacing.
+        self._header_form.setRowVisible(self._code_warning_row, not code_ok)
         self._ok_btn.setEnabled(bool(self._lang_edit.text().strip()) and version_ok and code_ok)
 
     def eventFilter(self, obj, event):
@@ -9108,6 +9126,7 @@ class MainWindow(QMainWindow):
                                    "Ctrl+S to confirm reformatting it", 6000, "warning")
             return
 
+        skipped = self._sidecar_skipped(self.current_file)
         try:
             self._write_files(self.current_file)
 
@@ -9142,7 +9161,13 @@ class MainWindow(QMainWindow):
         self._mod_kind = "autosaved"
         self._mod_text = f"Autosaved at {ts}"
         self._update_dynamic_label()
-        self._show_message(f"Autosaved: {_file_label(self.current_file.name, self.file_version)}  ({ts})", 4000)
+        label = _file_label(self.current_file.name, self.file_version)
+        if skipped:
+            self._show_message(f"Autosaved: {label}  ({ts}) — metadata not saved "
+                               f"({meta_path_for(self.current_file).name} could not be read when the "
+                               "file was opened)", 6000, "warning")
+        else:
+            self._show_message(f"Autosaved: {label}  ({ts})", 4000)
 
     def _autosave_locked(self, error: Exception):
         """Handle a failed autosave due to a locked or inaccessible file."""
@@ -9939,6 +9964,7 @@ class MainWindow(QMainWindow):
 
     def _load(self, path: Path):
         try:
+            path = path.resolve()   # one spelling, so `path == self.current_file` means the same file
             loaded = load_translation_file(path)
             self.entries      = loaded.entries
             self.json_style   = loaded.style
@@ -9985,7 +10011,7 @@ class MainWindow(QMainWindow):
             "JSON Files (*.json);;All Files (*)"
         )
         if path:
-            self._write(Path(path))
+            self._write(Path(path).resolve())
 
     def _write_files(self, path: Path) -> None:
         """Save the open entries to *path* and its sidecar. The sidecar is skipped only when it is
@@ -9993,6 +10019,10 @@ class MainWindow(QMainWindow):
         same_file = self.current_file is not None and path == self.current_file
         save_translation_file(path, self.entries, self.json_style, self.header,
                               write_meta=not (self._meta_blocked and same_file))
+
+    def _sidecar_skipped(self, path: Path) -> bool:
+        """True when _write_files leaves *path*'s sidecar alone because it was unreadable on open."""
+        return self._meta_blocked and self.current_file is not None and path == self.current_file
 
     def _confirm_reformat(self, path: Path) -> bool:
         """Before the first save of an open file that would not come back byte for byte: ask."""
@@ -10008,6 +10038,7 @@ class MainWindow(QMainWindow):
     def _write(self, path: Path):
         if not self._confirm_reformat(path):
             return
+        skipped = self._sidecar_skipped(path)
         try:
             self._write_files(path)
         except MetadataWriteError as e:
@@ -10025,7 +10056,12 @@ class MainWindow(QMainWindow):
             return
         self._after_write(path)
         self._update_title()
-        self._show_message(f"Saved: {_file_label(path.name, self.file_version)}", 4000)
+        label = _file_label(path.name, self.file_version)
+        if skipped:
+            self._show_message(f"Saved: {label} — metadata not saved ({meta_path_for(path).name} "
+                               "could not be read when the file was opened)", 6000, "warning")
+        else:
+            self._show_message(f"Saved: {label}", 4000)
 
     def _after_write(self, path: Path) -> None:
         """State after the language file reached disk (with or without its sidecar)."""

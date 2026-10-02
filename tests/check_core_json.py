@@ -8,6 +8,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 jte = cs.jte
 
@@ -237,10 +238,15 @@ class SidecarPathTests(unittest.TestCase):
     def test_guessed_language(self):
         cases = {"es.json": "es", "pt-BR.json": "pt-BR", "zh-Hant-TW.json": "zh-Hant-TW",
                  "deu.json": "deu", "strings.json": "",
+                 "app.json": "", "new.json": "",
                  "es_restored_2026-10-02_10-00-00.json": ""}
         for name, expected in cases.items():
             with self.subTest(name):
                 self.assertEqual(jte.guess_language(Path(name)), expected)
+
+    def test_sidecar_date_is_iso_for_a_short_date_ending_in_a_separator(self):
+        with mock.patch.object(jte, "DATE_FMT", "%Y. %m. %d."):
+            self.assertEqual(jte._date_to_sidecar("2026. 10. 02."), "2026-10-02")
 
     def test_language_code_accepts_a_long_variant(self):
         self.assertTrue(jte.LANGUAGE_CODE_RE.match("ca-valencia"))
