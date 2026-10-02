@@ -5046,7 +5046,7 @@ class EditDialog(QDialog):
     def _robo_advance(self):
         """Move to the next entry and continue the chain, or stop at list end.
 
-        Entries already translated (status Review/Complete) are skipped —
+        Entries already translated (status Review/Complete, or text that differs from the source) are skipped —
         the chain advances past them without touching their text — so an
         unattended run only fills in New entries. The entry the chain was
         *started* on is always translated regardless of its status, since
@@ -5065,7 +5065,9 @@ class EditDialog(QDialog):
             self._robo_navigating = False
             if not self._robo_active:
                 return
-            if self.entry.status not in ("Review", "Complete"):
+            # Only an entry nobody has touched: New and its text still the English source. A file
+            # opened without a sidecar is all New, but its existing translations must stay.
+            if self.entry.status == "New" and self.entry.text == self.entry.name:
                 break
         self._start_translation()
 

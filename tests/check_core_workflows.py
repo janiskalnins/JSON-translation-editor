@@ -564,5 +564,21 @@ class ReformatTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), ODD)
 
 
+class RoboSkipTests(unittest.TestCase):
+    def test_chain_translates_only_new_untranslated_entries(self):
+        path = cs.write_pair(cs.temp_dir(), "es",
+                             {"A": "A", "B": "Be", "C": "C", "D": "D"},
+                             meta={"C": ("Review", "Jo", "2026-10-02")})
+        with cs.open_window(path) as (win, _modals):
+            dlg = jte.EditDialog(win.model, 0, win.settings.get_font(), shortcuts={},
+                                 target_culture="es", transl_cfg={}, parent=win)
+            started = []
+            dlg._start_translation = lambda: started.append(dlg.entry.name)
+            dlg._robo_active = True
+            dlg._robo_advance()
+            dlg.reject()
+        self.assertEqual(started, ["D"])
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
