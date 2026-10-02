@@ -9764,7 +9764,8 @@ class MainWindow(QMainWindow):
         if not self.current_file:
             QMessageBox.warning(self, "New Language", "Open a file first: its keys are copied.")
             return
-        if self.is_modified and not self._confirm_close_file():
+        was_modified = self.is_modified
+        if was_modified and not self._confirm_close_file():
             return
         code = ""
         while True:
@@ -9781,14 +9782,35 @@ class MainWindow(QMainWindow):
             "JSON Files (*.json);;All Files (*)")
         if not path:
             return
-        entries = new_language_entries(self.entries)
+        target = Path(path)
+        if target.resolve() == self.current_file.resolve():
+            QMessageBox.warning(self, "New Language", "Choose a new file name: the open file "
+                                "cannot be replaced by a new language.")
+            return
+        # Still modified after the prompt means Discard: the keys are the ones on disk, not the
+        # in-memory edits that are about to be thrown away.
+        source, style = self.entries, self.json_style
+        if was_modified and self.is_modified:
+            try:
+                on_disk = load_translation_file(self.current_file, keep_damaged=False)
+            except Exception as e:
+                QMessageBox.critical(self, "New Language", f"Failed to read the open file:\n{e}")
+                return
+            source, style = on_disk.entries, on_disk.style
+        entries = new_language_entries(source)
+        meta_error = ""
         try:
-            save_translation_file(Path(path), entries, self.json_style, FileHeader(language=code))
-        except Exception as e:
+            save_translation_file(target, entries, style, FileHeader(language=code))
+        except MetadataWriteError:
+            meta_error = "The new file was written, but its metadata file could not be."
+        except OSError as e:
             QMessageBox.critical(self, "New Language", f"Failed to write the new file:\n{e}")
             return
         self.is_modified = False   # the open file was saved or its changes discarded above
-        self._load(Path(path))
+        self._load(target)
+        if meta_error:
+            self._show_message(meta_error, 6000, "error")
+            return
         self._show_message(f"Created: {Path(path).name}  ({len(entries)} strings)", 5000)
 
     def _open(self):

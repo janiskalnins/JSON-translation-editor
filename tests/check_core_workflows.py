@@ -656,6 +656,64 @@ class NewLanguageTests(unittest.TestCase):
             win._new_language()
         self.assertEqual(modals.titles("warning"), ["New Language"])
 
+    def _modified_window(self, folder, **answers):
+        path = cs.write_pair(folder, "es", {"Save": "Guardar", "Open": "Abrir"})
+        return path, cs.open_window(path, text="lv", save_path=str(folder / "lv.json"), **answers)
+
+    def test_discard_creates_the_file_from_the_keys_on_disk(self):
+        folder = cs.temp_dir()
+        _path, window = self._modified_window(folder, question=[QMessageBox.Yes, QMessageBox.Discard])
+        with window as (win, _m):
+            win._delete_entries([win.entries[1]])
+            win._new_language()
+        self.assertEqual(list(json.loads((folder / "lv.json").read_bytes())), ["Save", "Open"])
+
+    def test_save_writes_the_open_file_first(self):
+        folder = cs.temp_dir()
+        path, window = self._modified_window(folder, question=QMessageBox.Save)
+        with window as (win, _m):
+            win.entries[0].text = "Changed"
+            win.is_modified = True
+            win._new_language()
+        self.assertEqual(json.loads(path.read_bytes())["Save"], "Changed")
+
+    def test_cancel_at_the_prompt_writes_nothing(self):
+        folder = cs.temp_dir()
+        _path, window = self._modified_window(folder, question=QMessageBox.Cancel)
+        with window as (win, _m):
+            win.is_modified = True
+            win._new_language()
+        self.assertFalse((folder / "lv.json").exists())
+
+    def test_new_file_follows_the_open_files_style(self):
+        folder = cs.temp_dir()
+        path = cs.write_exact(folder / "es.json", cs.json_doc({"Save": "Guardar"}, indent="    "))
+        with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        self.assertIn(b'    "Save": "Save"', (folder / "lv.json").read_bytes().splitlines())
+
+    def test_new_sidecar_lists_no_entries(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        self.assertEqual(json.loads((folder / "lv.json.meta").read_bytes())["entries"], {})
+
+    def test_choosing_the_open_file_writes_nothing(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        before = path.read_bytes()
+        with cs.open_window(path, text="lv", save_path=str(path)) as (win, _m):
+            win._new_language()
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_choosing_the_open_file_warns(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text="lv", save_path=str(path)) as (win, modals):
+            win._new_language()
+        self.assertEqual(modals.titles("warning"), ["New Language"])
+
 
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
