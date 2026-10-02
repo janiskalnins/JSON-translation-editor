@@ -1,0 +1,11 @@
+#!/bin/sh
+# Pre-commit: run the offscreen checks when the commit touches the app or the tests.
+# Enabled once per clone with:  git config core.hooksPath tests/hooks
+# It checks the working tree, so unstaged edits are tested too.
+if git diff --cached --name-only | grep -qE '^(xml_translation_editor\.py|tests/)'; then
+    python tests/run_all.py --trigger pre-commit || {
+        echo "pre-commit: checks failed - commit blocked. Fix them, or commit with --no-verify to skip."
+        exit 1
+    }
+fi
+exit 0

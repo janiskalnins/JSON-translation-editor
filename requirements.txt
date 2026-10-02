@@ -1,0 +1,4 @@
+# Requires PySide6 for the GUI.
+PySide6
+# deep-translator powers the Google Translate / MyMemory / Microsoft Translator engines.
+deep-translator

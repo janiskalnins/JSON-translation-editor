@@ -1,0 +1,2949 @@
+# CLAUDE.md — XML Translation Editor
+
+Guidance for Claude Code when working with this project.
+
+---
+
+## Project overview
+
+A single-file PySide6 desktop application (`xml_translation_editor.py`) for editing XML
+localization files.  The XML format uses paired `<string name="...">translation</string>`
+elements; the file is parsed into a plain Python list and written back with minimal
+structural changes so diffs stay clean.
+
+Companion files:
+
+| File | Role |
+|------|------|
+| `xml_translation_editor.py` | Entire application — ~3 324 lines, no sub-packages |
+| `run_translator.ps1 / .bat` | Hardened Windows launchers (PS 5.1-compatible, winget fallback) |
+| `build_exe.ps1 / .bat` | PyInstaller build scripts with full pre-flight checks |
+| `translation_editor_settings.json` | Runtime settings — auto-created, never committed |
+| `translation_editor_settings.backups.zip` | Daily snapshots of the settings file (holds API keys) — auto-created, never committed. See [Settings](#settings) → "Settings backup & recovery" |
+| `XML_Translation_file_Backups/` | Auto-created backup tree — never committed |
+| `Latvian.xml` | Primary test/demo file |
+| `Tools/` | Screenshot capture, User Guide build, README image and doc-link scripts — gitignored, never committed. See [Tools folder](#tools-folder) |
+| `docs/FEATURES.md`, `docs/BUILDING.md`, `docs/images/` | User reference (features, settings, XML format, troubleshooting), install and build details, and the README's generated mockup images |
+| `tests/` | Offscreen checks, `run_all.py`, the pre-commit hook and frozen sample data — tracked. See [Tests folder](#tests-folder) and `tests/README.md` |
+
+---
+
+## Tools folder
+
+`Tools/` holds scripts that are useful across sessions but aren't part of the
+shipped app — gitignored (`.gitignore`: `Tools/`) so they never reach a commit,
+but kept in the repo (not a temp/scratchpad directory) so they aren't lost
+between sessions the way a scratchpad-only script would be. If you write a
+throwaway script that's likely to be re-run later (screenshot capture, asset
+regeneration, a one-off migration), put it here instead of the session
+scratchpad.
+
+Current contents (the offscreen checks moved to [tests/](#tests-folder)):
+
+- **`take_screenshots.py`** — renders the app's main window and every dialog to
+  PNGs (`Tools/screenshots/*_dark.png`) using `Latvian.xml` as sample data,
+  never real user data. Runs on Qt's **native** platform, not `offscreen` —
+  verified directly that `QT_QPA_PLATFORM=offscreen` has zero font families
+  registered on this machine (`QFontDatabase.families()` returns `[]`), so
+  every screenshot rendered as tofu boxes under it; the native Windows
+  platform has the system's real fonts. This means windows are briefly shown
+  on-screen during a run — acceptable for a one-off doc tool, unlike the
+  `xte_harness`-style structural/behavioral tests elsewhere in this project's
+  tooling, which stay on `offscreen` since they never need legible text.
+- **`build_user_guide.py`** — assembles those screenshots plus hand-written
+  section content into `Resources/User_Guide.pdf`. Three-stage pipeline:
+  1. Qt (`QTextDocument.print_()`) renders the cover + Contents + 11 sections
+     as one document so internal `<a href="#sec">` / `<a name="sec">` anchors
+     become real PDF `/Link` annotations — this still works when the `<a>` is
+     nested inside a table cell, which the TOC styling relies on.
+  2. `reportlab` draws a footer (title + accent-coloured separator rule left,
+     "Page N of M" right) per content page and `pypdf` merges it onto Qt's
+     output, skipping the cover. `QTextDocument` has no per-page footer hook
+     when printed the simple way, so this overlay step is what adds page
+     numbers.
+  3. Every link's `/Dest` is rewritten from a name (resolved via Qt's own
+     `/Root/Names/Dests` tree) to a literal `[page_ref, mode, *args]` array —
+     see the "PDF's internal links can validate... and still fail in Edge"
+     pitfall below for why this step exists; skipping it is how the TOC once
+     silently regressed.
+
+  Requires `pip install pypdf reportlab pillow` — doc-tooling only, never a
+  runtime dependency of `xml_translation_editor.py` itself, and exempt from
+  the "no new dependencies" rule below for exactly that reason. `pikepdf` is
+  not a pipeline dependency (the script never imports it) but is the
+  recommended verification tool after any change to the link/footer/page
+  machinery — see "How to verify" below for why `pypdf`/PyMuPDF checks alone
+  are not sufficient proof.
+
+  Visual design is on-brand rather than generic: `ACCENT` (`#0E639C`) is
+  sampled directly from the app's own Save-button blue in a screenshot, not
+  picked freestyle, and is used for `<h1>` (via a `<style>h1{color:...}</style>`
+  block — plain inline styles on the cover's own `<h1>` don't cascade to the
+  section ones) and for the `table()` helper's header row + zebra-striped body
+  rows, and the cover's `_bar()` strips. `MARGIN_LEFT_MM`/`MARGIN_RIGHT_MM`
+  (16, always equal — one shared constant so they can't drift apart) and
+  `MARGIN_TOP_MM`/`MARGIN_BOTTOM_MM` (10) keep content close to the page edge
+  on purpose: an 18mm pass read as "terribly large margins," a later 10mm
+  pass on all four sides read as "bit small" specifically on left/right, and
+  top/bottom never actually needed to move — see the `h1 { margin-top: 0 }`
+  note just below. The `<style>h1{...}</style>` block pins `margin-top: 0`
+  because QTextDocument's default UA stylesheet gives `<h1>` its own implicit
+  top margin that stacks with the page margin, so even a small page margin
+  leaves visible extra space above every section heading until this is set
+  explicitly — this, not the page margin, was the real fix for "top margin
+  too large." The cover's title block is framed by two `_bar()` calls (a
+  solid `ACCENT`-coloured strip, centered, built the same verified-safe way as
+  `table()`'s cell backgrounds) rather than a plain `<hr>`, which was never
+  tested against QTextDocument's HTML subset. `PAGE_BREAK` is defined once,
+  before `SECTIONS`, specifically so a section body can reference it too (e.g.
+  forcing a break mid-section when a screenshot would otherwise collide with
+  the footer) — it used to be defined after `SECTIONS`, which worked only
+  because nothing inside `SECTIONS` referenced it yet.
+
+- **`make_readme_images.py`** — builds the README's 8 mockup PNGs in `docs/images/`
+  (`hero`, `merge`, `translation_settings`, `restore`, each `_dark` and `_light`) from the
+  `take_screenshots.py` output: a drawn Windows 11 title bar (app icon, the window's title,
+  caption glyphs), rounded corners, a shadow and an accent-blue gradient backdrop; the hero puts
+  the Edit window over the main window. `SCALE` (1.5) must match the display scaling the
+  screenshots were taken at. The version in the title comes from `APP_VERSION` by regex. The
+  README switches dark/light with `<picture>` + `prefers-color-scheme`. Pillow only;
+  `test_make_readme_images.py` is its unit test.
+- **`check_doc_links.py`** — checks every relative link, image path and `#anchor` in
+  `README.md`, `docs/FEATURES.md` and `docs/BUILDING.md` against GitHub's heading slugs; with
+  `--old-readme <file>` it also lists old README headings that went missing. Run it after any
+  edit that adds, renames or moves a heading in those files. `test_check_doc_links.py` is its
+  unit test.
+
+**How to verify after any change to `build_user_guide.py`:** rasterize pages with PyMuPDF/`fitz`
+for a visual check (no page-image viewer is otherwise available in this
+environment) — but for the link/footer/page-number machinery specifically,
+visual inspection and even `pypdf`/PyMuPDF structural checks are not enough.
+Both are lenient, complete-recovery parsers that silently tolerate PDF
+structures the spec doesn't actually sanction (see the pitfall below); the
+only check that caught the real Edge/PDFium-breaking defect was `pikepdf`
+(`pip install pikepdf`, qpdf's engine via Python bindings — a third,
+independently-implemented, spec-stricter parser). After touching
+`build_base_pdf()`, `add_footers()`, or `_named_dest_page_map()`, re-run
+something like:
+```python
+import pikepdf
+pdf = pikepdf.open("Resources/User_Guide.pdf")
+for annot in pdf.pages[1].get("/Annots", []):
+    print(dict(annot))  # expect a literal [page, mode, ...] /Dest, no /GoTo action, no name lookup
+```
+and confirm every link's `/Dest` is a self-contained array, not a name string
+requiring a catalog lookup.
+
+To refresh the User Guide after a UI change: bump `APP_VERSION` in
+`xml_translation_editor.py` *first* (the Welcome screen, title bar, and the
+guide's own cover all read it), then run `python Tools/take_screenshots.py
+dark` and `… light`, then `python Tools/make_readme_images.py` (README mockups) and
+`python Tools/build_user_guide.py`, then verify per the two paragraphs above and look at the
+new `docs/images/` PNGs, and commit `docs/images/` and `Resources/User_Guide.pdf`.
+
+---
+
+## Tests folder
+
+`tests/` (tracked) holds the offscreen checks, the runner, the pre-commit hook and the sample
+files the checks use. It is dev-only: exempt from the single-file rule and never shipped.
+`tests/README.md` is the human-facing overview (quick start, a table of every check, real-world
+files, reports, the hook, adding a test); keep its check table and counts in step when a check is
+added or changes size. The notes below are the detailed reference.
+
+```
+tests/
+  run_all.py        run every check (or the ones named), each in its own process
+  check_*.py        the checks, one program each
+  core_support.py   shared helpers for the check_core_*.py suites (not a check: no check_ prefix)
+  data/             frozen sample files: Latvian.xml (the committed version) and copies of the
+                    manual-test files (merge test, glossary, restored copies)
+  data/real/        your real-world XML files for check_core_corpus.py (gitignored except README)
+  hooks/pre-commit  runs run_all.py before a commit that touches the app or tests/
+  reports/          Markdown report of every run (gitignored, local history)
+```
+
+- **Run everything:** `python tests/run_all.py` — one line per check (`PASS`/`FAIL`/`TIMEOUT`,
+  seconds, name), then, under a failure, the check's `FAIL` lines (`FAIL <label>` or
+  `FAIL: <label>`), or its last 20 output lines after a crash; then `N passed, M failed (T s)`.
+  Exit code 0 only when all passed; 2 for an unknown name.
+- **Run some:** `python tests/run_all.py merge_compare combobox` (names with or without `check_`
+  and `.py`).
+- **Report:** every run, the hook's included, also writes `tests/reports/run_<date>_<time>.md` and
+  a copy as `latest.md`, and prints `Report: <path>` last; the newest 30 runs are kept
+  (`REPORTS_KEEP`). A report holds the time, the trigger (`manual`, or `pre-commit` from the hook's
+  `--trigger pre-commit`), which checks ran, branch, commit and whether there were uncommitted
+  changes (the checks test the working tree, not the commit), the Python and PySide6 versions, a
+  table of check / result / time / test count (the `N test(s) run` a unittest suite prints, "—"
+  for the older checks), a Notes section with the `NOTE <text>` lines a check prints (information,
+  not failures), and a Failures section with each failed check's details. A report that
+  cannot be written prints a warning and never changes the exit code, so it cannot block a commit.
+  `tests/reports/` is gitignored.
+- **Isolation:** each check runs in a fresh temporary working folder, so `error_log.txt`, settings
+  and backups it writes never land in the repo, and without `QT_QPA_PLATFORM`, so a
+  `QT_QPA_PLATFORM=windows` left in the shell never flashes windows. A check is stopped after
+  300 s (`TIMEOUT`, a failure). To run one natively on purpose, run the script itself:
+  `QT_QPA_PLATFORM=windows python tests/check_groupbox_title.py`.
+- **Sample data:** the checks read `tests/data/Latvian.xml`, never the root `Latvian.xml`, which
+  manual testing edits. Update the frozen copy only on purpose (and re-run the checks).
+- **Pre-commit hook:** enabled once per clone with `git config core.hooksPath tests/hooks` (all
+  worktrees share the setting, but only a worktree whose branch contains `tests/` has the hook —
+  on an older branch, commits run no hook until that branch has `tests/`). It runs the checks
+  (~27 s) when the staged files include `xml_translation_editor.py` or anything under `tests/`, and
+  blocks the commit if one fails; docs-only commits skip it. It tests the working tree, so unstaged
+  edits count too. `tests/hooks/*` is checked out with LF (`.gitattributes`): a CRLF hook fails with
+  "not found". Never commit with `--no-verify` on your own; that is the user's call.
+- **Adding a check:** a `tests/check_<name>.py` that runs offscreen, prints `FAIL <label>` per
+  failure and `PASSED: 0 failure(s)` / `FAILED: N failure(s)` last, and returns its exit code with
+  `sys.exit(main())` — never `os._exit()` (exit code 139 once a `MainWindow` was built). The runner
+  and hook pick it up automatically. Don't start child processes that can outlive the check: the
+  runner's timeout stops the check itself, but it keeps waiting while a grandchild holds the output
+  pipe open.
+- **Core suites (`check_core_*.py`):** stdlib `unittest`, one area per file (`xml`, `dates_filter`,
+  `merge`, `glossary`, `backup`, `settings`, `translation`, `workflows`), one assertion per test,
+  input tables through `subTest`. Each imports `core_support as cs` first: that sets the offscreen
+  platform, a scratch working folder, `sys.argv[0]` (the backup root) and the glyph cache.
+  `cs.run_suite(module)` prints `FAIL <Class.test>: <first line>` per failure (plus the traceback,
+  indented, for an error) and the `PASSED`/`FAILED` line last, which is the runner's contract. Every
+  test that saves an XML file ends with `cs.assert_xml_intact(tc, path, names)`, the **oracle**, or
+  has a sibling test on the same steps that does (a byte-for-byte comparison needs none):
+  `xml.etree` (an independent parser; the no-etree rule is for the app) must find a well-formed
+  file holding exactly those `<string name>` values, in order, none twice.
+  `cs.open_window(path, backup=False, **answers)` builds a real `MainWindow` inside
+  `cs.patched_modals()`, which answers every `QMessageBox`, both file dialogs and the translator
+  prompt from `answers` and records what was shown (`modals.shown`). Optional coverage, dev-only
+  like `pypdf`: `pip install coverage`, then `python -m coverage run tests/check_core_xml.py`.
+
+The checks:
+
+- **`check_read_after_exec.py`** — offscreen check that `WA_DeleteOnClose` dialogs still hand
+  over their results after a real `exec()`, which deletes them before it returns:
+  `MergeConflictDialog`'s `accepted_additions()`/`resolved_conflicts()`/`deletions_to_remove()`
+  with a changed choice in each category, and `RestoreFromBackupDialog.restore_glossary_requested()`
+  ticked and cleared; it also asserts both dialogs really are deleted, so the fix can't be to drop
+  `WA_DeleteOnClose`. Runs from a throwaway folder with the startup modals patched.
+- **`check_scrollbar.py`** — offscreen regression check for `_scrollbar_qss()`
+  (handle stays clear of the arrow buttons and can still move on a short bar,
+  minimum handle length, glyphs actually painted, and the arrow-file failure
+  handling). Imports the app module directly and builds no `MainWindow`, so it
+  needs no startup-modal patching and touches no settings file; it points the
+  arrow cache at a throwaway folder so a run never touches the real one.
+  `python tests/check_scrollbar.py` → exit code 0 means pass.
+- **`check_checkbox_mark.py`** — the same kind of offscreen check for the prominent
+  checkbox's tick (white tick when checked, dimmed tick when checked and
+  disabled, none when unchecked, plain-square fallback when the glyph folder is
+  unusable), both themes. Isolates the glyph cache like `check_scrollbar.py`.
+- **`check_spinbox_arrows.py`** — offscreen check, under the same Fusion style and theme
+  palette `main()` sets, that the real Choose UI Font and Autosave & Backup dialogs draw
+  a usable arrow (≥ 8 × 4 px, ≥ 4.5:1 contrast when enabled, the dimmed `dlg_btn_dis_fg`
+  when disabled) on both buttons of every themed spin box, in both themes at 8/10/14 pt,
+  plus the unwritable-cache fallback of `_spinbox_qss()`. The File Properties dialog's three
+  version boxes are checked the same way. Geometry is measured at half of
+  each glyph's own peak contrast so a dim disabled arrow is sized like a vivid one.
+  Isolates the glyph cache like `check_scrollbar.py`.
+- **`check_date_picker.py`** — offscreen check for the date pickers: `_date_format_hint()` and
+  `_date_section_order()` on five formats; a `_DrumColumn`'s keys (Up/Down/PageUp/PageDown/
+  Home/End), wrap-around on day and month and none on the year, wheel notches and summed half
+  notches, a click on another row (moves, does not confirm) and on the middle row (confirms), a
+  drag of two rows, `value_changed` and `set_values()` clamping, and the painted middle band;
+  the pop-up's column order and hint, day clamping on a month/year change, the year range with a
+  pre-2000/post-2100 year added, confirm by Enter and by a middle click (one `dateChanged`),
+  cancel by Escape and by closing (none), Left/Right focus, and placement under or above the
+  field; the closed field ignoring wheel/keys and opening on a click (text or arrow), Return,
+  Enter, Space, F4 and Alt+Down without Qt's calendar; then, through a real `MainWindow` in
+  both themes at 10 and 14 pt, that the three real pickers are `_DatePickerField`s with the
+  `bg4` fill, wide enough for the widest date, and that an entry dated 1998 survives opening and
+  cancelling the pop-up plus a status-only Save. Runs from a throwaway folder with the startup
+  modals patched, like `check_combobox.py`.
+- **`check_file_properties.py`** — offscreen check for File → Properties: `build_header_xml()`
+  (replace in place, insert a missing attribute, escaping, backslashes literal, `xsi:Version` not
+  matched, the `<?xml` line untouched, `ValueError` with no root tag), a `save_file()` →
+  `parse_file()` round trip, `parse_version_parts()`/`format_version()`, `describe_culture()`,
+  `compute_file_facts()` (including a file gone from disk), the dialog itself (spin-box limits,
+  unpadded values, blank name and invalid stored version block OK, `.` jumps to the next box),
+  and then a real `MainWindow` on a copy of `Latvian.xml`: OK with changes, OK with none, Cancel,
+  no file open, and Save + reopen. The Save comparison is against a plain load + save of the same
+  file, not the raw file: `_load()` rewrites every date into this machine's short-date format, and
+  those rows are rebuilt. Runs from
+  a throwaway folder with the startup modals patched, like `check_combobox.py`.
+- **`check_merge_compare.py`** — offscreen check for the Merge row compare pop-up:
+  `merge_row_reason()` (every phrase, an unparseable date, a tie) and `merge_diff_html()` (no tint
+  on equal texts, changed word tinted on both sides, insertion on one, `<`/`>`/`&` escaped, `<br>`,
+  double spaces), then through a real `MainWindow` + `MergeConflictDialog` (an addition, two
+  conflicts, a deletion): the row accessors and shared tint rules; header, panes, placeholders,
+  read-only panes, `text_warn` on differing metadata (pixel check), button labels/✓/tint, a choice
+  setting the combo, re-tinting the row and advancing with the table selection following, the
+  last row staying, Back/Forward ends, auto-resolve disabling the conflict buttons; `Alt+Left`,
+  `Alt+Right`, `Alt+1`, `Alt+2`, Enter on ✓, Enter from a pane, Escape (real key events);
+  double-click on a cell and a row number (exec patched); the cell gets a click first, since
+  `QTest.mouseDClick` alone sends no press and an item view ignores a double-click on an index it
+  did not see pressed; widget count back to baseline after Close; sizes in both themes at 10 and
+  14 pt. 1920 × 1080 offscreen screen from a `configfile`, throwaway folder, startup modals
+  patched, like `check_file_properties.py`.
+- **`check_groupbox_title.py`** — check that every group box's border line runs through the
+  middle of its title's capitals (±2 px) and its first row starts below the title: a real
+  `MainWindow` at 10, 12, 14, 18 and 24 pt in both themes, opening Keyboard Shortcuts, Translation Settings
+  (on DeepL), File Properties, Edit and Autosave & Backup. The capitals' middle comes from the box's
+  own font metrics, not from the ink: offscreen text is drawn as boxes that start at the top of
+  the title's rectangle, so an ink measurement found the line "in the middle" whatever the rule
+  said. The line is found in a column left of the title (x = 6), since a long title can cover any column
+  further right (Shortcuts' "Main Window — Selected Rows Actions" did, before it was shortened). Runs offscreen by default; with
+  `QT_QPA_PLATFORM=windows` set beforehand it runs on real fonts (windows show briefly), which is
+  the run that caught the 10 pt line sitting on the top of the capitals. Runs from a throwaway
+  folder with the startup modals patched, like `check_combobox.py`.
+- **`check_autosave_fit.py`** — the Autosave & Backup counterpart of `check_shortcuts_fit.py`: at
+  10, 12, 14, 18 and 24 pt in both themes, with "Skip if backed up within" at 0 ("Always back up")
+  and at its maximum, every spin box and the Backup location combo must be at least as wide as its
+  size hint, the three spin boxes one width (±1 px), and the combo no wider than its size hint.
+  They were fixed at 130 and 230 px. The two sections are separate grids, so
+  `AutosaveBackupDialog._align_columns()` gives both the widest label's width as their column-0
+  minimum and fixes the three spin boxes at the widest one's size hint, measured from the font on
+  every open. Fixed rather than a column minimum because the combo spans the spin boxes' column
+  (it is added left-aligned, and column 2 takes the stretch): with a column minimum the offscreen
+  run at 18 pt found the Session Backup spin boxes 2 px wider than Interval, the wide combo's
+  extra spread into their column. Same 4096 × 2160 offscreen screen and native mode as
+  `check_shortcuts_fit.py`.
+- **`check_shortcuts_fit.py`** — check that Keyboard Shortcuts' Record…/Reset buttons and the
+  Robo-translate delay spin box are at least as wide as their own size hint (text, padding, font)
+  and a Record…/Reset button no more than 1 px wider, also while a button shows "Cancel" during
+  recording: a real `MainWindow` at 10, 12, 14, 18 and 24 pt in both themes. They used to have
+  fixed widths (90, 70 and 90 px), cut from 12 pt ("ecord." and "Rese" at 16 pt). The spin box is
+  added to its grid cell left-aligned rather than given a fixed size policy: a fixed-size widget
+  caps its `QGridLayout` column, so the key-sequence column could no longer take the stretch and
+  that section's buttons grew to twice their width, which the "no wider" half of the check
+  catches. It also checks that the shortcut texts start at one x in all three sections and the
+  delay box with them: each section is its own `QGridLayout`, so `ShortcutsDialog._align_columns()`
+  gives every grid in `self._grids` the widest action label's width as its column-0 minimum,
+  and the shortcuts are left-aligned (they were centred, with two padding spaces each side).
+  The text start is computed the way `QLabel` places it (`QStyle.alignedRect()` in the contents
+  rectangle), not scanned from pixels, so offscreen measures the same thing. Offscreen it runs on a 4096 × 2160 screen from a `configfile` (placeholder text makes
+  the dialog 2 934 px wide at 24 pt, and the default 800 px screen squeezed every button); with
+  `QT_QPA_PLATFORM=windows` set beforehand it runs on real fonts.
+- **`check_translation_settings_size.py`** — offscreen check that the Translation Settings dialog
+  fits each engine: the same width whichever engine it opens on; switching through all eight
+  (to Claude Subscription and back) never changes the width and leaves the height equal to a fresh
+  dialog on that engine; nothing clipped; a dragged width kept; each visible wrapped hint exactly
+  as tall as its text; a switch resizes once, straight to its final size, and never moves the
+  window; the minimum size keeps content unclipped at the minimum width and after a long Test
+  Connection error. Both themes, 10, 14, 18 and 24 pt, a stub `MainWindow` (no settings file touched).
+  Runs on a 1920 × 1080 offscreen screen from a `configfile`: the default 800 px screen, with
+  offscreen text drawn as boxes wider than real glyphs, squeezes the DeepL group below its
+  minimum width. Qt splits the platform string on `:`, so the config path is passed relative
+  (from inside its own temp folder), never with a drive letter.
+- **`check_combobox.py`** — offscreen check for the drop-downs (`_combobox_qss()` and
+  `_WidePopupComboBox`), same Fusion style and theme palette as `main()`, both themes. Two
+  layers: the bare helper on a `QComboBox` and a calendar-popup `QDateEdit` at 8/10/14 pt
+  (arrow size, contrast and dimmed disabled arrow; a selected popup row is filled with
+  `sel_bg`; the popup is as wide as its widest item, scrollbar included; the helper changes
+  neither height nor text room), and every real surface that has a combo or date picker —
+  filter bar (all four combos and both pickers), Choose UI Font, Autosave & Backup (enabled
+  and disabled), Translation Settings (engine and both Claude model combos), Merge (all
+  three row kinds), Edit — built through a real `MainWindow` at the default font and at
+  14 pt. The hovered row needs a real cursor and stays a manual item.
+  Two measurement details that were needed: the arrow is measured inside the style's own
+  `SC_ComboBoxArrow` rectangle, not a fixed right-hand strip (offscreen Qt draws text as
+  tofu boxes that a date picker's text would push into it), and a glyph taller than 10 px
+  is rejected (in the light theme the old drop-down's separator line measured 14 × 24 px
+  and passed as "an arrow"). It also runs the real window from a throwaway folder
+  (removed afterwards) with the startup modals patched. **Never end a script that has
+  built a real `MainWindow` with `os._exit()`**: the exit code becomes 139. `os._exit`
+  skips Python's finalization, so Windows' process shutdown runs shiboken6's static
+  `BindingManager` destructor, which destroys every still-live wrapper from inside the
+  DLL detach and re-enters PySide while it is half torn down (a null read at `+0x560` in
+  `pyside6.abi3.dll`, reached through a weakref callback in `SbkDeallocWrapper`; traced
+  with `faulthandler` plus a vectored exception handler and `dbghelp` export names, so the
+  function names are nearest-export guesses, the DLL sequence is solid). A normal exit is
+  clean — 5 of 5 runs, and the real app's `sys.exit(app.exec())` too — so the check simply
+  returns its exit code. `take_screenshots.py` believes the opposite in a comment (ordinary
+  shutdown "reliably segfaults") and ends in `os._exit(0)`; on a scratch copy it exits 139
+  that way and 0 with a normal ending. Text legibility and fit cannot be checked offscreen
+  (no fonts) and stay manual items.
+- **`check_notifications.py`** — offscreen check for the info bar's message queue and history
+  (see [UI labels / info bar](#ui-labels--info-bar)): a lone message, a burst with shortened
+  turns and a full last turn, a takeover past the minimum, `+N`, the fall back to "Unsaved
+  changes", duplicates, the queue and history limits, `ms <= 0` and an unknown level (timing with
+  `NOTIFY_MIN_TURN_MS` patched to 100 ms); the label colour per level in both themes and after a
+  theme switch, escaping and the tooltip; the history icon's lines and dot, the button's place,
+  the unread dot; the pop-up's placeholder, `dlg_bg` surface, order, times, placement, width,
+  Escape, a second press on the button, widgets freed, both themes at 10 and 14 pt; and the
+  split messages of `_load()` and `_apply_merge_diff()`; `_file_label()` and the header version in
+  the Loaded (also with no version), Saved (after a Properties change), Autosaved, Closed,
+  Restored and Restored and reloaded messages; `Settings.startup_notices` for a
+  missing, valid, damaged (with and without a backup) and unreadable settings file (in a
+  folder of its own, `SETTINGS_FILE` patched), and their startup order after the recovery
+  dialog and before the translator message. 1920 × 1080 offscreen screen from a
+  `configfile`, throwaway folder, startup modals patched, like `check_merge_compare.py`.
+- **`check_core_xml.py`**: parsing (every attribute, defaults, header, entities, Latvian text),
+  escaping, the header round trip, corruption guards (self-closing rows, a raw `>` in an attribute,
+  `<strings>`/`<stringTable>`, `data-name`, empty rows, edits to missing attributes), line endings
+  (LF, CRLF, BOM, comments, merge additions), unchanged rows (the frozen sample byte-identical, one
+  edited line, CDATA), the atomic save and `_remove_entry_segment()`.
+- **`check_core_merge.py`**: `compute_merge_diff`, `_pick_newer_entry`, `insert_additions`, and
+  whole-file merges for every choice combination through `MainWindow._apply_merge_diff()`.
+- **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, legacy dates, bulk
+  status, delete, Close File (Save/Discard/Cancel, failed save), Save As, Merge from File, Restore
+  (overwrite with its safety backup, copy, glossary, MD5 mismatch), autosave.
+- **`check_core_dates_filter.py`**, **`check_core_glossary.py`**, **`check_core_backup.py`**
+  (`BackupThread.run()` in every location mode, the throttle, the fallback),
+  **`check_core_settings.py`** (backfill, atomic save, daily archive, recovery),
+  **`check_core_translation.py`** (every engine with the network patched, labels, the Claude CLI
+  started with `CREATE_NO_WINDOW`).
+- **`check_core_corpus.py`**: every `*.xml` you put in `tests/data/real/` (local only: the folder
+  is gitignored apart from its README, since real files may be private) goes through six tests,
+  each a subTest named after the file and always on a copy in a temporary folder: the app and
+  `xml.etree` find the same rows in the same order; an unchanged save is byte-identical; editing
+  the middle row changes only that segment; deleting it leaves exactly the other rows and no new
+  blank line; merging the file into itself changes nothing (skipped for a file with duplicates,
+  which Merge refuses). One `NOTE` per file gives strings, duplicate groups and load/save time
+  for the report. An empty folder passes with a "skipped" note, so a fresh clone runs as usual.
+  Each file adds its own load/save time several times over to every run, the hook's included:
+  three files, one of 11 000 strings, took about 5 s.
+- **`check_run_all_report.py`**: `run_all.py`'s report from made-up results (header, summary,
+  table row and test count, CRLF output, the Notes and Failures sections), `write_report()` (the file name,
+  `latest.md`, pruning), and `main()` with the checks faked (report written, a failed write keeps
+  the exit code, `--trigger` not read as a check name).
+
+---
+
+## Quick Start
+
+```bash
+pip install PySide6
+python xml_translation_editor.py
+# optional: open a specific file directly
+python xml_translation_editor.py "C:\Translations\Latvian.xml"
+```
+
+---
+
+## Architecture
+
+### Data model
+
+```
+parse_file(path) → (segments, entries, culture, display_language, version)
+```
+
+- **`segments`** — `list[str]`, alternating: even indices are non-`<string>` XML
+  fragments, odd indices are raw `<string …>…</string>` snippets.
+- **`entries`** — `list[StringEntry]`, one per `<string>` element.  Each entry
+  carries `seg_idx` pointing to its odd slot in `segments`.
+- **`culture`** — BCP-47 string read from the root element's `Culture` attribute
+  (e.g. `"lv-LV"`), used as the auto-translation target language.
+- **`display_language`** — human-readable language name from the `DisplayLanguage`
+  attribute (e.g. `"Latviešu"`), or `""` if absent.
+- **`version`** — `Version` attribute string (e.g. `"4.1.1140"`), or `""` if absent.
+
+On save, `build_string_xml(entry, original_seg)` rebuilds each `<string>` snippet
+in place; only attribute values and inner text change — tag structure and attribute
+order are preserved so diffs are minimal.
+
+### Key classes
+
+| Class | Responsibility |
+|-------|---------------|
+| `StringEntry` (dataclass) | One translation string — all attributes + `seg_idx` |
+| `Settings` | JSON settings file: load, save, `get(key, default)` |
+| `TranslationModel` | `QAbstractTableModel` wrapping `_all` / `_vis` entry lists |
+| `FilterEngine` | Pure-Python filter predicate; `apply(entries)→List[StringEntry]` |
+| `FilterPanel` | Filter bar (`QFrame#filterBar`) across the top of the editor page; emits `filters_changed` signal |
+| `EditDialog` | Per-entry edit window with navigation, auto-translate, override checkbox |
+| `TranslationThread` | `QThread` wrapper for the six translation engine calls |
+| `BackupThread` | `QThread` wrapper for the backup file read/hash/compress/write/prune work |
+| `TranslationSettingsDialog` | Engine selection + API key config |
+| `ShortcutsDialog` | Record-mode keyboard shortcut editor |
+| `AutosaveBackupDialog` | Autosave interval + backup settings |
+| `RestoreFromBackupDialog` | Tree-view backup browser; selects a slot for restore |
+| `GlossaryDialog` | Table editor for the per-file glossary CSV (`View → Glossary…`) |
+| `WelcomeScreen` | Empty-state screen shown in the central stack when no file is open — logo, app name, version, tagline, Open File button, drag-and-drop hint |
+| `MainWindow` | Top-level window; owns all state |
+| `Notice` (dataclass) | One info-bar message — `text`, `ms`, `level`, `time`; queued and kept in `MainWindow._notice_history` (see [UI labels / info bar](#ui-labels--info-bar)) |
+| `MessageHistoryPopup` | The history button's `Qt.Popup`: one read-only `QTextBrowser` with the session's messages newest first (time in `fg_dim`, text in its level's colour, `_history_html()`), 60 % of the window wide within 420–720 px, at most ~12 lines tall, above the button inside its screen. Created per open (`WA_DeleteOnClose`), no live update; Escape, a click outside or a second press on the button (`WA_NoMouseReplay`) closes it |
+| `PlainPasteTextEdit` | `QTextEdit` subclass — strips formatting and trims whitespace on paste |
+| `StatusDelegate` | `QStyledItemDelegate` — draws the Status column as a pill and highlights the hovered row |
+| `ToggleSwitch` | Custom `QWidget` toggle switch — used for the tablet toggle in `EditDialog` (`tablet_toggle`) |
+| `FlowLayout` | Wrapping `QLayout` — used by `MergeConflictDialog`'s toolbar so its four captioned columns wrap onto new rows instead of truncating |
+| `MergeCompareDialog` | Merge dialog's row compare pop-up (double-click a row): source / open / incoming text side by side with changed words tinted, both sides' metadata, the row's two resolution buttons, Back/Forward. Keeps no state — writes into the row's Resolution combo (see [Merge from File](#merge-from-file)) |
+| `MergeRowInfo` (dataclass) | One Merge row as `MergeConflictDialog.row_info()` returns it: `kind`, `open_entry`, `incoming_entry` (either may be `None`), `combo` |
+| `TranslatorNameDialog` | Startup dialog — collects session translator name → `MainWindow.session_translator` |
+| `FontSettingsDialog` | View → Choose UI Font… — family + size + live preview, replaces `QFontDialog.getFont()` |
+| `FilePropertiesDialog` | File → Properties… — edits the root tag's `DisplayLanguage`/`Version`, shows Culture and read-only file facts (see [File Properties](#file-properties)) |
+| `FileFacts` (dataclass) | Read-only facts for File Properties, built by `compute_file_facts()` |
+| `_WidePopupComboBox` | `QComboBox` whose popup is at least as wide as its widest item — every combo in the app is one (see "Combo box drop-downs and popups") |
+| `_DatePickerField` | Every date field (filter bar From/To, Edit's Date): a read-only `QDateEdit` that opens `_DateDrumPopup`; the wheel, other keys and typing do nothing (see "Date pickers") |
+| `_DateDrumPopup` | The date field's `Qt.Popup`: three `_DrumColumn`s in `DATE_FMT_QT` order plus a format hint; Enter or a click on the middle row confirms, Escape or a click outside cancels |
+| `_DrumColumn` | One custom-painted wheel of numbers (iOS-style): wheel, drag with momentum, keys, click-to-row, snap animation, optional wrap-around |
+| `GlossaryEntry` (dataclass) | One glossary row — `term`, `translation`, optional `note` |
+
+### Translation engines
+
+Seven engines are dispatched from `TranslationThread.run()` by the configured
+`translation.engine` setting value:
+
+| Engine key | Function | Auth |
+|------------|----------|------|
+| `claude` | `_translate_claude()` | API key + selectable model (`translation.claude_model`) |
+| `claude_subscription` | `_get_claude_session()` / `ClaudeSubscriptionSession` | OAuth token from `claude setup-token` — reuses a Claude Pro/Max subscription instead of a metered API key |
+| `deepl` | `_translate_deepl()` | API key (free `:fx` keys auto-detected) |
+| `libretranslate` | `_translate_libretranslate()` | Server URL, optional key |
+| `google_dt` | `_translate_google_dt()` | None — free, keyless |
+| `mymemory_dt` | `_translate_mymemory_dt()` | None — optional email raises daily quota |
+| `microsoft_dt` | `_translate_microsoft_dt()` | Azure API key, optional region |
+
+The last three wrap the `deep-translator` PyPI library (`GoogleTranslator`,
+`MyMemoryTranslator`, `MicrosoftTranslator`) rather than hand-rolled HTTP calls.
+`.claude/rules/security.md` carves out an explicit exception for this — `deep-translator`
+depends on `requests` internally, but no other part of the codebase may import or call
+`requests` directly. Each of the engine functions takes source text + target culture
+(+ engine-specific config), returns the translated string on success, and raises
+`ValueError` for missing required config or `RuntimeError` (message truncated to ~300
+chars) on API/network failure.
+
+Language codes are converted from the XML's BCP-47 `Culture` attribute (e.g. `de-DE`)
+to the form each engine expects via `_culture_to_deepl()` (DeepL-specific mapping) or
+`_culture_to_bcp47()` (used by LibreTranslate and all three `deep-translator` engines).
+
+**Google Translate rate limiting (HTTP 429).** `GoogleTranslator` scrapes Google's public
+web page (`translate.google.com/m`), which throttles by IP address with no published quota, and
+deep-translator raises `TooManyRequests` whose text says "try the translate_batch function".
+That advice is wrong for this app: `translate_batch()` only loops `translate()` once per string,
+sending the same requests back to back. `_translate_google_dt()` retries once after
+`_GOOGLE_RETRY_DELAY_S` (3 s) and then raises `_GOOGLE_RATE_LIMIT_MSG`, kept within the Edit
+dialog's 120-character status line; `_on_translation_error()` already stops a Robo-Translate
+chain. The pause is `_sleep_unless_cancelled()`, polling the thread's
+`isInterruptionRequested()` every 0.1 s, and `closeEvent()` calls `requestInterruption()` on
+every translation thread before its 2 s `wait()`: a plain `time.sleep(3)` could outlive that
+wait and destroy a still-running `QThread` on exit.
+
+**Translator-credit label**: the module-level `_ENGINE_LABELS` (read in `_on_translation_done()`)
+must have an entry for every engine key in `_TRANSLATION_ENGINES` (the Translation Settings combo's
+list) except `none`, or a successful translation silently falls back to the generic
+"Auto-translate" credit instead of naming the engine. When adding an engine, add it to both;
+`check_core_translation.py` fails otherwise.
+
+**Translation Settings dialog sizing.** Each engine has its own settings group, and
+`_on_engine_changed()` shows one and hides the rest. Qt grows a top-level window whose content
+grows but never shrinks one, so the dialog used to keep the height of the biggest group shown so
+far (Claude Subscription) and spread the leftover height as gaps between the groups.
+`_fit_to_content()` (end of `__init__`) sets the width once, to the widest group in
+`self._engine_groups` plus the layout margins, capped to the screen minus 60 px, so the right edge
+never moves on a switch. `_fit_height()` is the only thing that sizes the window: the dialog's
+layout is `SetNoConstraint` (see the "Two things sizing one top-level window" pitfall for why), so
+`event()` calls `_fit_height()` on every `LayoutRequest`, which Qt posts when an engine group is
+shown or hidden, or when a long Test Connection result or sign-in status rewraps. It snaps the
+height to `layout().heightForWidth(width)` and keeps the current width, including one the user
+dragged. It also takes over the job the layout constraint used to do: the minimum width is the
+layout's minimum (never below `_MIN_WIDTH`, 500), the minimum height is the content's height,
+and `resizeEvent()` raises the minimum height when a narrower window makes the hints rewrap, so
+a drag can never clip a row. A stretch between the groups and the Test Connection row collects
+any height the user adds by hand, but only until the next `LayoutRequest`: `_fit_height()` snaps
+the height back to the content on every one, not only on an engine switch, so a Test Connection
+result or a sign-in status change also undoes a dragged height (a dragged width is kept). Known
+and accepted; the window never clips and snaps to a correct size. When adding an engine, add its group to `self._engine_groups`. Each word-wrapped hint row is
+`addRow(QLabel(), hint)`, not `addRow("", hint)` (see the `QFormLayout` pitfall).
+`python tests/check_translation_settings_size.py` is the regression check.
+
+**Per-file glossary.** Each XML file may have a paired glossary CSV,
+`<stem>.glossary.csv` (e.g. `Latvian.xml` → `Latvian.glossary.csv`), in the
+same directory, computed by `glossary_path_for()`. It is parsed by
+`parse_glossary()` into `MainWindow.glossary` (a `List[GlossaryEntry]`)
+whenever a file is opened via `_load()`. Only the `claude` and
+`claude_subscription` engines use it — `TranslationThread.run()` matches
+the source text against the glossary with `_match_glossary()`
+(case-insensitive whole-word/phrase, same technique as
+`FilterEngine.matches`, plus tolerance for a regular English plural suffix
+`-s`/`-es` so e.g. a "Lane" entry also matches "Lanes" without a second
+glossary row — irregular plurals and other inflections still need their
+own row) and appends every matched term (there's no cap — a string with
+several glossary terms gets all of them in the prompt) to the prompt via
+`_format_glossary_prompt_block()`. The five non-LLM engines
+(DeepL/LibreTranslate/Google/MyMemory/Microsoft) have no free-text prompt
+field to inject into and are unaffected. Governed by
+`translation.glossary_enabled` (default `True`), toggled in Translation
+Settings.
+
+**Glossary load verification & correction.** Because the CSV is editable in
+any external tool, `parse_glossary()` never raises — it returns
+`(entries, warnings)` and applies best-effort recovery: `utf-8-sig` first,
+falling back to `cp1257` (Windows Baltic — the correct legacy ANSI codepage
+for Latvian/Lithuanian/Estonian text; `cp1252`, Western European, cannot
+represent Latvian macron characters like `ā`) on a decode error; delimiter
+auto-detection via `csv.Sniffer()` restricted to `,`/`;`/`\t` (covers
+European-locale Excel, including Latvian, defaulting to semicolon-separated
+CSV); and case-insensitive, alias-tolerant header matching
+(`_resolve_glossary_columns()`, `_GLOSSARY_HEADER_ALIASES`) with positional
+fallback if no header is recognized at all. `MainWindow._load()` stores any
+warnings as `self.glossary_load_warnings` and shows them as a `"Glossary: …"`
+warning message right after "Loaded: …". `GlossaryDialog` also shows them as a
+banner so the user knows *before* clicking Save that doing so will rewrite
+the file in canonical form. Corrections are never written back to disk
+automatically — only `GlossaryDialog`'s explicit Save does that, via
+`write_glossary()` (always `utf-8-sig`, comma-delimited,
+`term,translation,note` header).
+
+**Glossary dialog sizing & layout.** `GlossaryDialog` auto-fits its
+initial size to content via `_fit_to_content()`, the same
+`layout().sizeHint()` pattern as `RestoreFromBackupDialog._fit_to_content()`
+(see [Restore from Backup](#restore-from-backup)) — computed once at the
+end of `__init__`, after `_load_values()`/`_apply_style()`, and not
+re-triggered by later Add/Remove/Duplicate Row actions. Unlike Restore's
+version, Glossary's height cap is `min(avail.height() - 60, avail.height() *
+0.75)`, not just `avail.height() - 60` — a glossary can realistically hold far
+more rows than a backup-slot tree ever does, and the plain screen-minus-margin
+cap let a large one grow to near-full-screen height before this was added.
+75% is a proportion of the screen, not a fixed pixel count, so it scales
+across different monitor sizes; past that point the table's own scrollbar
+takes over rather than the window. Small glossaries are unaffected — the cap
+only clips content that would otherwise exceed it, verified directly (a
+1-row glossary still sizes to ~460px, well under the ~600px cap on a
+768px-tall available area, while a 300-row one is correctly clamped to the
+cap instead of the old, larger screen-minus-60 bound). Its floor,
+`setMinimumSize(860, 460)`, matches Restore dialog's own minimum exactly,
+so both dialogs feel consistent in size even for a small glossary. The
+Term and Translation columns are `Interactive` (user-resizable) with wider
+starting widths (220px/260px) than the previous shrink-to-fit default;
+Note keeps `setStretchLastSection(True)` to fill remaining space. The
+table also uses `setAlternatingRowColors(True)` and `SelectRows`
+selection, matching the main entry table and Restore dialog's tree —
+clicking anywhere in a row selects it for "Remove Selected Row", not just
+a specific cell.
+
+**Glossary row duplication.** `GlossaryDialog._duplicate_selected_row()`
+(wired to the "Duplicate Row" button, between Add Row and Remove Selected
+Row) copies the selected row's Term/Translation/Note into a new row
+inserted directly below it — not appended at the end of the table — and
+selects the new row, matching `_add_row()`'s existing selection behavior.
+No-ops silently if nothing is selected, the same convention
+`_remove_selected_row()` already uses. No duplicate-term validation is
+added; a duplicated Term is only caught (or not) by the same Save-time
+non-empty check that already applies to every row.
+
+**Glossary dialog font parity with the main table.** `GlossaryDialog`
+captures `mw.settings.get_font()` as `self.app_font` in `__init__` (same
+source `EditDialog` is handed for its own `app_font`) and applies it
+explicitly to `self.table` and its horizontal header via `setFont()`,
+rather than relying on implicit inheritance from `QApplication`'s font.
+Row height uses the identical `max(24, pt * 2 + 8)` formula
+`MainWindow._apply_app_font()` uses for the main entry table's
+`verticalHeader().setDefaultSectionSize()`, so glossary rows stay exactly
+as tall as main-table rows for any configured `View → Choose UI Font…`
+size, not just Qt's built-in default. Because this changes actual row
+height, `_fit_to_content()` reads `verticalHeader().sectionSize(0)` /
+`defaultSectionSize()` for its height estimate instead of
+`sizeHintForRow()` — the latter reflects only font-metric content sizing
+and silently ignores an explicit `setDefaultSectionSize()` override,
+which would otherwise make the dialog auto-size a bit short whenever the
+configured font is larger than Qt's default.
+
+**Header row styling parity.** The main entry table, `GlossaryDialog`,
+`RestoreFromBackupDialog` and `MergeConflictDialog` all take their grid and
+header look from `_table_qss()` (see [Surfaces, bands and shared QSS
+helpers](#surfaces-bands-and-shared-qss-helpers)), so the header colours,
+the divider between sections and the `font-size: {pt}pt` sync to the
+configured UI font are defined once. `RestoreFromBackupDialog` and
+`MergeConflictDialog` have no stored `app_font` (unlike
+`GlossaryDialog`/`EditDialog`). `RestoreFromBackupDialog._apply_style()`
+reads `pt` directly from `self.parent().settings.get_font()` each time it
+runs, falling back to `10`; `MergeConflictDialog` caches it once as
+`self._pt`, resolved in `__init__` alongside `self._theme`/`self._is_dark`
+(see [Merge from File](#merge-from-file)). Those two are the ones that must
+exist early, because `_recolor_row()` runs while rows are still being built
+in `_load_values()`, before `_apply_style()`; `_pt` just follows them.
+
+**Glossary in backup/restore.** `_create_backup()` also backs up
+`glossary_path_for(source_path)` into the same slot as the XML, using the
+same `backup.compress` setting, if the glossary file exists; the resulting
+`backup_info.json` gets `glossary_backed_up` (always present) plus
+`glossary_file`/`glossary_compressed`/`glossary_md5_checksum` (only when
+`true`). `RestoreFromBackupDialog` shows an "Also restore glossary"
+checkbox only for slots with `glossary_backed_up: true`, defaulting from
+`backup.restore_glossary_default`; its `restore_glossary_requested()`
+accessor returns the box's `isChecked()` state as `done()` stored it — not
+`isVisible()`, which is always `False` once the dialog is hidden — and never
+reads the checkbox itself: `exec()` has already deleted the dialog by the time
+`_open_restore_backup()` asks (see the `WA_DeleteOnClose` pitfall).
+The glossary restore is split into a read step and a write step,
+deliberately not adjacent — and, since the safety backup became
+asynchronous, the two now live in different methods.
+`MainWindow._do_restore()` calls `_read_glossary_backup(slot_dir, info)`,
+which decompresses and MD5-verifies the glossary from the backup slot right
+after the discard-changes confirmation — before `_do_restore()`'s
+pre-restore safety backup (`self._create_backup(dest_path,
+trigger="pre_restore_safety", notify=False)`, *started* before the
+destination is overwritten, with the overwrite deferred to
+`_do_restore_after_backup()` on that `BackupThread`'s `finished` signal, so
+restoring the wrong slot is never unrecoverable) runs, because that backup's
+own pruning operates on the same `key_dir` `slot_dir` lives under and could
+otherwise delete `slot_dir` — and its glossary — before it's read.
+`_do_restore_after_backup()` then calls
+`_write_restored_glossary(dest_path, raw_bytes)`, which writes the
+already-read bytes to
+`glossary_path_for(dest_path)` — i.e. it always follows wherever the XML
+itself ended up, original location or `_restored_<timestamp>` copy — but only
+runs *after* the main XML write, so the safety backup in between still
+captures `dest_path`'s true pre-restore glossary rather than the one this
+restore is about to write. The glossary result is its own message after
+"Restored…" — "Glossary restored" (info) or "Glossary restore failed"
+(error) — and a failure never blocks or rolls back the already-completed
+XML restore. `_write_restore_log()` adds
+`restored_glossary_to`/`glossary_md5_verified` to the log record only when
+a glossary restore was actually performed.
+
+**`claude_subscription` — persistent-session model.** Unlike the other six engines,
+`claude_subscription` does not make a one-shot HTTP call per string. `MainWindow` owns
+a single `ClaudeSubscriptionSession` (`self.claude_session`), created lazily on first
+use by `MainWindow._get_claude_session()` and reused for every subsequent translation
+for the lifetime of the app — no new OS process is spawned per string. The session
+runs the `claude-agent-sdk`'s `ClaudeSDKClient` on a dedicated background thread with
+its own asyncio event loop; `translate()` blocks the calling `TranslationThread` until
+a result or error is available, and makes one reconnect attempt if the underlying
+subprocess connection has broken.
+
+**A single `_pump()` coroutine owns the client — callers never touch the message
+stream.** `translate()` builds a `_TranslationRequest`, puts it on an
+`asyncio.Queue`, and blocks on that request's `concurrent.futures.Future`; the pump
+runs requests strictly one at a time and *always* consumes each response through its
+`ResultMessage`. This is load-bearing, not stylistic: the SDK multiplexes every query
+onto one shared, uncorrelated message stream (`receive_response()` yields whatever
+arrives next and stops at the first `ResultMessage`), so a consumer that walks away
+mid-response leaves the CLI's remaining messages buffered for the next reader — which
+then returns the *previous* entry's translation and stays one behind for the rest of
+the session. See the "Never abandon a `receive_response()` drain" pitfall below and
+docs/superpowers/specs/2026-09-04-claude-subscription-stream-desync-design.md.
+Each drain is bounded by `asyncio.wait_for(..., timeout=req.timeout)`; that timeout
+*does* desync the stream, so `_run_request()` reconnects unconditionally before
+retrying (a fresh subprocess starts with an empty stream). The session is torn down
+via `self.claude_session.close()`
+in `MainWindow.closeEvent()` when the app closes. Signing in (`TranslationSettingsDialog`'s
+"Sign in with Claude subscription" button) runs `claude setup-token` in a background
+`ClaudeSetupTokenThread` and stores the resulting OAuth token in
+`translation.claude_subscription_token`; no token is ever hand-edited.
+`claude setup-token`'s stdout is multi-line human-readable CLI output (login
+instructions, confirmation text), not a bare token — `ClaudeSetupTokenThread`
+extracts just the token via its `sk-ant-` prefix (after stripping ANSI colour
+codes) rather than trusting the whole blob. See the "OAuth token extraction"
+pitfall below.
+
+**Translation thread lifecycle — generation guard and cancellation.**
+`EditDialog` is a single, long-lived dialog reused across Next/Previous navigation and
+Robo-Translate's auto-advance, so a translation started for one entry can still be
+in flight after the user has moved to another. `self._transl_generation` (an `int`,
+bumped on every new translation, every `_navigate()`, and whenever the dialog is
+dismissed (Save, Cancel/Escape, or close)) is
+tagged onto each `TranslationThread` at creation (`thread._generation`); the connected
+`_on_translation_done()`/`_on_translation_error()` slots check `self.sender()`'s tag
+against the current generation and discard anything stale before touching any widget.
+`_robo_tick()` applies the same check to its own captured generation as a defense-in-depth
+measure. `EditDialog._abandon_stale_translation()` runs at every point a thread becomes
+stale: it disconnects the old thread's signals, and — only for the `claude_subscription`
+engine — calls `ClaudeSubscriptionSession.cancel_current()`, which settles just that one
+request's future with `CancelledError` (never the session itself) so the calling
+`TranslationThread` unblocks in ~one tick instead of sitting out the full timeout and
+delaying the next real translation. It deliberately does **not** cancel the coroutine
+draining that response — the pump finishes the drain regardless — and best-effort calls
+the SDK's real `client.interrupt()` so the CLI cuts the turn short and the drain ends
+quickly. Correctness never depends on `interrupt()` succeeding; only latency does.
+`TranslationSettingsDialog._disconnect_background_threads()` applies the identical
+cancel-if-claude_subscription check to its own `_test_thread` (reading the engine
+back off the abandoned thread's own `_cfg`, since the dialog has no separate stored
+copy the way `EditDialog._transl_cfg` is) — Test Connection shares the same
+`ClaudeSubscriptionSession` queue as real translations, so dismissing the
+Settings dialog mid-test needs the same cancellation or a subsequent `EditDialog`
+translation can stall behind it. `ClaudeSubscriptionSession.start()`
+is additionally guarded by its own `_start_lock` so two `TranslationThread`s racing to
+start the session for the first time can't both spawn a background thread; every caller
+waits on `_ready`, including one that finds the thread already spawned, because the
+request queue is created during boot and a caller that skipped the wait could otherwise
+reach `translate()` while `self._queue` is still `None`. Both
+`EditDialog._transl_thread` and `TranslationSettingsDialog._test_thread` are parented to
+`MainWindow` (never to the dialog that creates them) and tracked in
+`MainWindow._translation_threads`, waited on the same way `_backup_threads` is in
+`closeEvent()` — a dialog closing can never risk destroying a still-running
+`TranslationThread`. See
+docs/superpowers/specs/2026-09-03-translation-thread-lifecycle-design.md — and, for the
+`cancel_current()` mechanism that spec introduced and this one replaced,
+docs/superpowers/specs/2026-09-04-claude-subscription-stream-desync-design.md.
+
+### State ownership (MainWindow)
+
+```python
+self.segments:      List[str]          # raw XML fragments
+self.entries:       List[StringEntry]  # all parsed entries
+self.model:         TranslationModel   # visible slice (filtered)
+self.filter_eng:    FilterEngine
+self.current_file:  Optional[Path]
+self.is_modified:   bool
+self.session_translator: str           # in-memory only, never persisted
+self.target_culture:   str             # from XML header — BCP-47 code, e.g. "lv-LV"
+self.display_language: str             # from XML header — human-readable name, e.g. "Latviešu"
+self.xml_version:      str             # from XML header — version string, e.g. "4.1.1140"
+```
+
+### Surfaces, bands and shared QSS helpers
+
+The window canvas is `bg` (`#1e1e1e` dark, `#f0f0f0` light); data sits on lifted surfaces (`bg2` rows, `bg3` alternate rows and headers); dialogs use `dlg_bg`. The QSS that several windows need lives in eight helpers defined next to `_prominent_checkbox_qss()` — interpolate them into a stylesheet instead of copying rules:
+
+| Helper | Owns |
+|--------|------|
+| `_table_qss(t, pt, gridline=None)` | grid look for `QTableView`/`QTableWidget`/`QTreeWidget`, `QHeaderView` (including its empty area), `QHeaderView::section`, `QTableCornerButton::section`. Dialog tables pass `gridline=t['border']` |
+| `_button_qss(t, pt)` | every `QPushButton` state (`:hover`, `:pressed`, `:focus`, `:disabled`), plus the `role="primary"` (blue) and `role="danger"` (red outline) dynamic properties, each with its own `:focus` and `:disabled` rules — mark exactly one main action per dialog with `btn.setProperty("role", "primary")` |
+| `_band_qss(t, pt_small)` | `QFrame#filterBar`, `#dlgHeaderBand` (2 px accent line on top, `bar_border` line below), `#dlgFooterBand` and `#dlgStatusBar` (`bar_border` line on top), the filter captions/dividers/active dot, and the `[active="true"]` field border |
+| `_field_state_qss(t)` | the accent `:focus` border for line edits, text edits, combo boxes and date edits — not spin boxes; the `:disabled` look (`dlg_btn_dis` fill, `dlg_btn_dis_fg` text, `border` border) for line edits, combo boxes, date edits and spin boxes, plus the dimmed text of a disabled check box. Interpolate it after the surface's own base input rules |
+| `_spinbox_qss(t, pt)` | the up/down buttons and arrows of a `QSpinBox` that has a base rule of its own (background/border/padding): button strip, hover, disabled look, and the arrow glyphs. Interpolate it right after that base rule. See "Spin-box buttons and arrows" below |
+| `_combobox_qss(t, pt)` | the drop-down arrow and the popup of a `QComboBox` that has a base rule of its own, plus the arrow of the filter bar's `QDateEdit` pickers: arrow glyphs (enabled and disabled), a 16 px strip, `combobox-popup: 0`, and an accent-filled hovered/selected popup row. Interpolate it right after that base rule, and make the combo a `_WidePopupComboBox`. See "Combo box drop-downs and popups" below |
+| `_groupbox_qss(t, pt)` | every `QGroupBox`: `header_fg` title, `border` frame, 4 px radius, and a `margin-top`/`padding-top` measured from the UI font so the border line runs through the middle of the title's capitals and the contents start under the title at any font size. See the `QGroupBox` item under Qt patterns |
+| `_scrollbar_qss(t, px)` | every `QScrollBar`: track, handle, the arrow buttons and their glyphs. Unlike the other seven it is interpolated only once, in `MainWindow._apply_theme()`, and every dialog inherits it — no dialog may define its own `QScrollBar` rule. See "Scrollbar handle and arrows" below |
+
+**Focus and border rules.** Keyboard focus shows as an accent border, so a rule that sets a button border — a `[role=...]` rule, a `[tint=...]` rule, an `#objectName` rule such as `#navBtn` — ties with or beats `QPushButton:focus` (by specificity or declaration order) and silently hides it: each such rule needs its own `:focus` rule. `role="primary"` uses `sel_fg` as its focus border, because its fill already equals the accent colour in the light theme; neutral, danger, tinted (Merge toolbar) and `#navBtn` (Edit) buttons use the accent colour. The one deliberate exception is `#recordingBtn` (Shortcuts, while a shortcut is being recorded): the dialog grabs the keyboard, and the state shows through its fill and its "Cancel" label instead. `_field_state_qss()` has no `QSpinBox:focus` rule on purpose: a natively drawn spin box (Shortcuts' delay box) loses its arrow glyphs once a `:focus` rule switches it to QSS rendering.
+
+**Transparent labels.** `MainWindow._apply_theme()` sets `background: transparent` on `QLabel`, `QCheckBox` and `QGroupBox`. Dialogs are children of `MainWindow`, so they inherit its stylesheet, including `QMainWindow, QWidget { background: bg }`; without the transparent rule every label in a dialog paints a `bg` rectangle on the `dlg_bg` surface (the "black strips"). Never give a label its own opaque background inside a dialog.
+
+**A widget's own stylesheet beats an inherited one, per property, regardless of specificity.** A dialog's own `QComboBox { background: … }` therefore beats the main window's `QComboBox:disabled`. That is why the focus/disabled rules are a helper interpolated into each dialog's own stylesheet rather than a rule that only lives in the main window's.
+
+**Tokens.** `bar_border` (band lines and dividers), `hover_row` (main-grid row hover) and the AA-safe text colours `text_ok`, `text_warn`, `text_bad` (info-bar save status and message levels, the history button's dot, Merge column captions, danger-button text) exist in both themes; every text pair is at least 4.5:1. `fg_dim`/`dlg_info_fg` are `#9a9a9a` in the dark theme (`#888888` was 4.3:1 on the dialog surface). Hint text is sized from the configured UI font, never a fixed `8pt`/`9pt`: `max(8, pt - 1)` in the dialogs, `pt_small = max(7, pt - 1)` in `MainWindow._apply_theme()`. Scrollbar thickness follows the same convention — `scrollbar_px = max(12, pt + 5)`, not a fixed px — since a flat `10px` (the original value) read as too thin once actually compared against a chosen UI font, let alone a deliberately enlarged one; there is exactly one `QScrollBar` QSS rule, built by `_scrollbar_qss()` and interpolated only in `MainWindow._apply_theme()`, and every dialog inherits it the same way it inherits every other rule there (see "A widget's own stylesheet beats an inherited one" above — no dialog sets its own `QScrollBar` rule, so this one location governs the main table, Glossary, Merge, and Restore at once). No explicit HighDPI handling exists anywhere in this app (grep confirms it), because none is needed: Qt6 always scales logical-pixel QSS values, `scrollbar_px` included, by the OS display-scaling factor, so this stays visually consistent across different monitor resolutions without extra code.
+
+**Scrollbar handle and arrows.** The rule used to style only `::handle`, which had two visible defects on a long table (11 000+ rows): the handle sat *on top of* the up/down arrow buttons whenever the view was scrolled to the top or bottom, and it was a 24 px pill (the horizontal one had no minimum at all). Cause, verified by rendering offscreen under `windows11`, `windowsvista` and `Fusion` alike: with no `::add-line`/`::sub-line` rules the style sheet lays the handle out over the *whole* bar while the base style still draws its buttons underneath. `_scrollbar_qss()` therefore (1) reserves `px` of margin at both ends of the bar and positions `::add-line`/`::sub-line` explicitly (`subcontrol-origin: margin`), so the handle can only travel between the buttons; (2) sets a minimum handle length that scales with the UI font like the thickness does: `2 × px` for every bar, `4 × px` (60 px at the default 10 pt) inside a `QAbstractItemView` (tables, trees), where thousands of rows shrink the handle to a sliver — a single `4 × px` minimum was tried first and froze the handle in the Edit dialog's 100 px-tall source box at UI fonts of 12 pt and up (groove no longer than the handle, so it looked full-length and could not be dragged; the old `24 px` never did this), which is why the larger minimum is scoped to item views rather than global; (3) supplies the arrow glyphs. Styling the buttons makes Qt stop drawing its own glyph, and QSS cannot draw one by itself — each alternative was tried and verified to fail: an inline `data:` URI in `image: url(...)` renders nothing (the prominent checkbox's SVG tick had exactly this defect — a checked box painted a plain accent square — and now uses the same file mechanism, see "Prominent checkbox style" under Qt patterns), a border-triangle renders as a solid square, and margin-only (no button rules) puts the down button inside the track with the handle still covering it. So `_write_scrollbar_arrows()` renders four small PNGs with `QPainter` in the `fg_dim` colour and, through the shared `_write_glyph_pngs()` (also used for the checkbox tick), writes them to `%LOCALAPPDATA%\cache\XMLTranslationEditor\glyphs\` (`QStandardPaths.GenericCacheLocation`), referenced as `image: url("…")`. The folder is deliberately **not** under `%TEMP%`: `TEMP`/`TMP` can point at a shared, writable folder, and these files are handed to Qt's image decoder — anyone who could pre-create the deterministic file name there could feed it arbitrary image data. The file name carries a hash of the PNG bytes, so a changed colour, size or drawing gets a new file; an existing file is rewritten only when its bytes differ (`_file_holds()`), so a corrupt or planted one is repaired while a healthy one another running instance may be reading is never touched, and losing the `os.replace()` race to such an instance (both start with the file missing) is not a failure since its file is identical. The cost is that superseded files linger in the cache folder, a few hundred bytes each. Any exception on this path — an unusable folder, a full disk, a PySide API change — is recorded by `_log_error()` and `_scrollbar_qss()` then omits the `image:` rules: the buttons stay correctly placed but blank, never a broken layout, and the app still starts. The glyph is rendered at 4× the button size (`_GLYPH_SUPERSAMPLE`) and scaled down by the style sheet: at 1× the result is identical to a 1× image, but at 200 % display scaling (verified offscreen with `QT_SCALE_FACTOR=2`) it stays crisp where a 1× image is visibly bilinear-soft. `python tests/check_scrollbar.py` is the regression check (see the Tools folder section): both themes, four UI font sizes, a 11 000-row table, a 2 000-column table and a 100 px text box; handle position at min/mid/max, handle travel, minimum length, glyphs painted; plus the unwritable-folder fallback, contained failures, repair of a corrupt file, the lost write race, and the cache folder not being under the shared temp root.
+
+**Spin-box buttons and arrows.** A `QSpinBox { background; border; padding }` rule moves the whole widget to style-sheet rendering, and with no `::up-button`/`::down-button`/arrow rules the buttons collapse to a 14 px strip holding a 3-4 px speck of an arrow in a colour that barely differs from the field — reported as "the arrows in the Choose UI Font dialog are barely visible" (the Autosave & Backup dialog has the identical rule and the identical defect). Verified by rendering under Fusion with the app's theme palette on the native platform: a bare, unstyled spin box draws proper ~8 × 4 px triangles, so the base rule is the cause, not Fusion. Only the dialogs whose `QSpinBox` has a base rule (Choose UI Font, Autosave & Backup, File Properties) interpolate `_spinbox_qss()`; Shortcuts' delay box has none, is drawn natively and needs nothing. Like the scrollbar, QSS cannot draw the arrow, so `_write_spin_arrows()` renders four PNGs through `_write_glyph_pngs()` (same cache folder and failure handling; unwritable folder → blank but correctly placed buttons, no image rule): up/down in `fg`, plus `dlg_btn_dis_fg` variants for `:disabled`, which matters because Autosave & Backup enables and disables its spin boxes at runtime. The triangle is `_SPIN_ARROW_FILL` = 80 % of its `max(10, pt + 2)` px box (scrollbar arrows use 54 %), the button is `px + 2` wide (14 px at the default 10 pt, exactly the old strip), both scale with the UI font, and the strip is `bg3` (the scrollbar's own button surface; hover `border2`). **Token pitfall:** `dlg_btn_bg` is the *blue primary-button* fill, not a neutral one — an arrow in `fg` on it measured 4.3:1 dark / 3.7:1 light, which is what the regression check caught. **Text room:** Autosave & Backup's spin boxes used to be a fixed 130 px, so the strip's width came straight out of the text area and "Always back up" (the widest value) was cut from 12 pt ("ays back up" at 14 pt). They are now as wide as the widest one's size hint, which covers the minimum, the maximum with its suffix, the special text and the button strip, and is recomputed from the font on every open (`AutosaveBackupDialog._align_columns()`); `python tests/check_autosave_fit.py` checks the fit. `python tests/check_spinbox_arrows.py` is the regression check (see the Tools folder section).
+
+**Combo box drop-downs and popups.** A `QComboBox { background; border; padding }` rule moves the widget to style-sheet rendering, and with no `::drop-down`/`::down-arrow` rules the drop-down keeps Fusion's 16 px strip holding a 6 × 3 px speck of an arrow (4.0:1 against the field in the dark theme, so under the app's 4.5:1 floor) with a separator/bevel line beside it. The popup had its own defect: Fusion draws a styled combo's popup in *menu style*, which ignores `QAbstractItemView::item` rules, so the hovered row was a barely-there grey (dark) or a white row with a grey outline (light). `_combobox_qss()` — interpolated right after the base `QComboBox` rule in the six stylesheets that have one (Translation Settings, Choose UI Font, Edit, Autosave & Backup, Merge, `MainWindow._apply_theme()`; the last also reaches the filter bar's `QDateEdit` pickers and Edit's date box, whose calendar-popup drop-down has the same defect) — (1) draws the arrow as a PNG through `_write_combo_arrows()`/`_write_glyph_pngs()`: the spin boxes' triangle (`_SPIN_ARROW_FILL`) in `fg`, a `dlg_btn_dis_fg` variant for `:disabled` (Autosave & Backup disables its location combo at runtime), same cache folder and failure handling (unwritable folder → blank but correctly placed drop-down, no image rule); (2) sets `combobox-popup: 0`, which turns the popup into a plain list so `::item:hover`/`::item:selected` can fill the row with `sel_bg`/`sel_fg`; (3) gives that list a `border2` border, 8 px item padding and a `pt * 2 + 4` px minimum row height. **Text room:** the strip is Fusion's own 16 px (`max(16, …)`, growing only if the larger arrow needs it) because its width comes straight out of the field's text room — a first version with a `px + 8` strip cut the Backup location combo's "(recommended)" to "(recommended" at the default font (the combo was then a fixed 230 px; it now takes its own size hint, so it grows with the strip and the font), and the date pickers already clip their text at 14 pt (before this change too). **Popup width:** a list popup is exactly as wide as its combo, so any longer item was elided ("Co…te" for "Complete" in the 95 px Status combo at 14 pt; the Backup location choices) where Fusion's menu-style popup widens to fit. `_WidePopupComboBox` — a `QComboBox` whose `showPopup()` sets the view's minimum width to `sizeHintForColumn(0)` plus the frame, measured each time the popup opens so a UI-font change is picked up — fixes that, and **every combo in the app must be one** except the `QFontComboBox`; a plain `QComboBox()` silently brings the elision back (`check_combobox.py` catches it on every real surface it visits, at the default font and at 14 pt). The class also adds the popup scrollbar's width when there are more items than `maxVisibleItems()` — otherwise the widest item was elided by exactly that width. `QFontComboBox` (Choose UI Font's family picker) is deliberately left alone: it is editable, so Fusion already gives it a list popup, its popup looks and measures exactly as before (verified natively; offscreen has no fonts), and measuring its column would walk every installed font on each open. **Menu-style alternatives that were tried and rejected:** `QComboBox::item:selected` alone does colour the hovered row of the menu-style popup and keeps its auto-width, but it puts a check-mark gutter on styled rows only, so the highlighted row's text sits ~12 px right of the others (`padding-left: 0` and `margin: 0` variations remove the mark but not the shift, and `::indicator { width: 0 }` leaves stray boxes on the other rows); adding a base `QComboBox::item { padding… }` rule to line the rows up makes the popup 2 000+ px tall. **Verify popup work natively**: in an offscreen probe the popup opens, but the hovered row needs a real cursor (`QCursor.setPos` + `QTest.qWait`), and the elision/indent defects only show with real fonts. `python tests/check_combobox.py` is the regression check (see the Tools folder section).
+
+**Date pickers.** The filter bar's From/To and Edit's Date are `_DatePickerField`s: display-only `QDateEdit`s whose date changes only through `_DateDrumPopup`, so a stray wheel notch or key press can never change a date. A click (on the text or the arrow), or Enter, Return, Space, F4 or Alt+Down, opens the pop-up; `wheelEvent` ignores the event, `keyPressEvent` swallows every other key except Tab (Escape still reaches the dialog), the line edit is read-only, and its mouse press, double click and context menu go through an event filter (the text part is its own child widget; the spin box's context menu would offer Step up/down). `setCalendarPopup(True)` is set only because Qt draws a `QDateEdit` drop-down arrow only then — styled by `_combobox_qss()` like the combos — and none of the events that would open Qt's own calendar reach `QDateEdit`. The field has **no minimum date**: `EditDialog._commit_current()` writes the date whenever its text differs from the stored one, so clamping a pre-2000 date would rewrite it on an unrelated Save. The pop-up (created per open, `WA_DeleteOnClose`, theme and font from `_theme_and_font()`) holds a day, month and year `_DrumColumn` in the order `_date_section_order(DATE_FMT_QT)` gives, all numbers, and a dim `_date_format_hint()` line ("Format: dd.mm.yyyy"; also the field's tooltip). It opens under the field, or above it when there is no room below. Enter/Return or a click on a column's middle row confirms (`field.setDate()`, then close); Escape or a click outside (Qt.Popup's own behaviour) cancels. The pop-up sets `Qt.WA_NoMouseReplay` when the closing press lands on its own field's rectangle, so a second click on the field (or a double click) closes the pop-up instead of the replayed press reopening it — the same behaviour as `QComboBox`'s own popup. A click on another row scrolls that row to the middle. Day and month wrap around; the year runs `DRUM_YEAR_FIRST`–`DRUM_YEAR_LAST` (2000–2100), plus the field's own year at the matching end when it lies outside, so confirming an untouched 1998 date keeps it. A month or year change rebuilds the day list and clamps the day (`_fit_days()`). `_DrumColumn.value()` is the row the column is settling on, not the one drawn mid-animation, so reading it right after a key press is correct; `value_changed` fires as soon as that target changes. Toward the top of a column is the previous value (Up, wheel up, a click above the middle). The rows are painted by the column itself: `bg3` middle band between `border2` lines, a 2 px accent underline on the focused column, other rows smaller and fading to `fg_dim`. `python tests/check_date_picker.py` is the regression check; `check_combobox.py` covers the field's drop-down arrow.
+
+**Data-dialog structure.** Restore, Glossary and Merge use a zero-margin layout: a `QFrame#dlgHeaderBand`, the table/tree edge to edge (no inset, no border), a `QFrame#dlgFooterBand` and — Merge only — a `QFrame#dlgStatusBar` as the bottom-most strip, like the main window's info bar. The dialog layout has no margins of its own; each band carries its own inner margins (12 px at the sides), so code that needs the side padding reads the band's: `MergeConflictDialog._wanted_width()` uses `self._header_band.layout().contentsMargins()`, while the other two `_fit_to_content()` methods read `layout().sizeHint()`, which already includes the bands. Form dialogs (Autosave & Backup, Translation Settings, Shortcuts, Translator Name, Edit) keep the `dlg_bg` surface and, where they have them, their bordered group boxes; they get the shared button and field rules but no bands.
+
+**Filter bar.** `FilterPanel` is `QFrame#filterBar`: one `QGridLayout` with two rows shared by every column — captions (row 0, each a `QLabel` with property `filterCaption`) and control rows (row 1) — and `QFrame#filterDivider` lines spanning both rows; `_add_column()` places one column. Every field and button takes a vertical `Expanding` policy and fills the shared row, so their tops and bottoms match at any UI font size (the From/To checkboxes and the Mode/In labels keep their own policy): never give a bar field or button a fixed height or a fixed square size — the clear button used to be a fixed 38 px square, which pushed the Search row above the rest. The bar itself is `Fixed` vertically, so it never grows to fill the window. `_captions` and `_active_dots` map a column key to its caption and its "●" label (the Filters column has no dot). `_refresh_active_indicators()` (called from `_on_filter`, just before `filters_changed` is emitted) sets the dynamic `active` property, through `_set_active()`, on the fields of every filter that is narrowing the table and shows that filter's dot *after* the caption text so the caption never shifts; Mode and In are options of Search, not filters. There is no separator line under the bar: the bar has its own border.
+
+**Status pills and row hover.** `StatusDelegate` draws the Status column as a rounded pill (`pill_rect()` gives its geometry) in the `STATUS_COLORS` pair, and tracks the hovered row itself (`hover_row`, `set_hover_row()`) because QSS `::item:hover` is per cell, not per row. The hover is fed by the table's `entered` signal (which needs `setMouseTracking(True)`) and cleared by `viewportEntered` (blank viewport space), a viewport `Leave` event filter on `MainWindow` and `modelReset`. Selection wins over hover.
+
+### Keyboard shortcuts
+
+Two module-level dicts define all configurable shortcuts:
+
+```python
+SHORTCUT_LABELS   # slot → human-readable label shown in ShortcutsDialog
+SHORTCUT_DEFAULTS # slot → default key sequence string
+```
+
+Current slots:
+
+| Slot | Default | Where used |
+|------|---------|------------|
+| `edit_prev` | `Alt+Left` | EditDialog — Previous entry |
+| `edit_next` | `Alt+Right` | EditDialog — Next entry |
+| `edit_cancel` | `Escape` | EditDialog — Cancel / close |
+| `edit_save` | `Alt+S` | EditDialog — Save button |
+| `auto_translate` | `Alt+A` | EditDialog — Auto-translate button |
+| `mark_new` | `Alt+N` | Mark selected entries as New |
+| `mark_review` | `Alt+R` | Mark selected entries as Review |
+| `mark_complete` | `Alt+C` | Mark selected entries as Complete |
+| `delete_entries` | `Ctrl+Del` | Delete selected entries (table: selected rows / edit window: current entry) |
+
+All slots are persisted under `Settings.DEFAULTS["shortcuts"]`.
+
+`EditDialog` receives shortcuts as a `dict` parameter, merges it over
+`SHORTCUT_DEFAULTS` into `self._shortcuts`, then applies each value via
+`button.setShortcut(self._shortcuts.get("slot", default))`.  Shortcuts are
+also intercepted explicitly in `eventFilter` (when `trans_edit` or the read-only
+`src_view` has focus — a read-only `QTextEdit` still takes Alt+Left/Alt+Right as
+cursor keys, and the dialog opens with focus in `src_view`)
+and `keyPressEvent` (all other focus targets).
+
+**Adding a new configurable shortcut:**
+1. Add slot + default to both `SHORTCUT_DEFAULTS` and `Settings.DEFAULTS["shortcuts"]`.
+2. Add a label to `SHORTCUT_LABELS`.
+3. Add the slot to the appropriate group list in `ShortcutsDialog._build()` (or
+   call `_add_shortcut_row` directly if it is the only item in a new group). A new
+   group's grid goes into `self._grids`, or its shortcut column will not line up with
+   the others (`_align_columns()`).
+4. Apply in `EditDialog._build()` via `self._shortcuts.get("slot", default)`.
+5. Intercept in `eventFilter` and `keyPressEvent` if the target widget consumes
+   key events (e.g. `QTextEdit`).
+
+**Tooltip format** — always use `[{key}]` suffix (e.g. `f"Label  [{key}]"`),
+consistent with the nav button style.  Do not use `"Shortcut: {key}"` format.
+
+### Save / load flow
+
+```
+_open()  →  QFileDialog  →  _load(path)
+_load()  →  parse_file() →  model.load() → _apply_filters()
+                          → _reconfigure_autosave()
+                          → _create_backup(path)
+
+_save()  →  _write(current_file)
+_write() →  save_file(path, segments, entries)
+
+_close_file() → _confirm_close_file() → resets state → model.load([])
+                                       → _apply_filters()
+                                       → _reconfigure_autosave()
+```
+
+`parse_file()` reads bytes, so the segments keep the file's own line endings and BOM; each row is
+read by `_entry_from_segment()`, and `name`/`text` read `\r\n` as `\n`, so the Edit dialog, merge
+matching and glossary matching see the same text in a CRLF and an LF file. `save_file()` writes a
+row back **byte for byte** when its values equal what its original segment holds (legacy `&#x27;`
+escapes and CDATA included), so a Save diff shows only the rows really edited. A changed row goes
+through `build_string_xml()` with the file's own line ending (`_file_newline()`: CRLF when the
+text between rows holds one). The file is written through `_atomic_write_bytes()`: a failed write
+leaves the original as it was and `_write()` shows the error. The trade-offs are the settings
+file's: the file takes the folder's inherited ACL, a symlink or hardlink is replaced by a plain
+file, and a lock without delete-sharing fails the save instead of writing half a file. A deleted
+row (Delete Selected, merge deletions) goes through `_remove_entry_segment()`, which also drops the
+line break and indentation it sat on, so no blank line is left.
+
+**`File → Close File` (`Ctrl+W`)** returns the app to the empty no-file state
+without quitting, so unsaved changes can be discarded mid-session.
+`_close_file()` resets exactly the state `__init__` sets (`segments`, `entries`,
+`current_file`, `is_modified`, `target_culture`, `display_language`,
+`xml_version`, `glossary`, `glossary_path`, `glossary_load_warnings`), then
+refreshes in `_load()`'s own order — `model.load()` → `_apply_filters()` →
+`_reconfigure_autosave()` (the timer stops on its own, being gated on
+`current_file`) → `_update_title()` → `_update_count()` →
+`_update_file_meta_labels()`. Filter-panel state and `last_directory` are
+deliberately left alone — those are view/session preferences, not file state —
+and closing is not a backup trigger.
+
+Closing uses `_confirm_close_file()`, **not** the `_confirm_discard()` that
+`_open()` and `closeEvent()` share: it offers Save/Discard/Cancel rather than
+Discard/Cancel. On Save it calls `_save()` and then returns
+`not self.is_modified` — since `_write()` swallows its exception into a
+`QMessageBox.critical` and leaves `is_modified` True, that flag is the only
+honest signal of whether the save actually landed, and a file whose save just
+failed must never be closed.
+
+### Welcome screen / editor page switch
+
+`MainWindow._main_stack` is a `QStackedWidget` with two pages: index 0 is
+`WelcomeScreen` (shown when no file is open), index 1 is the "editor page"
+(a container holding the existing `filter_panel` + `_table_stack`, with no
+separator between them: the filter bar has its own bottom border).
+`MainWindow.__init__` starts on index 0 by `QStackedWidget`'s own
+default. `_load()` switches to index 1 on a successful open; `_close_file()`
+switches back to index 0. The info bar at the bottom of the window is
+outside this stack and stays visible on both pages, same as before this
+feature existed.
+
+This is a separate concern from `_table_stack`'s own table/empty-filter-label
+switching (`_update_count()`) — that one only matters while the editor page
+(index 1) is showing.
+
+`WelcomeScreen`'s centered logo uses `APP_LOGO_PATH` (`Resources/xml_translation_editor.png`),
+resolved via the same `_resource_path()` helper as `APP_ICON_PATH` — relative to the script's
+own directory (or PyInstaller's `_MEIPASS` when frozen), never the current working directory,
+so it renders correctly regardless of which folder the app is launched from. The `.ico` and
+`.png` serve different roles: `.ico` is the window/taskbar/exe icon (`main()`'s
+`setWindowIcon()`, `build_exe.ps1`'s `--icon`), `.png` is the larger on-screen logo image —
+see [Application icon](#application-icon) for the `.ico` side.
+
+Below the drag-and-drop hint, a small dim credit line (`welcomeAttributionLbl`) reads
+"Icon by Magnific", with "Magnific" as a clickable rich-text link
+(`setOpenExternalLinks(True)`) to `https://www.magnific.com` — the source credited in
+`Resources/icon attribution.txt`. The link's colour is rebuilt per-theme by
+`WelcomeScreen.apply_link_color()`, called from `MainWindow._apply_theme()` —
+see the "`QLabel`'s rich-text `<a href>` link colour ignores..." pitfall below
+for why this needs its own dedicated method rather than a QSS rule.
+
+Drag-and-drop: `MainWindow.setAcceptDrops(True)` plus `dragEnterEvent`/
+`dropEvent` accept exactly one local `.xml` file dropped anywhere in the
+main window area (not just on the Welcome screen) and route it through the same
+`_confirm_discard()` → `_load()` path `_open()` uses. Anything else dropped
+(wrong extension, multiple files, a folder) is silently rejected in
+`dragEnterEvent` — no dialog.
+
+### Filter engine & panel
+
+`FilterEngine` holds all filter state. Search-relevant fields:
+
+```python
+self.search_text:  str          # raw needle from the search box
+self.search_field: str          # "both" | "source" | "translated"
+self.search_mode:  str          # "starts_with" | "contains"
+```
+
+`matches()` evaluates the search needle differently per mode:
+
+- **`starts_with`** (default) — matches against `\b` + `re.escape(needle)` via
+  `pat.search(field.lower())`. Punctuation (hyphens, slashes, dots) counts as
+  a word boundary, so `"tab"` matches `"data-tablet"`. `re.escape()` ensures
+  regex-meta characters in the needle (`.`, `(`, `?`, `\`, etc.) are treated as
+  literal text.
+- **`contains`** — plain `needle in field.lower()`, the original behaviour.
+
+Both modes are case-insensitive. `matches(entry, pattern=None)` accepts an optional
+precompiled pattern for `starts_with` mode instead of compiling one internally —
+`FilterEngine.compiled_search_pattern()` compiles it once, and
+`MainWindow._apply_filters()` calls that once per filter pass (not once per entry)
+before scanning `self.entries`. `matches()` still compiles its own pattern when
+called with no `pattern` argument, so it remains usable standalone.
+
+Mode + field are persisted under `Settings.DEFAULTS["search"]`
+(`{"mode": "starts_with", "field": "both", "debounce_ms": 150}`) and restored in
+`FilterPanel.__init__` after `_build()`. Persistence is split out of the keystroke
+path: `FilterPanel._save_search_prefs()` (wired only to `mode_combo`/`field_combo`
+`currentIndexChanged`) is the only thing that writes to disk, and it merges into
+`settings.data["search"]` via `setdefault` rather than replacing the sub-dict, so
+`debounce_ms` survives a mode/field change. `_on_filter` itself never touches
+settings — it only syncs engine state from the widgets and emits `filters_changed`.
+
+**Search/translator debounce** — `search_edit` and `user_edit` (the translator
+filter box) don't call `_on_filter` directly; `textChanged` restarts a single-shot
+`FilterPanel._filter_debounce` timer (interval = `search.debounce_ms`, clamped to
+`[0, 3000]`, read once at construction via `_debounce_ms()` — same no-dedicated-UI
+precedent as `EditDialog`'s `char_count` config) whose `timeout` fires `_on_filter`.
+The date pickers go through the same timer too (`_on_from_date_changed()` saves
+`filter_from_date` first, about 1 ms); since a date now changes only on a confirmed pick,
+this just delays that one pass by `debounce_ms`. Every other filter control
+(mode/field/status/tablet combos, date checkboxes) still calls `_on_filter` immediately. The "✕ Clear search" button (`_clear_search`) and "⟳ Reset All"
+(`_reset_all`) both call `self._filter_debounce.stop()` first, so a debounce timer
+already running from an in-progress keystroke can't fire a redundant, delayed
+`_on_filter` after the button's own synchronous reset. Both then `blockSignals`
+around their `.clear()`/`setCurrentIndex(0)`/`setChecked(False)` calls — Reset All
+blocks every widget it resets, including `status_combo`, `date_from_chk`,
+`date_to_chk`, and `tablet_combo`, not just the free-text/combo fields debounced
+above — and invoke `_on_filter` (and, for Reset All, `_save_search_prefs`)
+explicitly at the end, so both stay instant and emit `filters_changed` exactly
+once regardless of `debounce_ms`.
+
+**Empty-filter-result message** — when the active filter matches zero entries
+(`total > 0` but `visible == 0`), `MainWindow._update_count()` switches
+`self._table_stack` (a `QStackedWidget` wrapping `self.table`, built in
+`_build_ui()`) to its second page: a centered `self._empty_filter_label` reading
+"No entries match your filter". No file open, or a file with zero entries at all,
+still shows the (empty) table at index 0 — the `total > 0` guard excludes both,
+since there's no active filter to blame in either case. Restyled alongside
+`count_label`/`refresh_hint_label` inside `_apply_theme()`.
+
+**Filter panel sizing** — in the outer `QGridLayout` of `FilterPanel._build`, the Search
+and Translator columns are added through `_add_column(..., stretch=3)` / `stretch=1`,
+which call `outer.setColumnStretch()`, so spare horizontal space is split 3:1 between
+them when the window is widened. All other columns (Status, Date range, Is tablet,
+Filters) keep their natural width (stretch `0`). Minimum widths: `search_edit` 220 px,
+`user_edit` 140 px.
+
+**Filter bar widths follow the font — `FilterPanel.fit_to_font()`.** The four combos (Mode,
+In, Status, Is tablet) get a fixed width and the two date pickers a minimum width equal to
+their widest text plus the style's own chrome (`_width_for_text()`: widget width minus the
+style's `SC_ComboBoxEditField`/`SC_SpinBoxEditField` rectangle, plus `_TEXT_FIT_SLACK_PX` for
+the line edit's inner margins and cursor). `MainWindow._apply_theme()` calls it right after
+setting the stylesheet, so it runs at startup, on every theme switch and on every UI-font change,
+and the chrome already reflects the new font's padding and drop-down strip. It replaced fixed
+pixel widths: the pickers' 100 px minimum clipped the date from 12 pt up ("01.01.20" at 14 pt,
+at the 1280 px startup width, which squeezes the bar to its minimums) while Mode's 130 px
+left 40-70 px of empty field. The cost is a wider bar at large fonts: the window's minimum
+width, which the bar sets, went from 1432 to 1367 px at 10 pt and from ~1517 to ~1603 px at
+14 pt. The same method paints the Reset button's icon with `_render_reset_icon()` (a
+`QPainter` circular arrow, `fg` colour, `round(capHeight * 1.5)` px, drawn at
+`_GLYPH_SUPERSAMPLE`) and sets it with `setIcon()` — no cache file, since no stylesheet
+references it. It replaced the "⟳" character, which Segoe UI lacks: Windows substituted a
+symbol font that drew it smaller and lower than the label. The label's leading space is the
+icon gap (Fusion leaves ~1 px). The info bar's refresh hint uses the same drawing (see the
+`_refresh_hint` row of the info-bar table).
+
+### Date normalization
+
+`parse_date()` is locale-aware and punctuation-tolerant, not just a fixed
+format list: `_LOCALE_DAY_FIRST` (derived once from `_WIN_DATE_FMT`, the
+same signal that produces `DATE_FMT`) decides which of the ambiguous
+slash-separated formats (`%d/%m/%Y` vs `%m/%d/%Y`, and their 2-digit-year
+equivalents) is tried first, so a date like `"06/05/2016"` resolves
+consistently with *this machine's own* detected day-first/month-first
+convention instead of a hardcoded US-first guess. Dot-separated formats
+never need this tiebreak — a 4-digit year can't occupy a 2-digit day/month
+slot, so `%d.%m.%Y` and `%Y.%m.%d` are already unambiguous. `parse_date()`
+also strips a trailing run of periods/spaces before matching, so the
+traditional Latvian/Baltic short-date picture (`yyyy.MM.dd.`, producing
+values like `"2016.05.06."`) parses the same as its undotted equivalent —
+previously this returned `None`, and `FilterEngine.matches()` treats an
+unparseable date as "don't filter it out," so those entries silently
+bypassed the date-range filter regardless of the configured range.
+
+`normalize_entry_dates(entries)` rewrites every entry's `modify_date` to
+the canonical `DATE_FMT` string in place, using the parser above; entries
+with an empty `modify_date` are skipped (nothing
+was ever recorded, not an error), and genuinely unparseable dates are left
+as raw text and reported back. `MainWindow._load()` calls it right after
+`parse_file()`, before `self.model.load(self.entries)`, so the table shows
+already-normalized dates from the first paint. Reformatting an
+already-canonical date round-trips to the same string, so reopening a file
+that was just saved normalizes zero entries.
+
+If any entry's date was actually rewritten, `_load()` sets
+`self.is_modified = True` (after the initial `self.is_modified = False`) —
+the in-memory state genuinely differs from what's on disk at that point,
+which is what `is_modified` is documented to mean everywhere else in this
+file (see "Common pitfalls" below). The next Save then writes the
+now-canonical `modifyDate` on every normalized entry, not just ones the
+user actually edited — a larger one-time diff for that file, and the
+accepted trade-off of normalizing on load rather than only re-parsing at
+filter time. The counts follow "Loaded: …" as their own messages, both
+warnings: `"Dates: 3 normalized"` (the file was changed without the user
+asking, and now shows "Unsaved changes") and `"Dates: 1 unrecognized (e.g.
+'foo')"`. Merge's `"Dates: N normalized in incoming file"` is a warning for
+the same reason. Rule of thumb for levels: `error` when an action failed,
+`warning` when it worked but changed the file on its own or found a data
+problem, `info` for everything else.
+
+### Character-count length indicator (EditDialog)
+
+`EditDialog._update_char_count()` drives a live colored label in the auto-translate
+toolbar (`tr_bar`) showing source-vs-translated character count and overflow delta.
+It is connected to `self.trans_edit.textChanged` in `__init__` and is also called
+from `_populate()` (entry-load) and `_apply_style()` (theme switch).
+
+**Threshold formula — two-zone piecewise.** All numeric parameters live in
+`Settings.DEFAULTS["char_count"]`; nothing is hard-coded:
+
+```
+if src_len <= short_text_max:        # default boundary 30
+    warn    = max(min_warn,    ceil(src_len * short_warn_pct))     # 0.13
+    concern = max(min_concern, ceil(src_len * short_concern_pct))  # 0.30
+else:
+    warn    = ceil(src_len * long_warn_pct)                        # 0.10
+    concern = ceil(src_len * long_concern_pct)                     # 0.25
+```
+
+The split mirrors a real UI distinction: short sources are typically button
+labels and titles where small overflow matters; long sources are paragraphs
+where percentage matters more than absolute delta.
+
+**Color logic.** `delta = len(translated) - len(source)`. The label only
+turns yellow/red when `delta > warn` / `delta > concern`. Translations
+shorter than or equal to source stay green (the `(+N)` chunk is omitted).
+
+**Theme keys.** Three new keys per theme — `dlg_count_ok` (green),
+`dlg_count_warn` (amber), `dlg_count_concern` (red). In the dark theme
+`dlg_count_warn` is the same amber (`#FFB300`) as `text_warn`, the colour of the
+"Unsaved changes" info-bar text; the light theme uses a darker `text_warn`
+(`#8A5A00`) for that text, so the two differ there.
+
+**`_char_cfg` is cached in `__init__`** from `parent.settings` to avoid
+re-reading JSON on every keystroke. The lookup uses `parent` (passed to
+`__init__`), not `self.parent()`, because some Qt internals can briefly
+report `None` for `self.parent()` early in construction.
+
+**`enabled: false`** hides the label entirely and skips all computation.
+
+### Robo-Translate (EditDialog)
+
+Shift+click the Auto-translate button, or press `Shift+Alt+A` (shortcut slot
+`robo_translate`), to start a hands-off translation chain: translate the current
+entry, wait `robo_translate.delay_seconds` (default 10), advance to the next entry,
+repeat. A plain click / plain `Alt+A` while a chain is running stops it and falls
+back to a normal one-off translate instead of starting a second chain.
+
+While auto-advancing, entries already translated (status Review or Complete) are
+skipped without being touched — only entries with status New are translated
+automatically. The entry the chain was explicitly started on is always translated
+regardless of its status, since starting there was a direct user action.
+
+The chain stops on: toggling again, Escape / dialog close, a plain click / plain
+`Alt+A`, manual Prev/Next navigation, or a translation error. Stopping never rolls
+back work already committed by prior advances — each entry is saved via `_navigate`'s
+existing commit-on-advance behavior, same as manual navigation.
+
+State lives on `EditDialog`: `self._robo_active`, `self._robo_timer` (`QTimer`),
+`self._robo_remaining`, and a cached `self._robo_cfg` read once at construction
+(same pattern as `self._char_cfg`). `_navigate` distinguishes chain-driven advances
+from user-driven ones via an internal flag, so auto-advancing doesn't get treated as
+"manual navigation" (which would otherwise cancel the chain). Full behavioral spec:
+`docs/superpowers/specs/2026-08-10-robo-translate-design.md`.
+
+### Delete entries (main table + EditDialog)
+
+`Ctrl+Delete` (configurable, slot `delete_entries`) deletes the selected
+rows in the main table, or the entry currently open in the Edit dialog.
+Both paths go through the single shared `MainWindow._delete_entries()`,
+which always confirms first (source text for a single entry, a count for
+multiple), then blanks the removed entries' `segments[seg_idx]` and drops
+them from `self.entries` — the same mechanism the Merge dialog's deletion
+resolution already uses. It's an in-memory edit like any other; nothing is
+written to disk until Save.
+
+Unlike the mark_* shortcuts, `Ctrl+Delete` collides with Qt's native
+"delete word forward" binding inside `QLineEdit`/`QTextEdit`. The table
+action's shortcut context is scoped to the table widget
+(`Qt.WidgetWithChildrenShortcut`, not the default window-wide context) so it
+never fires while typing in the Search/Translator filter boxes. Inside the
+Edit dialog it's intercepted only in `keyPressEvent` — deliberately absent
+from `eventFilter()`'s `trans_edit`-focused block — so normal word-deletion
+keeps working while typing in the translation or translator-name fields;
+the shortcut only deletes the entry when focus is elsewhere in the dialog
+(status combo, tablet toggle, buttons). Deleting the entry currently open
+for editing auto-advances to whichever entry now occupies that position, or
+closes the dialog if it was the last one.
+
+---
+
+## Coding conventions
+
+### General
+
+- **Single-file rule.** Everything lives in `xml_translation_editor.py`.  Do not
+  create additional `.py` files or packages. Dev-only scripts in `tests/` and `Tools/` are
+  exempt: they are never shipped.
+- **Python 3.9+.**  No walrus operator (`:=`) in hot paths — keep it readable.
+  Type annotations are used throughout; maintain them on new code.
+- **No new dependencies.**  Standard library + PySide6 only.  Auto-translation
+  engines use `urllib.request` — do not introduce `requests` or `httpx`.
+- **PySide6, not PyQt5/6.**  Imports come from `PySide6.*`.  Never mix Qt bindings.
+
+### Qt patterns
+
+- **Theme colours** — never hard-code hex colours in `QDialog` / `QWidget` stylesheets.
+  Use `mw._get_theme()` (where `mw = self.parent()`) to get the active `THEMES["dark"]`
+  or `THEMES["light"]` dict, then interpolate its keys into the QSS string.
+  See `TranslatorNameDialog._apply_style()` for the canonical pattern.
+
+- **Dim/hint/status text uses `t['fg_dim']`, never a hard-coded `gray`/`#888`.**
+  `MainWindow`'s own info-bar labels (`count_label`, `refresh_hint_label`,
+  `_sb_lang_label`, etc.) are re-styled with `t['fg_dim']` inside
+  `_apply_theme()` (which runs at both startup and, via `_set_theme()`, on
+  every theme switch — see "Common pitfalls" below), so they track
+  dark (`#9a9a9a`) vs. light (`#666666`) correctly. Every secondary dialog's
+  hint/note/status labels (e.g.
+  `ShortcutsDialog._note`, the 7 hint labels + `_claude_sub_status`/
+  `_test_result` in `TranslationSettingsDialog`, `EditDialog._transl_status`,
+  `RestoreFromBackupDialog._detail_lbl`, `AutosaveBackupDialog._as_note`/
+  `_bk_note`, `GlossaryDialog._hint`) must do the same: store the label as
+  `self.xxx` in `_build()`/`_build_ui()` with no inline color, then set
+  `f"color: {t['fg_dim']};"` plus `font-size: {max(8, pt - 1)}pt` (derived from the
+  configured UI font, never a fixed `8pt`/`9pt`) inside
+  `_apply_style()` — or, for a label whose color also changes at runtime in
+  response to user actions (`_test_result`, `_claude_sub_status`), inside
+  whatever handler sets its neutral/idle state. A dialog is always freshly
+  constructed per open, so `_apply_style()` running once at the end of
+  `__init__` is sufficient — dialogs do not need to react to a theme change
+  while already open. A hard-coded `#888`/`gray` never revisited is wrong in
+  both themes: below AA contrast on the dark dialog surface (`#888888` is
+  4.3:1) and visibly lower-contrast than `t['fg_dim']` (`#666666`) in the
+  light theme.
+
+- **Every `QGroupBox` rule is `{_groupbox_qss(t, pt)}`**: `color: header_fg`,
+  `border: 1px solid border`, `border-radius: 4px`, title `left: 8px`, not
+  bold (`EditDialog`'s titles used to be the one bold exception), plus a
+  `margin-top`/`padding-top` measured from the UI font at `pt`. The title sits
+  in the box's top margin from y = 0, one font height tall, and the border line
+  is drawn at y = margin-top, so `margin-top = round(ascent − capHeight / 2)`
+  runs the line through the middle of the title's capitals (with the usual gap
+  around the title) and `padding-top = height − margin-top − 1` starts the
+  contents under the title; the box's layout margin adds the gap below it. The
+  fixed `margin-top: 6px; padding-top: 4px` it replaced (copied into six
+  stylesheets) kept the line 6 px down and the first row 9 px down at every
+  size: at 10 pt the line ran along the top of the capitals, and from 12 pt the
+  title hung into the first row ("Header" touching "Language name"). The group
+  boxes are a few px taller than before at 10 pt and ~15 px taller at 14 pt.
+  `MainWindow._apply_theme()` keeps its own `QGroupBox { background:
+  transparent; }` after the helper (see "Transparent labels").
+  `python tests/check_groupbox_title.py` is the regression check.
+
+- **Prominent checkbox style for standalone toggles.** Any new checkbox that
+  represents a standalone option (not a row inside a dense table/list) must
+  opt into the app's shared "prominent" style: `setProperty("filterChk",
+  True)` on the widget, and `{_prominent_checkbox_qss(t)}` included in the
+  dialog's `_apply_style()` stylesheet (see `_prominent_checkbox_qss()`'s
+  definition and its existing uses in `FilterPanel`,
+  `TranslationSettingsDialog`, `EditDialog`'s Override checkbox,
+  `RestoreFromBackupDialog`, `AutosaveBackupDialog`, and
+  `MergeConflictDialog`'s "Auto-resolve..." checkbox for the pattern). A
+  per-row control inside a dense table/list (e.g. `MergeConflictDialog`'s
+  Resolution-column combos) is the deliberate exception — those stay
+  default-styled so table rows don't grow oversized, relying on the row's
+  own color-tinting to signal state instead.
+  `_prominent_checkbox_qss()` also owns the states: hover and keyboard focus
+  give an unchecked indicator an accent border; a checked one already has an
+  accent border, so on focus its border switches to the `fg` token
+  (`::indicator:checked:focus`); a disabled indicator uses the `dlg_btn_dis`
+  fill and the `border` border colour instead of staying vivid.
+  `::indicator:disabled` has to stay after `::indicator:checked` in the
+  helper, or a checked, disabled box would keep the accent look.
+  **The tick is a PNG file, not the inline SVG `data:` URI it used to be** —
+  a style sheet renders a `data:` URI as nothing, so a checked box was a plain
+  accent square. `_prominent_checkbox_qss()` renders a white (`sel_fg`) tick and
+  a dimmed (`dlg_btn_dis_fg`) one with `QPainter` (a three-point polyline on a
+  16-unit grid, drawn at 4× and scaled down; it is 1.4 units wide, about the
+  stroke of the filter bar's ✕ — the 2.5 units of the SVG it replaced read as
+  heavy next to it; 1.1 was tried and looked faint on the disabled grey), writes both through
+  `_write_glyph_pngs()` — the same cache folder and failure handling as the
+  scrollbar arrows — and adds the `::indicator:checked` and
+  `::indicator:checked:disabled` `image:` rules at the *end* of the helper. The
+  dimmed variant exists because the white tick would otherwise persist on the
+  grey disabled fill and make the box look enabled. If the files can't be
+  written the box degrades to the plain accent square and the app still starts.
+  A text glyph (`✓`) was considered and rejected: a style sheet cannot draw text
+  in an indicator, so it too would have to be rendered into a PNG, it would
+  depend on the font (U+2714 can fall back to a colour emoji) and it could not
+  be regression-checked offscreen, where Qt has no fonts.
+  `python tests/check_checkbox_mark.py` is the offscreen regression check.
+
+- **Every date field is a `_DatePickerField`, never a plain `QDateEdit`** — a plain one
+  changes its date on a stray wheel notch or arrow key, and a plain calendar popup is no
+  longer styled. Don't give the field a minimum date (see "Date pickers").
+- **Every `QComboBox` (bar the editable `QFontComboBox`) is a
+  `_WidePopupComboBox`, and its stylesheet interpolates `_combobox_qss(t, pt)`**
+  right after the base `QComboBox` rule — the shared popup is a plain list that
+  is only as wide as the combo, which the subclass fixes. See "Combo box
+  drop-downs and popups".
+- All UI construction happens in `_build_ui()` / `_build_menu()` methods.
+- Signals are connected in the same method that creates the widget.
+- Use `QTimer.singleShot(0, fn)` for deferred post-show initialisation.
+- `QDialog` subclasses follow: `__init__ → _build_ui() → _load_values()`.  The
+  `_save()` method writes back to `Settings` and calls `self.accept()`.
+- Native command calls in PS1 scripts: always wrap in `try/catch` and check
+  `$LASTEXITCODE` — never rely on exception throwing for non-zero exit codes.
+
+### Settings
+
+All persistent state goes through `Settings`.  Add new keys to `Settings.DEFAULTS`
+first, then access them via `self.settings.get("key", {})`.  Nested dicts (like
+`autosave`, `backup`, `translation`) are read as a dict and their sub-keys accessed
+with `.get()` so missing keys fall back gracefully.
+
+**`Settings.load()` merges one level deep, not just at the top level.** For
+each top-level key present in the saved file, if both the saved value and the
+matching `DEFAULTS` value are dicts, they're merged sub-key by sub-key (saved
+values win) rather than the saved sub-dict wholesale-replacing the default
+one. This means a settings file saved by an older version of the app — e.g.
+missing a sub-key like `search.debounce_ms` that a later version added to
+`DEFAULTS` — is backfilled with the new default in memory, and `load()` saves
+the file back to disk exactly once if anything was actually backfilled (a
+fully up-to-date file triggers no extra write). Every reader already falls
+back gracefully via `.get(key, default)` regardless, so this doesn't change
+runtime behavior — it keeps the on-disk file and `self.data` from silently
+drifting out of sync with `DEFAULTS` after an upgrade.
+
+**Settings backup & recovery.** The settings file holds the API keys, and
+`load()` used to fall back silently to defaults on a parse error — after which
+the next `save()` overwrote the damaged file, so a single truncated write
+wiped every key. Three cooperating pieces close that:
+
+- **Atomic `save()`.** `Settings.save()` goes through `_atomic_write_bytes()`
+  (temp file + fsync + `os.replace()`), so a crash mid-write can no longer
+  produce the truncated file in the first place. The one new failure mode is
+  `os.replace()` raising `PermissionError` if another process (a sync client,
+  antivirus) holds the file without delete-sharing; it is logged via
+  `_log_error()` like any other save error and the next save retries. Two
+  side effects of replacing rather than rewriting in place: the file takes the
+  folder's inherited ACL (an `icacls`-hardened settings file loses its custom
+  ACL on the next save), and a symlinked or hardlinked settings file is
+  replaced by a plain file.
+- **Daily archive.** `MainWindow.__init__` calls `backup_settings_daily(SETTINGS_FILE)`
+  right after `Settings()` — after, so a damaged file has already been recovered
+  and what gets archived is what is actually in use. It appends one snapshot to
+  `translation_editor_settings.backups.zip` beside the settings file (the path
+  is derived from `SETTINGS_FILE` by `_settings_archive_path()`, so the two
+  always travel together) unless **any** entry already carries today's date —
+  not just the newest: a future-dated entry left by a briefly wrong clock would
+  otherwise hide today's snapshot forever, and every launch would add another
+  and prune the real history — and keeps the newest `SETTINGS_BACKUP_MAX` (10).
+  Entries are the file's exact bytes named `<stem>_<YYYY-MM-DD_HH-MM-SS>.json`,
+  so a manual restore is "extract, rename, replace" with any zip tool (verified
+  with Windows' `Expand-Archive`). "Newest" and pruning follow the zip's own
+  write order (`namelist()`), deliberately not name order, so that same
+  future-dated entry can neither win a recovery nor outlive its turn to be
+  pruned. Deliberate omissions: no content de-duplication
+  (an unchanged file still takes its daily slot — harmless), no timer or
+  on-close trigger (startup only), no thread (the file is ~2 KB, unlike the XML
+  backups that motivated `BackupThread`), and no `Settings` key for the count
+  (the settings file is what is being protected — a constant is simpler).
+  A file that fails `_parse_settings_bytes()` is **never archived**, so damage
+  can't push good snapshots out. A damaged *archive* is moved aside as
+  `<name>.zip.corrupt` and rebuilt from scratch rather than blocking backups;
+  "damaged" includes an entry another tool re-saved with encryption or an
+  unsupported compression method (`RuntimeError`/`NotImplementedError`), while
+  `OSError` is deliberately not caught so a transient lock never triggers the
+  move. If even the move fails, the next atomic write replaces the archive
+  anyway. The function never raises — everything goes to `_log_error()`.
+- **Recovery.** In `load()`, only a `ValueError` (bad JSON, bad encoding, or a
+  JSON value that isn't an object) triggers `_recover_from_archive()`; an
+  `OSError` (locked file, permissions) does not, because the content may be
+  fine and replacing it with an older snapshot would lose real settings.
+  Recovery moves the damaged file aside as
+  `translation_editor_settings.json.corrupt-<time>` **first** — so the next
+  `save()` can't overwrite it — then restores the newest snapshot that still
+  parses and sets `Settings.recovery_notice`, which
+  `MainWindow._run_startup_prompts()` shows once as a `QMessageBox.warning`.
+  If another process holds the damaged file open, `os.replace()` fails with
+  WinError 32 (verified against a real `FileShare.Read` lock), so
+  `_keep_damaged_file()` falls back to `shutil.copy2()`, which needs only read
+  access. The snapshot is still restored in memory even though the on-disk
+  overwrite may be refused too; the next successful `save()` puts the right
+  content on disk, so a locked file can no longer end in "defaults, and the
+  damaged content destroyed". With no usable snapshot the damaged file is still
+  kept aside and the notice says defaults are in use. **A missing file is never recovered**: `docs/FEATURES.md`
+  documents "delete `translation_editor_settings.json` to reset to defaults",
+  so absence must stay a legitimate reset. The notice is a modal, because lost
+  API keys must not go unnoticed and it has to come before the translator-name
+  prompt. **Info-bar messages as well:** `load()` also fills
+  `Settings.startup_notices` with `(text, level)` pairs, which
+  `_run_startup_prompts()` posts through `_show_message()` after both startup
+  dialogs (so their turns don't run out behind them) and before the translator
+  message, so each case is in the message history with its colour and dot:
+  damaged → error `Settings file was damaged and could not be read (kept as
+  <name>.corrupt-<time>)`, then either warning `Settings restored from the backup
+  of <date>` or warning `Default settings in use — API keys and preferences need
+  to be set again`; missing → warning `Settings file not found — default settings
+  in use` (also on a fresh install's first launch); unreadable (an `OSError`,
+  e.g. locked) → error `Settings file could not be read — default settings in
+  use for this session`. A valid file gives no message. `_ask_translator_name()`
+  no longer shows the translator message itself; its one caller does.
+
+`_parse_settings_bytes()` decodes with `utf-8-sig`, so a hand-edit saved with a
+BOM (some editors add one) loads normally instead of being mistaken for damage
+and swapped out for an older snapshot.
+
+**The archive shares the settings file's fate.** `build_exe.ps1` deletes `dist\`
+on every build, so an exe run from `dist\` loses settings and archive together.
+This was a conscious choice over a `%APPDATA%` copy (which would be shared by
+separate installs with different settings); `docs/FEATURES.md` (Settings backup) tells users to run the
+exe from a copy outside `dist\`. `.gitignore` covers the archive, its
+`.corrupt` copy, `translation_editor_settings.json.corrupt-*` and the
+`.translation_editor_settings.*.tmp` atomic-write leftovers — all hold keys in
+plain text, so any new file that copies settings data needs an entry too.
+
+Two related caveats, both accepted. **`SETTINGS_FILE` is CWD-relative** (a
+pre-existing quirk — the XML backup root, by contrast, is anchored to
+`sys.argv[0]`), so the archive and its `.corrupt-*`/`.tmp` siblings land wherever
+the process was started, and `.gitignore` only protects this repo's folder.
+Anchoring the settings file to the script/exe directory would fix that, but it
+would strand every existing user's settings, so it was left alone. And
+**superseded secrets linger**: rotating or revoking a key leaves the old value
+in the older snapshots and in every `.corrupt-*` copy (nothing prunes those);
+`docs/FEATURES.md` tells users to delete both as part of a rotation.
+
+```python
+# Correct pattern for nested setting:
+cfg = self.settings.get("autosave", {})
+enabled = cfg.get("enabled", False)
+
+# Correct pattern for saving nested setting:
+self.settings.data["autosave"] = {"enabled": True, "interval_minutes": 5}
+self.settings.save()
+```
+
+Newer top-level/nested keys follow the same pattern: `translation.claude_model`
+(string, one of the static Claude model IDs), `robo_translate.delay_seconds`
+(int, 1–120), and `skip_translator_prompt` (bool, top-level — read directly in
+`MainWindow._ask_translator_name()` before the `TranslatorNameDialog` is even
+constructed).
+
+**Changing the translator name mid-session.** `View → Set Translator Name…`
+calls `MainWindow._set_translator_name()`, a second entry point into
+`TranslatorNameDialog` independent of `skip_translator_prompt` and
+`_ask_translator_name()` — it always opens the dialog regardless of that
+setting, so a name can be set or changed at any point in the session even
+when the startup prompt is disabled. `TranslatorNameDialog` takes an
+`on_demand: bool` param (default `False`) that swaps the Skip button's label
+and tooltip to "Cancel" and adjusts the intro label's first line — the
+startup-context wording ("Enter your name…" / "Continue without a translator
+name") doesn't read correctly when the dialog is reopened mid-session.
+Accepting updates `self.session_translator` and calls
+`_update_translator_status()` (same as the startup path); cancelling leaves
+`session_translator` unchanged. `_update_translator_status()` shows its
+confirmation via `_show_message(text, 4000)` like every other message.
+
+### UI labels / info bar
+
+There is a single info bar (`QHBoxLayout`) at the bottom of the window — the Qt
+`QStatusBar` is not used.  Layout left → right:
+
+| Widget | Role |
+|--------|------|
+| `count_label` | Entry count statistics; updated by `_update_count()` |
+| `_refresh_hint` | Refresh hint, one `QWidget` shown when `visible < total`: a 1 px `VLine` divider in `bar_border` (the filter bar's divider colour; it kept the hint from running into the counts), the `_render_reset_icon()` arrow in `fg_dim` sized from `pt_small`, and `refresh_hint_label` ("F5 — Refresh Filter"). About 12 px either side of the divider; the right-hand spacing is 3 px smaller because the icon image has its own transparent margin |
+| *(stretch)* | — |
+| `_dynamic_label` | Unified dynamic zone — transient notifications take priority over save status; has a font-metric minimum width so the static labels never shift |
+| `_history_btn` | Message history: a flat `QToolButton` with a `_render_history_icon()` glyph in `fg_dim` (redrawn by `_refresh_history_icon()` from `_apply_theme()`), opening `MessageHistoryPopup`. A dot in its corner — `text_warn`, or `text_bad` once an error is among them — marks an unseen warning or error (`_history_unseen_level`, raised by `_raise_unseen()`); opening the pop-up clears it. Info messages never set it |
+| `_sb_lang_label` | `DisplayLanguage` (or `Culture` fallback) from loaded XML — anchored at far right |
+| `_sb_ver_label` | `Version` from loaded XML, prefixed `v` — anchored at far right |
+
+**`_show_message(text, ms=4000, level="info")`** — use this everywhere instead of
+`statusBar().showMessage()`. It records a `Notice` (text, ms, level, time) in
+`_notice_history` (the last `NOTIFY_HISTORY_MAX` = 200 of the session, memory only) and either
+shows it at once or queues it in `_notice_queue`: a message never replaces another. The one on
+screen (`_notice_current`) stays up at least `NOTIFY_MIN_TURN_MS` (3000) before a waiting one
+takes over; a waiting message's turn is at most that long, and the last one in the queue gets its
+full `ms`. So Loaded, Dates and Backup arriving together show for 3 s, 3 s and 5 s. A message whose
+text and level equal the current or the last waiting one is not queued again (it is still in the
+history); past `NOTIFY_QUEUE_MAX` (5) waiting, the oldest waiting one is dropped from the queue.
+`ms <= 0` means 4000 and an unknown level means `"info"`. `_notify_timer` ends a turn;
+`_on_notify_expired()` starts the next one or sets `_notice_current` to `None`. Levels:
+`"info"` (`fg_dim`), `"warning"` (`text_warn`), `"error"` (`text_bad`) — pass a level whenever a
+message reports a failure (`error`) or a problem in the data (`warning`).
+
+**File messages name the header version.** Loaded, Saved, Autosaved, Closed, Restored and
+Restored and reloaded go through `_file_label(name, version)`: `Latvian.xml  v4.1.1140`, or
+`Latvian.xml  (no version)` when the header has none (its backups then use the plain `<stem>` key).
+So the history shows which version was opened, saved or closed even after the far-right version
+label has changed or gone blank. Closed reads the version before `_close_file()` clears it; Saved
+and Autosaved use `self.xml_version` at save time, so a File Properties change shows; Restored reads
+the written file with `parse_xml_header()`, not the slot's manifest, which older slots lack.
+
+**`_update_dynamic_label()`** — the single source of truth for `_dynamic_label` content.
+Priority: `_notice_current` (its level's colour, a dim `+N` after it while N messages wait, the
+full text as tooltip) → `_mod_text` coloured by `_mod_kind` → empty. The label is rich text, so the
+message goes through `_notice_html()` (escaped, double spaces kept). Always call this instead of
+setting `_dynamic_label` text/style directly.
+
+- `_mod_text` / `_mod_kind` (`"modified"`, colour `text_warn`) — "Unsaved changes" — set by `_update_title()`.
+- `_mod_text` / `_mod_kind` (`"autosaved"`, colour `text_ok`) — "Autosaved at HH:MM:SS" — set by `_autosave_tick()` *after* calling `_update_title()`.
+- `_update_title()` always clears `_mod_text`/`_mod_kind` when `is_modified` is False,
+  or sets them to `"modified"` / "Unsaved changes" when True, then calls `_update_dynamic_label()`.
+  `_update_dynamic_label()` turns `_mod_kind` into a colour of the *current* theme every time it runs
+  (and `_apply_theme()` calls it), so a theme switch recolours the text. Any code that sets a
+  different `_mod_kind` must do so *after* calling `_update_title()`.
+
+---
+
+## XML file format
+
+```xml
+<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu">
+  <resources>
+    <string name="Source text"
+            translator="Jane"
+            status="Complete"
+            modifyDate="21.05.2016"
+            istablet="false">Translated text</string>
+  </resources>
+</TRNExportImportModel>
+```
+
+- `status` must be one of: `New`, `Review`, `Complete` (see `STATUSES` constant).
+- `modifyDate` format follows the Windows regional short-date setting; use
+  `format_date_for_storage(d)` to produce the correct string.
+- `istablet` is stored as the string `"true"` or `"false"` (not a Python bool).
+- The parser uses a regex split (`_SPLIT_RE`) — not an XML DOM — to preserve
+  whitespace and non-standard content outside `<string>` elements exactly.
+  **Do not replace the parser with `xml.etree` or `lxml`.**
+- A row's start tag is matched quote-aware (`_START_TAG_PATTERN`), so a raw `>` inside an
+  attribute value does not end it. A self-closing `<string …/>` is a row with empty text; it stays
+  self-closing until it gets text, then becomes `<string …>text</string>`. Attributes are read
+  from the start tag only and must follow whitespace, so `data-name="…"` is not `name`. An edit to
+  an attribute the row lacks appends it, unless the value equals what `parse_file()` reads for a
+  missing one (`_ATTR_PARSE_DEFAULTS`). CDATA text is read literally; an edited CDATA row is written
+  as ordinary escaped text.
+- Every row segment (odd index) starts with `<string`: `_start_tag()` matches at position 0. That
+  is why `insert_additions()` puts a new row's line break and indentation in the filler segment
+  before it, not in the row.
+
+
+---
+
+## XML character escaping
+
+`build_string_xml` handles two escaping contexts with different rules.
+
+### Element text content (`entry.text`)
+
+```python
+html.escape(entry.text, quote=False)
+```
+
+Only three characters need escaping inside element text:
+
+| Character | Escaped as |
+|-----------|-----------|
+| `&` | `&amp;` |
+| `<` | `&lt;` |
+| `>` | `&gt;` |
+
+`"` and `'` are written as-is — quoting them in element text is unnecessary and produces ugly `&quot;` / `&#x27;` sequences.  **Never** use `html.escape(text)` or `html.escape(text, quote=True)` for element text.
+
+### Attribute values (`entry.translator`, `entry.status`, etc.)
+
+```python
+escaped_val = (value
+               .replace("&",  "&amp;")
+               .replace("<",  "&lt;")
+               .replace(">",  "&gt;")
+               .replace('"', "&quot;"))
+```
+
+All attributes use `"..."` delimiters, so only `"` needs escaping in addition to `& < >`.  `'` is left unescaped — `html.escape(quote=True)` would incorrectly escape it as `&#x27;`, turning `O'Brien` into `O&#x27;Brien`.
+
+**Do not use `html.escape()` for attribute values** — use the four explicit `.replace()` calls already in `_escape_attr_value()` (called from `replace_attr()`).
+
+### Summary table
+
+| Character | Element text | `"…"` attribute |
+|-----------|-------------|-----------------|
+| `&` | `&amp;` | `&amp;` |
+| `<` | `&lt;` | `&lt;` |
+| `>` | `&gt;` | `&gt;` |
+| `"` | `"` (literal) | `&quot;` |
+| `'` | `'` (literal) | `'` (literal) |
+
+---
+
+## Autosave & backup
+
+### Autosave
+
+- Timer: `self._autosave_timer` (QTimer). Reconfigured by `_reconfigure_autosave()`
+  whenever settings change or a file is loaded/closed.
+- Tick: `_autosave_tick()` — saves only when `is_modified` is True.
+- Error handling: `PermissionError` / `OSError` → `_autosave_locked(e)` dialog
+  (Save As… or Skip).  Generic `Exception` → status bar message only.
+
+### Backup
+
+- Triggered once per file open inside `_load()` (`trigger="file_open"`), and again
+  by `_do_restore()` immediately before an overwrite-restore
+  (`trigger="pre_restore_safety"`, `notify=False`) — see
+  [Restore from Backup](#restore-from-backup) below.
+- **Minimum interval.** `backup.min_interval_minutes` (default `5`, matching
+  the autosave interval default; `0` disables) suppresses a `file_open`
+  backup when the newest existing slot for that backup key is younger than
+  the window. Without it, closing and immediately reopening a file wrote a
+  redundant slot which — since pruning is oldest-first — evicted a genuinely
+  older snapshot. The rule is **purely time-based**: a file whose content
+  changed inside the window is still skipped, deliberately chosen over an
+  MD5-equality check because the pre-change state is already captured by the
+  earlier slot. Three details are load-bearing:
+  - **`pre_restore_safety` is never throttled** (`throttle_enabled` requires
+    `trigger == "file_open"`). It is the only thing standing between a
+    wrong-slot restore and unrecoverable loss.
+  - **The check is per location**, matching how pruning is scoped. Under
+    `"both"` the two locations normally share a newest-slot timestamp; they
+    diverge only after a `location_mode` switch, and the newly enabled
+    location then legitimately deserves a slot.
+  - **The gate sits at `run()`'s two `write_at()` call sites, not inside
+    `write_at()`.** `write_at()` returning `None` already means *failure*,
+    and for `location_mode == "next_to_file"` a `None` triggers the root
+    fallback — so a skip checked inside it would be misread as a failure and
+    would fire a spurious fallback. The fallback additionally re-checks
+    root's own throttle: if root already holds a recent slot there is
+    nothing to recover.
+
+  Age is measured by `_newest_slot_age_seconds()` from the slot **directory
+  name** (first 19 chars, so a `_001` collision suffix is ignored) — the same
+  string pruning and the Restore dialog already sort on, so it costs no file
+  reads and, unlike mtime, survives the backup tree being copied between
+  drives. It returns `None` (= back up) on anything unreadable or
+  unparseable: failing open means a broken throttle can never silently
+  suppress backups. When every enabled location is throttled, `run()` emits
+  and returns **before** `read_bytes`/md5/gzip, so a skipped backup does no
+  file I/O on the source at all.
+
+  **Messages are per location**, next to file first, each a `(text, level)`
+  pair in `BackupThread.finished`'s list (prefixes from
+  `_BACKUP_LOCATION_LABELS`, the Restore dialog's own location names):
+  `"Backup next to file: saved at 14:30:00  (compressed, +glossary)"` (info;
+  `+glossary` read from that slot's own `backup_info.json`),
+  `"Backup in root: skipped — backed up 3 min ago  (min interval 5 min)"`
+  (info — a skip is not a failure), `"Backup next to file: failed — could not
+  write the backup folder"` (error), and, in next-to-file-only mode after that
+  failure, `"Backup in root (fallback): saved at …"` (warning: it worked, but not
+  where the user chose). So in `"both"` mode a location that fails while the
+  other succeeds now shows its own error instead of being dropped. A full skip
+  emits one skipped message per location and a `None` next-to-file root
+  (nothing was written, and a skipped location was by definition already
+  recorded in `known_next_to_file_dirs`). A failure that involves no location
+  — the source file can't be read, or an unexpected exception — is a single
+  error (`"Backup failed — could not read source file"` / `"Backup failed:
+  <reason>"`).
+- **Locations** — `Settings.data["backup"]["location_mode"]` (`"next_to_file"` |
+  `"root"` | `"both"`, default `"both"`) controls where backups are written:
+  - Root: `Path(sys.argv[0]).resolve().parent / "XML_Translation_file_Backups"` (today's original location).
+  - Next to file: `source_path.parent / "XML_Translation_file_Backups"`.
+  - `"both"` writes a fully independent, self-contained slot at **each**
+    enabled location — own copy of the XML/glossary and own `backup_info.json`
+    — never a shared manifest. `"next_to_file"` mode automatically falls back
+    to writing at root (tagged `is_fallback: true`) if the next-to-file write
+    fails (e.g. permissions, disconnected drive).
+  - Every next-to-file root that's ever successfully written to is remembered
+    in `Settings.data["backup"]["known_next_to_file_dirs"]` (deduped list) via
+    `MainWindow._remember_next_to_file_backup_dir()`, so
+    `RestoreFromBackupDialog` can discover it later even with no file open
+    from that folder.
+- **Backup key** (the folder directly under `XML_Translation_file_Backups/`):
+  `<stem>__v<sanitized_version>` when the XML has a non-empty `Version`
+  attribute, else plain `<stem>` (matches pre-change behavior, so old backup
+  folders stay exactly where they are). `_sanitize_path_component()` strips
+  Windows-illegal characters, guards reserved device names, and never returns
+  `""` (a garbage-but-present Version becomes `"_"`, not the unversioned key).
+- Compression: `gzip` (level 6), producing `.xml.gz`; compressed into an
+  in-memory buffer first so the write can go through `_atomic_write_bytes()`.
+- All backup/restore-destination writes go through `_atomic_write_bytes()`
+  (temp file in the same directory, fsync, `os.replace()`) — a crash mid-write
+  can never leave a partially-written file in place of a good one.
+- **Backgrounded via `BackupThread`.** `MainWindow._create_backup()` no
+  longer does any of the file read/hash/compress/write/prune work inline on
+  the UI thread — it snapshots `settings.get("backup", {})` into a plain
+  dict, starts a `BackupThread(QThread)` (modeled on `TranslationThread`)
+  that does the actual work, and returns immediately with the running
+  thread (or `None` if backup is disabled). Completion arrives via
+  `BackupThread.finished(list, object)` — the per-location `(text, level)`
+  messages and the next-to-file root to remember — handled by
+  `MainWindow._on_backup_finished()` on the main thread — it removes the
+  thread from `self._backup_threads` (the list `closeEvent()` waits on),
+  calls `_remember_next_to_file_backup_dir()` if the next-to-file location
+  succeeded (must run on the main thread, since it touches
+  `settings.data`), and shows each message (info 5 s, warning/error 6 s) when
+  `notify=True`. Concurrent backups of *different* files run fully in
+  parallel; two backups that target the same key directory (e.g. a
+  restore's `pre_restore_safety` snapshot landing in the same second as
+  that file's own `file_open` backup) serialize against each other via a
+  per-key_dir lock (`_lock_for_key_dir()`) so `_write_backup_slot()`'s
+  same-second slot-naming logic stays race-free — see "Backup writes for
+  the same file serialize" in Common pitfalls. Either way, a new backup
+  never cancels a still-running earlier one — it waits (same file) or runs
+  alongside it (different files). `_create_backup()`'s
+  return type is
+  `Optional[BackupThread]` (was `bool`); `_load()`'s call site already
+  discarded the return value, so it stays unchanged and fully fire-and-forget;
+  `_do_restore()`'s call site is different — see the Restore from Backup
+  section below. See
+  docs/superpowers/specs/2026-09-02-backup-threading-design.md.
+- Manifest: `backup_info.json`, written by the module function
+  `_write_backup_slot()`, with `original_path`, `backup_created` (ISO 8601),
+  `original_size_bytes`, `backup_file`, `compressed`, `md5_checksum`,
+  `glossary_backed_up` (+ `glossary_file`/`glossary_compressed`/
+  `glossary_md5_checksum` when true), plus `version`, `culture`,
+  `display_language` (from `parse_xml_header(source_path)` — always freshly
+  re-parsed from the file being backed up, **not** from
+  `self.xml_version`/`self.target_culture`/`self.display_language`, since the
+  pre-restore-safety case backs up `dest_path`, which is not necessarily the
+  file currently open in the UI), `location` (`"root"` | `"next_to_file"`),
+  `backup_key`, `trigger` (`"file_open"` | `"pre_restore_safety"`), and
+  `is_fallback`.
+- Pruning: oldest slots deleted when a given key's slot count (per location)
+  exceeds `max_count`; ISO datetime folder names sort lexicographically so
+  `sorted(key=lambda d: d.name)` is correct. Scoped per location — `"both"`
+  mode with `max_count=5` can keep up to 5 slots at *each* location for the
+  same key.
+
+### Restore from Backup
+
+- Entry point: **File → Restore from Backup…** → `_open_restore_backup()` →
+  `RestoreFromBackupDialog` → `_do_restore()`.
+- **Discovery**: `RestoreFromBackupDialog._scan_roots()` scans the app-root
+  tree plus every folder in `known_next_to_file_dirs` that still exists on
+  disk (silently skipping any that don't — e.g. a disconnected drive).
+- **Tree**: nested `filename stem → version subgroup → timestamped slot`
+  (parsed from each key folder's name via `^(.*)__v(.+)$`; unmatched keys
+  nest under `"(unversioned)"`), merged across every scan root so the same
+  file's backups from both locations appear as sibling rows. A "Location"
+  column shows `"Next to file"` / `"Root"` per slot — inferred from **which
+  scan root the slot was found under**, not from the manifest's own
+  `location` field (a manifest could go stale if its folder is later manually
+  copied/moved; the scan path is always current and truthful, and it's the
+  only option that works for every pre-existing manifest, which lacks the
+  field). Themed via a standard `_apply_style()` (previously the one dialog
+  in the app with no theme applied at all).
+- `_do_restore()`: reads + decompresses the backup, verifies MD5 (warns on
+  mismatch), asks Overwrite original / Save as copy (copy gets
+  `<stem>_restored_<YYYY-MM-DD_HH-MM-SS><ext>` suffix). If overwriting an
+  existing `dest_path`, first takes a `pre_restore_safety`-triggered backup of
+  it (best-effort, `notify=False`, reuses the full `_create_backup()`
+  pipeline including `location_mode`) so a wrong-slot restore is never
+  unrecoverable. Confirms discard of unsaved changes when overwriting the
+  open file. See the "Glossary in backup/restore" notes earlier in this
+  file for how glossary restore is sequenced relative to the safety backup.
+  **The safety backup runs in the background, and the destination write
+  waits for it, not the UI thread.** If `dest_path` exists, `_do_restore()`
+  starts the `pre_restore_safety` `BackupThread` and, when one was actually
+  started, connects its `finished` signal to `_do_restore_after_backup()`
+  and returns immediately rather than writing the destination inline.
+  `_do_restore_after_backup()` — split out from `_do_restore()` for exactly
+  this reason — holds everything from "write the restored file" onward
+  (glossary write, restore log, reload/notify). If backup is disabled or
+  `dest_path` doesn't exist yet (a Save-as-copy restore has nothing to
+  snapshot), `_do_restore()` calls `_do_restore_after_backup()` directly,
+  synchronously, with no thread involved — identical to pre-threading
+  behavior in that case.
+- `_write_restore_log()`: appends a JSON record to `restore_log.json` in the
+  language backup folder (`restore_time`, `restored_from_slot`, `restored_to`,
+  `md5_verified`).
+- **Deleting a slot**: a "Delete Selected" button (leftmost in the button row,
+  `role="danger"` from `_button_qss()` — red outline, accent focus ring like every
+  other button; "Restore Selected" beside it is the `role="primary"` default)
+  removes one leaf backup slot from disk after a Yes/No confirmation. The confirmation warns
+  explicitly if this is the only backup left for that file at that location
+  (computed by counting sibling directories under the slot's own parent —
+  the same `key_dir` `_write_backup_slot()`'s own pruning already reasons
+  about). The dialog stays open afterward and `_load_backups()` re-runs so the
+  tree reflects the deletion (or, on failure, reality either way).
+- **Sizing**: `_fit_to_content()` runs once at the end of `__init__`, after the
+  tree is first populated, so all 5 columns and every backup-slot row are
+  visible without truncation when they fit — clamped to
+  `screen().availableGeometry()` (minus a 60px margin) so the window never
+  exceeds the screen. Computed by temporarily giving the tree its real
+  content size as a minimum and reading `self.layout().sizeHint()`, so Qt's
+  own layout engine sizes the rest of the dialog's chrome correctly, rather
+  than this method hand-guessing other widgets' heights.
+  **`self.adjustSize()` was tried first and rejected** — it has its own
+  internal Qt behavior capping top-level windows to
+  `max(2/3 × screen, the window's explicit minimumSize)`, which (since this
+  dialog always sets an explicit `860×460` minimum) silently prevented the
+  dialog from ever reaching the intended `screen − 60px` target for large
+  content, capping it at ~2/3 screen instead. `layout().sizeHint()` reads
+  the same aggregated child-widget size hints without that cap. Deliberately
+  not re-triggered on later tree refreshes (e.g. after a delete), so the
+  window doesn't grow or shrink again mid-session.
+
+### File Properties
+
+- Entry point: **File → Properties…** → `MainWindow._open_file_properties()` →
+  `FilePropertiesDialog`. With no file open it shows a warning, like Merge.
+- **Header group (editable):** *Culture* is shown, never edited — `describe_culture()` turns the
+  code into "Latvian (Latvia)" through `QLocale` (so `lv-LV` and `lv_LV` both work), with the code
+  beside it in dim text; a code with no region shows only the language, because `QLocale` would
+  guess a territory; an unknown code (`QLocale` answers `Language.C`) shows the raw code plus
+  "(unknown language)", an empty one "—". *Language name* is a `QLineEdit`, trimmed, not blank,
+  at most `DISPLAY_LANGUAGE_MAX_LEN` (64) characters: `parse_xml_header()` reads only the first
+  512 characters, so a very long name would push `Version` out of reach on the next open.
+  *Version* is three `QSpinBox`es limited to `VERSION_PART_MAXIMA` (99, 99, 99999), matching
+  `_VERSION_PARTS_RE`; a spin box shows a plain integer, so nothing is ever zero-padded, and
+  `format_version()` writes `4.1.1220` exactly. `.` or `,` (a Latvian numeric keypad types `,`)
+  moves to the next box; the dialog watches both the spin box and its line edit, since the key can
+  reach either. Box widths come from `_width_for_text()` on the widest value, so they follow the
+  UI font, and both group boxes share one caption width so their values line up. A stored version
+  that `parse_version_parts()` rejects (missing, `4.1`, `4.1.1140.2`, `100.1.1`) opens the boxes
+  at 0.0.0 with a `text_warn` line naming it, and OK stays disabled until a box is changed.
+- **About this file (read-only):** `compute_file_facts(entries, path)` → `FileFacts`: name,
+  folder (always shown in full: a path has no spaces for word wrap to break at, so a zero-width
+  space after each `\` and `/` lets it wrap onto more lines; that row is not selectable, since a
+  copy would carry the U+200B characters into Explorer or a shell), size and modified time from disk (`None` → "—" if
+  the file is gone), and from the in-memory entries the string total, New/Review/Complete,
+  untranslated (`text == name`, the same rule as `_pick_newer_entry()`) and tablet strings, each
+  with a share. Numbers, size, percentages and the date use `QLocale.system()`. A dim note says
+  the counts include unsaved changes when there are any.
+- **Applying OK** is an in-memory edit like any other. The version is compared as numbers
+  (`parse_version_parts()`), so a stored `04.1.1140` is not rewritten when nothing changed; the
+  language as trimmed text. Only a changed attribute goes to `build_header_xml(segments[0],
+  language_or_None, version_or_None)`, which edits just the root `<TRNExportImportModel …>` tag:
+  replace in place (attribute order and spacing kept), or append a missing attribute at the end
+  of the tag (before the `/` of a self-closing one). `_ROOT_TAG_RE` is quote-aware
+  (`(?:[^>"]|"[^"]*")*`), because a raw `>` is legal inside an attribute value and a hand-edited
+  file may hold one; the app's own writer always escapes it. The lookbehind `(?<=\s)` keeps a prefixed `xsi:Version` from matching, the
+  replacement is a lambda so a backslash in the value stays literal, and `<?xml version=…?>` is
+  outside the tag. A missing root tag raises `ValueError` → error dialog, nothing changed. Then
+  `is_modified`, `_update_title()`, `_update_file_meta_labels()` and a 4 s notification.
+- `parse_xml_header()` unescapes `DisplayLanguage`/`Version` with `html.unescape()`, because
+  `build_header_xml()` escapes through `_escape_attr_value()`: without it "R&D" would read back as
+  "R&amp;D".
+- **Backup key side effect:** the backup key is `<stem>__v<version>`, so after a version change
+  the next backup starts a new key folder (and the min-interval throttle, being per key, does not
+  skip it). Older backups stay under the old version in Restore from Backup.
+
+### Merge from File
+
+- Entry point: **File → Merge from File…** → `MainWindow._merge_from_file()`.
+- Before computing the diff, `_merge_from_file()` warns via `QMessageBox.warning` if
+  `incoming_culture` and `self.target_culture` are both non-empty and differ — Cancel
+  aborts with no changes made. If either side's `Culture` attribute is empty/missing,
+  the guard is silently skipped (no warning), since there's nothing to compare.
+- Pure diff engine: `compute_merge_diff(open_entries, incoming_entries) -> MergeDiff`
+  classifies every source text (matched by exact, literal `StringEntry.name`) into
+  `additions` / `conflicts` / `deletions` / `auto_updated`. Raises `ValueError` if the
+  incoming file has duplicate source text — the open file's own uniqueness invariant
+  is assumed, not re-checked.
+- Metadata-only differences (same `text`, different `translator`/`status`/
+  `modify_date`/`istablet`) are auto-resolved via `_pick_newer_entry()`: the side with
+  the strictly newer `modify_date` (via `parse_date()`) wins; ties, unparseable, or
+  missing dates default to the open file's version and are **not** recorded in
+  `auto_updated` (nothing to change).
+- `_pick_newer_entry()` has one exception to pure date comparison, checked first: if
+  exactly one side's translation text is identical to its own source `name` (i.e.
+  untranslated), the other, genuinely translated side always wins, regardless of
+  `modify_date` — an untranslated placeholder should never outrank a real translation.
+  It's shared by both call sites: the metadata-only auto-resolve above, and
+  `MergeConflictDialog`'s default Keep-open/Keep-incoming selection for a genuine text
+  conflict (below). It's safe at the metadata-only site because that call only ever
+  fires when both sides already share identical text, so the exception's precondition
+  (exactly one side untranslated) can never be met there. It's safe at the conflict
+  site because a genuine text conflict has differing text by definition, so at most
+  one side can be untranslated — there's no ambiguous "both sides untranslated" case.
+- Additions, genuine text conflicts, and deletion candidates are all surfaced in
+  `MergeConflictDialog` (shown whenever at least one of the three is non-empty) — same
+  `__init__ → _build_ui() → _load_values()` convention as `RestoreFromBackupDialog`.
+  One divergence: `MergeConflictDialog` reads the active theme directly from
+  `parent.settings` once in `__init__` (as `self._theme`/`self._is_dark`) rather than
+  calling `mw._get_theme()` per style pass. This is because `_recolor_row()` needs the
+  theme available while rows are still being built in `_load_values()`, before
+  `_apply_style()` would otherwise have run. Addition rows default to Accept;
+  deletions are never auto-removed and always default to "Keep". Row
+  backgrounds are tinted live via `_recolor_row()` to reflect each row's current
+  resolution state, reusing the `dlg_count_ok`/`dlg_count_warn`/`dlg_count_concern`
+  theme colors already used by the character-count indicator — no new theme keys.
+  Conflict and deletion rows are always tinted, not just when changed: faint for the
+  non-destructive choice ("Keep open" / "Keep"), full-strength for the choice that
+  overwrites/removes existing data ("Keep incoming" / "Delete") — the tint tracks the
+  *current* choice, not whether the row is still on its initial preset, so a conflict
+  whose own default already resolved to "Keep incoming" (e.g. the incoming side has a
+  strictly newer `modifyDate`) renders full-strength on load, not faint
+  (`_TINT_ALPHA_DARK_FAINT` / `_TINT_ALPHA_LIGHT_FAINT`). Addition rows use the same
+  two-item combo (Accept/Reject) as conflicts and deletions use for their own choice;
+  Reject is the one resolution that leaves the row untinted, since nothing happens to
+  it. The three long-text columns (Source text, Open file value,
+  Incoming file value) carry a `setToolTip()` with the same full string as the cell,
+  so elided/truncated text is still readable on hover without widening the table.
+  The table supports multi-select (`ExtendedSelection` + `SelectRows`) — the vertical
+  row-number header is the most reliable click target, since (unlike the Resolution
+  column) it isn't covered by a combo widget. The header band holds only the
+  toolbar: four columns — Selection (`Select All`), Additions (`Select` / `Accept` /
+  `Reject`), Conflicts (`Select` / `Keep open` / `Keep incoming`), Deletions (`Select` /
+  `Keep` / `Delete`) — each a caption `QLabel` (property `mergeCaption`:
+  `neutral`/`ok`/`warn`/`bad`, coloured `header_fg`/`text_ok`/`text_warn`/`text_bad`)
+  over a button row, separated by `border-left` dividers (`QFrame#mergeCol`; the first
+  column is `#mergeColFirst`). A category's `Select` button replaces the current
+  selection. Every button keeps its previous full label ("Select Additions", "Accept
+  Selected", "Keep Open", …) as tooltip and accessible name, because the short text
+  relies on the caption for its meaning. Buttons of a category carry a `tint` property
+  (`ok`/`warn`/`bad`; `Select All` has none and keeps the neutral look); the module-level
+  `_merge_tint_qss()` (shared with the compare pop-up) builds their translucent fill and
+  border from `dlg_count_ok`/`dlg_count_warn`/`dlg_count_concern` with the `_rgba_css()`
+  hex-to-CSS helper and per-theme alpha maps, and each tinted selector has its own `:focus` and
+  `:disabled` rule, so keyboard focus stays visible and an empty category shows the
+  ordinary disabled look. The dialog
+  has no keyboard shortcuts (its buttons carry no `[Key]`-suffixed tooltips, and
+  `View → Keyboard Shortcuts…` has no "Merge Dialog" group); the row compare pop-up has
+  its own keys (see below). The table has
+  `setTabKeyNavigation(False)` — it is read-only, so cell-to-cell Tab navigation has
+  no editing purpose, and arrow keys still move between cells — so Tab and Shift+Tab
+  from the initial table focus walk out to reach every toolbar button, the footer's
+  auto-resolve checkbox, Apply & Close and Cancel (Enter still applies, through the
+  default button — see "Footer and status bar" below). It also sets
+  `Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint` so
+  its title bar can maximize/restore.
+- **Toolbar wrapping**: the four columns sit in a `FlowLayout` (not a
+  `QHBoxLayout`), so a column is never split across rows, only wrapped between
+  columns. With the short labels the toolbar fits on one row at the default UI
+  font on an ordinary monitor. It wraps only when the dialog is narrower than the
+  toolbar (a manual resize, or a large UI font on a small screen), and then a
+  divider can land at the start of a row — a known, accepted trade-off of the
+  divider style.
+- **Sizing**: `_fit_to_content()` runs once at the end of `__init__` and is
+  width-first: the target width is `_wanted_width()` — the wider of
+  `FlowLayout.unwrapped_width()` plus the header band's side margins and
+  `_table_natural_width()` — capped to `screen().availableGeometry()` minus a
+  60px margin, and the height then comes from `heightForWidth()` (clamping
+  width and height independently doesn't work once height depends on width,
+  which it does while the toolbar can wrap). `_table_natural_width()` measures
+  column contents directly because three columns use `Stretch`, which Qt sizes
+  to the view, not to their contents. With the full labels the toolbar alone
+  decided the width; now whichever is wider decides — usually the table's
+  content for realistic strings, the toolbar for short ones.
+  Deliberately not re-triggered later, though `FlowLayout` re-flows for free if
+  the user resizes the window afterward, via Qt's normal height-for-width
+  contract.
+- **Footer and status bar**: the auto-resolve checkbox sits on the left of the
+  footer band, with **Apply & Close** (`role="primary"`, default, `accept()`) and
+  **Cancel** (`reject()`) on the right. There is no separate Close button: nothing
+  is left to do in the dialog once the choices are applied
+  (`MainWindow._merge_from_file()` applies them after `exec()` returns). The counts
+  sentence ("N addition(s), N conflict(s), N deletion(s) need your review (N
+  row(s) total).") is the bottom-most strip (`QFrame#dlgStatusBar`), like the main
+  window's info bar. In Qt source the label is `"Apply && Close"` — a lone `&`
+  would be read as a mnemonic marker. `_on_auto_toggled` forces every conflict to
+  the newest-date winner and disables the per-row conflict dropdowns; it has never
+  disabled the toolbar buttons. `self._btn_apply.setDefault(True)` runs after the
+  footer has been added to the dialog's layout: that registration is what makes
+  Apply & Close the dialog's default, so a freshly opened dialog starts on it (Qt's
+  own dialog behaviour) and Enter applies. Called before the footer joins the
+  layout, the dialog never registers it, and Enter after a toolbar click would
+  repeat that toolbar action. `__init__` also ends with `self._table.setFocus()`,
+  which is defensive: initial focus lands in the table, so Enter on open would still
+  apply even if the default registration were ever broken. Keyboard focus starts in
+  the table, but the table's own `setTabKeyNavigation(False)` lets Tab and Shift+Tab
+  walk straight out to the toolbar and footer from there (see the Tab item in the
+  manual checklist). See the "Default-button registration" pitfall.
+  `MergeConflictDialog.__init__` also sets `Qt.WA_DeleteOnClose`, so the dialog and
+  its per-row Resolution widgets are actually destroyed on Accept or Cancel instead
+  of lingering forever as a hidden child of `MainWindow` — see the "A dialog
+  constructed with `parent=self`..." pitfall.
+- **Row compare pop-up (`MergeCompareDialog`).** A double-click on a text cell or a row number
+  (`cellDoubleClicked`, `verticalHeader().sectionDoubleClicked`) opens a modal, compact
+  (680 × 420 minimum, opens at its size hint, never resizes on a move) pop-up; a double-click on
+  the Resolution cell still reaches its combo while the combo is enabled — on a disabled one
+  (auto-resolve ticked, conflict rows) the click passes through to the view and opens the pop-up
+  instead. It keeps no state: it reads rows through
+  `row_count()` / `row_info()` and writes a choice with `combo.setCurrentText()`, so the combo's
+  own signal re-tints the row and `accepted_additions()` / `resolved_conflicts()` /
+  `deletions_to_remove()` need nothing new. Header band: the kind in its category colour plus
+  `merge_row_reason()`'s phrase (same order as `_pick_newer_entry()`, `· auto-resolved` appended
+  while the checkbox is ticked) and "Row N of M". Body: three read-only `QTextEdit` panes (source,
+  open, incoming) — a conflict's changed words tinted by `merge_diff_html()` (difflib over word /
+  whitespace / punctuation tokens; the tint is `_blend_hex()`'d to an opaque hex because
+  `QTextDocument` CSS doesn't reliably take `rgba()`), a missing side as a dim "Not in the … file"
+  — and under them Translator, Status, Modified, "Tablet · Length" per side, differing values in
+  `text_warn`. Footer: ◀ ▶, the kind's two choices (labels are the combo's own items; the current
+  one marked `✓` and `current="true"`; minimum width fits the `✓` form so the footer never
+  shifts), Close (the default). A choice advances to the next row (stays on the last). Focus
+  starts on the `✓` button, so Enter alone steps through a review without changing anything.
+  Keys: `edit_prev`/`edit_next` (the Edit window's configurable slots), fixed `Alt+1`/`Alt+2`,
+  as dialog-wide `QShortcut`s (`_bind_keys()`) so they fire whichever child has focus — not a
+  `keyPressEvent` override (a focused `QAbstractButton` spends Left/Right on focus moves) and not
+  button shortcuts (`setText()` resets them, and the choice labels change per row). Escape and
+  Enter are `QDialog`'s own; Enter in a read-only pane reaches Close.
+  Each move selects that row in the table (`show_row()`). `WA_DeleteOnClose`.
+  `python tests/check_merge_compare.py` is the regression check.
+- `insert_additions(segments, entries, additions)` builds new `<string>` XML snippets
+  for additions via `build_string_xml()` fed a template snippet (`_NEW_STRING_TEMPLATE`)
+  with a pre-escaped `name` attribute — `build_string_xml()` never rewrites `name`,
+  only `translator`/`status`/`modifyDate`/`istablet`/text — and splices them into the
+  final segment just before `</resources>` so the file stays valid XML, each preceded by a filler
+  segment holding the file's own line break plus `_NEW_STRING_INDENT`. New strings are
+  always appended at the end; existing entries' `seg_idx` values are untouched.
+  `insert_additions()` itself is unaware of per-row acceptance — `MainWindow._merge_from_file()`
+  calls `MergeConflictDialog.accepted_additions()` to get just the Accept subset of
+  `diff.additions` and passes *that* filtered list through as `additions_to_add`, both
+  to the `</resources>` guard and to `insert_additions()`. Unaccepted additions are
+  simply never inserted; there's no persisted record of the rejection, so they reappear
+  as addition candidates if the same incoming file is merged again later.
+  `MainWindow._apply_merge_diff()` checks for a literal `</resources>` in the file's
+  final segment *before* applying any part of the merge (additions, auto-updates,
+  conflict resolutions, or deletions), so a malformed/hand-edited open file fails fast
+  with a `QMessageBox.critical` and zero partial mutation, rather than leaving the
+  in-memory entries half-applied.
+- Deletions the user confirms are removed by blanking `self.segments[entry.seg_idx] = ""`
+  rather than re-indexing every later entry's `seg_idx` — the same trade-off pattern the
+  restore/backup code avoids needing.
+- No auto-save after a merge — same as any other in-memory edit, the user reviews and
+  saves explicitly (Ctrl+S).
+
+---
+
+## Windows launchers
+
+### Windows Terminal detection
+
+`$script:_isWT` is set to `$true` when `$env:WT_SESSION` is non-empty (Windows
+Terminal sets this GUID for every hosted session).  When `_isWT` is `$true` the
+launcher skips console-window resize and P/Invoke centering — WT manages its own
+pane geometry and `GetConsoleWindow()` would return the WT process HWND.
+
+When not in WT the launcher resizes the console to 72 × 26 columns/rows and
+centres it on the primary screen via `SetWindowPos`.  A warning banner is printed
+immediately after the header reminding the user not to close the launcher window
+while the application is running.
+
+### Application icon
+
+`Resources\xml_translation_editor.ico` is used in two independent places, each solving a
+different problem:
+
+- **`build_exe.ps1`** passes it to PyInstaller as `--icon $IconPath`, which sets the
+  produced `XMLTranslationEditor.exe`'s own file icon (Explorer, taskbar, Alt-Tab).  This
+  check is non-fatal — a missing icon file only logs a `[WARN]` and the build proceeds
+  without a custom icon, since it isn't required for a working exe.
+- **`xml_translation_editor.py`** calls `app.setWindowIcon(QIcon(str(APP_ICON_PATH)))` in
+  `main()`, which sets the title-bar/taskbar icon of the *running* window — this matters
+  because PyInstaller's `--icon` only affects the exe's file metadata, not anything
+  readable by `QIcon()` at runtime, and it does nothing at all when running the raw
+  script directly (`python xml_translation_editor.py`, or via the `.ps1`/`.bat`
+  launchers) rather than the compiled exe.
+
+`APP_ICON_PATH` is resolved by the module-level `_resource_path()` helper, which checks
+`sys._MEIPASS` (set only inside a frozen PyInstaller onefile process) before falling back
+to the script's own directory. This matters because a onefile build extracts bundled data
+to a temp dir at runtime, not next to the exe — so for `QIcon()` to find the icon inside
+the frozen exe, `build_exe.ps1` must also bundle it via `--add-data "$IconPath;Resources"`
+(same relative `Resources/xml_translation_editor.ico` path `_resource_path()` expects).
+Without that `--add-data` flag, the frozen exe's window icon would silently fall back to
+default even though the exe's own file icon (set via `--icon`) is correct — the two flags
+look redundant but serve different consumers (Explorer vs. `QIcon` at runtime).
+
+**The Welcome screen's logo needs the identical treatment, separately.**
+`APP_LOGO_PATH` (`Resources/xml_translation_editor.png`, see
+[Welcome screen / editor page switch](#welcome-screen--editor-page-switch)) is resolved through the same
+`_resource_path()`/`_MEIPASS` mechanism as `APP_ICON_PATH`, but `--icon` only ever
+bundles the `.ico` — it says nothing about the `.png`. `build_exe.ps1` therefore
+passes its own extra `--add-data "$LogoPath;Resources"` for the `.png`, independent of
+the icon's `--add-data`. Forgetting this (as an earlier version of the build script
+did) doesn't fail the build or show an error — it just leaves the Welcome screen's
+logo blank in the compiled `.exe` while working fine when run from source, since only
+the frozen build resolves paths through `_MEIPASS` instead of the script's own
+directory. `build_exe.bat`'s direct-Python fallback (used only when PowerShell is
+entirely unavailable) mirrors both `--add-data` flags for the same reason.
+
+**Taskbar button vs. title bar — a separate Windows quirk.** `setWindowIcon()` alone
+correctly sets the title-bar and Alt-Tab icon when running the raw script, but the
+Windows *taskbar button* still showed the generic Python icon in testing — confirmed via
+screenshot, not assumed. Windows keys the taskbar button's icon/grouping to the
+**process's own executable** (`python.exe`) unless the process has set an explicit
+[AppUserModelID](https://learn.microsoft.com/windows/win32/shell/appids). `main()` calls
+`ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("XMLTranslationEditor")`
+on Windows, best-effort or `pass`, before creating `QApplication` — this makes Windows
+treat the running process as its own distinct taskbar entity so the taskbar button picks
+up `setWindowIcon()`'s icon instead of falling back to `python.exe`'s. This is
+dev-run-specific: the compiled `.exe` never had this problem, since there the taskbar
+button's host executable already carries the correct icon via `--icon`.
+
+### Startup splash screen
+
+The `.exe` is a `--onefile` build (~170 MB), and most of its startup delay is the
+bootloader unpacking that archive into a temp folder — which happens *before* Python
+or Qt exist, so a normal in-app `QSplashScreen` can never cover it. PyInstaller's
+native `--splash <image>` flag solves exactly this: a small bundled Tcl/Tk runtime
+shows the image immediately, while extraction and interpreter startup happen behind
+it. `build_exe.ps1` (and `build_exe.bat`'s direct-Python fallback) pass
+`--splash "Resources\xml_translation_editor_splash.png"`; the image is embedded
+directly into the bootloader, so — unlike the icon/logo — no `--add-data` is needed
+for it, and end users never need Tcl/Tk installed themselves. `main()` closes it with
+a best-effort `import pyi_splash; pyi_splash.close()` right after `win.show()`, so
+there's no gap between the splash disappearing and the real window appearing.
+`pyi_splash` only exists inside a frozen build made with `--splash`; running from
+source or from a build without it just does nothing, same `except Exception: pass`
+convention as `SetCurrentProcessExplicitAppUserModelID` above.
+
+**Splash image is static — no dynamic "loading" text.** `pyi_splash.update_text()`
+requires a text position/color to be pre-configured, which in turn requires a
+maintained `.spec` file — a structural change this build script deliberately avoids
+(it drives PyInstaller with pure CLI flags and deletes any `.spec` file at the start
+of every build). Any messaging has to be baked into the image itself instead; the
+current asset bakes in "Starting…" beneath the app name.
+
+**Tcl/Tk is a build-machine-only requirement, and it's non-fatal if missing.** Unlike
+the icon/logo (which just degrade gracefully if their files are missing), passing
+`--splash` to PyInstaller when the *build* machine's Python has no `tkinter` fails
+the whole build outright — there's no silent skip. `build_exe.ps1`'s Check 14 runs
+`import tkinter` up front and simply omits `--splash` from the PyInstaller args if it
+fails (`$tkOk = $false`), logging a `[WARN]` like the icon/logo checks; `build_exe.bat`
+does the equivalent inline before setting `SPLASH_ARGS`. This only ever affects the
+*build* machine — the minimal Tcl/Tk runtime PyInstaller needs to render the splash is
+bundled into the exe itself, so end users' machines are never involved.
+
+### Encoding rules (critical for Windows compatibility)
+
+Both `.bat` and `.ps1` launchers must stay **pure ASCII** after any edit:
+
+```python
+# Validate before saving:
+assert all(ord(c) <= 127 for c in bat_content)
+```
+
+- `run_translator.ps1` / `build_exe.ps1`: saved UTF-8 **with BOM** (`encoding="utf-8-sig"`).
+  The BOM signals PS 5.1 to read the file as UTF-8; without it PS 5.1 defaults to Windows-1252.
+- `run_translator.bat` / `build_exe.bat`: saved pure ASCII with **CRLF** line endings
+  (`newline="\r\n"`).  CMD.EXE has no BOM support.
+- Replace all Unicode decorative characters before saving:
+  `─ → -`, `═ → =`, `╔╗╚╝ → +`, `║ → |`, `— → --`, `→ → ->`.
+
+### PowerShell conventions
+
+- `$ErrorActionPreference = "Continue"` (not "Stop") at script level — prevents
+  `NativeCommandError` when native commands exit non-zero.
+- Wrap every `& nativeCommand` call in `try { … } catch {}` and check `$LASTEXITCODE`.
+- Use `Invoke-Native` / `Get-NativeOutput` helpers (already defined in the scripts)
+  for all pip / python calls — they temporarily set `$ErrorActionPreference = "Continue"`
+  and pipe through `Out-String` to return a scalar (fixes PS 5.1 array-vs-scalar bugs
+  with `-match` and `$Matches`).
+
+### Batch file conventions
+
+- Use flat `goto`/label structure for any block that runs pip or other commands that
+  may output `)` characters — **never** put such commands inside parenthesised
+  `if (…)` blocks, as CMD pre-parses the entire block and `)` in output breaks it.
+- `setlocal EnableDelayedExpansion` is set at the top; use `!VAR!` inside loops and
+  delayed-expansion contexts.
+
+### Launcher dependency cache
+
+`run_translator.ps1` writes `launcher_cache.json` after a successful full
+dependency check (`python_cmd`, `python_ver`, `pyside6_ver`, `requires` —
+the exact `$REQUIRED_PACKAGES` list joined by commas, at write time —
+`checked_at`). `run_translator.bat` writes its own `bat_launcher_cache.txt`,
+containing nothing but the PowerShell executable path that worked
+(`powershell.exe` or `pwsh.exe`) on one line. Both files are gitignored,
+purely local performance caches — never manually edited by a user, always
+safe to delete (the next launch regenerates them via a full check).
+
+**PS1 fast path.** `Read-LaunchCache` rejects the cache (falls back to a
+full check) if: the file is missing/malformed, `python_cmd`/`checked_at`
+are empty, the cache is older than `$CACHE_MAX_DAYS` (30), or its `requires`
+field doesn't match the *current* script's `$REQUIRED_PACKAGES` — so
+editing `$REQUIRED_PACKAGES` (e.g. adding a new dependency) automatically
+invalidates every existing user's stale cache on their next launch. If the
+cache passes those checks, the fast path runs one combined
+`python_cmd -c "import Pkg1, Pkg2, ..."` (built from `$PackageImportMap`,
+shared with `Test-PythonPackage`) to re-verify Python **and** every
+required package in a single process spawn — the same cost as a
+version-only check.
+
+**Same-run self-heal.** If either the pre-flight check or the actual app
+launch fails, the cache is removed and the script falls through into the
+full-check flow in the same run (never a second, separate invocation) —
+this applies whether `run_translator.ps1` is run directly or via
+`run_translator.bat`. The full-check flow's own final launch attempt also
+always exits with the app's real exit code (propagating a genuine failure
+correctly) rather than ever silently reporting success.
+
+**BAT cache is inert data, not executed.** `bat_launcher_cache.txt` is
+never `call`-ed or otherwise executed. Its contents are checked via
+`findstr` (a whole-line, literal-string membership test against the raw
+file) against the two values this script ever writes (`powershell.exe` /
+`pwsh.exe`); the in-memory `BAT_CACHE_PS_EXE` variable is only ever
+assigned one of those two hardcoded literals directly in the script's own
+code — never the file's raw bytes — so a crafted or corrupted cache value
+can neither execute nor crash the batch parser, it is simply rejected.
+
+---
+
+## Adding a new feature — checklist
+
+1. **Settings key**: add the default to `Settings.DEFAULTS`.  Use a nested dict if
+   the feature has multiple sub-settings.
+2. **Dialog**: create a `QDialog` subclass following the `__init__ → _build_ui() →
+   _load_values()` pattern.  Wire Save button to write `settings.data[key]` and
+   call `settings.save()` then `self.accept()`.
+3. **Menu entry**: add to `_build_menu()` under the appropriate menu.  Use the
+   `self._act(menu, label, slot, shortcut)` helper.
+4. **Logic**: add methods to `MainWindow`.  Keep them focused — one method per
+   concern.
+5. **docs/FEATURES.md**: update Features, Settings JSON example, Settings key table, and
+   Troubleshooting sections; add a README.md highlight only for a headline feature, then run
+   `python Tools/check_doc_links.py`.
+6. **CLAUDE.md**: update Architecture or relevant section if the feature adds new
+   classes, signals, or persistent state.
+7. **Releasing**: bump `APP_VERSION` (near the top of the file, in the CONSTANTS
+   block) before tagging a new GitHub release — it has no other automatic source
+   (no CI, no git-derived version at runtime). The README images and the User Guide
+   carry the version, so after the bump re-run the refresh order in the Tools folder
+   section (screenshots → `make_readme_images.py` → `build_user_guide.py`).
+
+---
+
+## Testing
+
+`python tests/run_all.py` runs every offscreen check (see [Tests folder](#tests-folder)); the
+pre-commit hook runs it automatically for code changes. Manual testing checklist for any change:
+
+- [ ] `python -c "import ast; ast.parse(open('xml_translation_editor.py').read()); print('OK')"` — syntax check
+- [ ] Run `python tests/run_all.py` — verify `N passed, 0 failed` and exit code 0 (the hook runs this before a code commit)
+- [ ] Launch app and open `Latvian.xml`
+- [ ] Verify info bar shows language name and version (e.g. `Latviešu  v4.1.1140`) anchored at far right — they must not shift when notifications appear or disappear
+- [ ] Verify "Loaded: Latvian.xml  v4.1.1140  (N strings)" appears briefly in the dynamic zone then clears; language/version labels stay fixed
+- [ ] Edit an entry, verify `is_modified` / title bullet / amber label
+- [ ] Save (Ctrl+S), verify title clears, label empties, and "Saved: Latvian.xml  v4.1.1140" appears; Close File (`Ctrl+W`) — verify "Closed: Latvian.xml  v4.1.1140"; open a copy with the `Version` attribute removed — verify "Loaded: … (no version)  (N strings)"
+- [ ] Reopen file, verify backup folder and `backup_info.json` created
+- [ ] Open a file, note the new backup slot, then **Close File** (`Ctrl+W`) and immediately reopen it — verify no second slot is created and the info bar reads "Backup next to file: skipped — backed up less than a minute ago  (min interval 5 min)", then the same for "Backup in root"
+- [ ] Wait past the configured interval and reopen the same file — verify a new slot is written and the normal "Backup: …" message appears
+- [ ] Set **Skip if backed up within** to `0` ("Always back up"), reopen a file twice in quick succession — verify both opens write a slot, as before this feature
+- [ ] Open a file that has never been backed up — verify it backs up immediately regardless of the interval (no slots to measure against)
+- [ ] With `location_mode: "both"`, delete one location's key folder, then reopen the file inside the interval — verify the missing location gets a new slot, the recent one is skipped, and the message names the skipped location
+- [ ] With `location_mode: "next_to_file"` pointing at an unwritable folder and a recent slot already at root, open the file — verify the fallback does *not* write a redundant root slot
+- [ ] With `location_mode: "both"`, a recent slot at root only, and the next-to-file folder made unwritable, open the file — verify the info bar shows "Backup next to file: failed — could not write the backup folder" in red, then "Backup in root: skipped — …" in grey; separately, with both locations writable but only the next-to-file one blocked and no recent slots, verify the red failure is followed by "Backup in root: saved at …" (the failure is no longer dropped)
+- [ ] Open a file so a slot exists, then immediately **File → Restore from Backup…** with "Overwrite original" — verify a `pre_restore_safety` slot IS written despite being well inside the interval, and its `backup_info.json` reports `"trigger": "pre_restore_safety"`
+- [ ] Open **View → Autosave & Backup…** — verify the new **Skip if backed up within** row sits between *Keep last* and *Compress*, shows "Always back up" at 0, greys out when "Create backup when a file is opened" is unchecked, and persists across Save + restart
+- [ ] Delete `min_interval_minutes` from `translation_editor_settings.json` and relaunch — verify it is backfilled with `5` and the file is rewritten once
+- [ ] Launch with an existing valid settings file — verify `translation_editor_settings.backups.zip` appears beside it holding one `translation_editor_settings_<date>_<time>.json` that is byte-identical to the settings file; relaunch the same day — verify it still holds exactly one entry
+- [ ] Rename the archive's newest entry to yesterday's date (any zip tool) and relaunch — verify a second entry is added; repeat with successively older dates until there are 11 distinct days — verify the archive holds exactly 10 and the oldest is gone
+- [ ] With the app closed, open the archive in File Explorer, extract one entry, rename it to `translation_editor_settings.json` over the live file, and launch — verify the app loads with that snapshot's values (the manual-restore steps in `docs/FEATURES.md`)
+- [ ] Truncate the settings file mid-JSON and launch — verify a "Settings file recovered" warning appears *before* the translator-name prompt, the API keys are back in Translation Settings, `translation_editor_settings.json.corrupt-<time>` holds the truncated text, and the settings file parses again; after the dialogs, verify the info bar shows "Settings file was damaged…" in red, then "Settings restored from the backup of <date>" in amber, and the history button has a red dot
+- [ ] Truncate the settings file, then hold it open from PowerShell (`$fs = [IO.File]::Open($path,'Open','Read','Read')`) and launch — verify the recovery warning still appears and names a `.corrupt-<time>` **copy** (the file couldn't be moved), the API keys are back in Translation Settings, and after releasing the lock and closing the app the settings file on disk is valid
+- [ ] Same truncation with the archive deleted — verify the warning says no backup was available and defaults are in use, and the damaged file is still kept aside; the info bar shows the red "damaged" message, then the amber "Default settings in use — API keys and preferences need to be set again"
+- [ ] Delete `translation_editor_settings.json` while the archive exists, then launch — verify **no** recovery dialog and defaults are used (deleting is the documented reset), and that the info bar shows the amber "Settings file not found — default settings in use"
+- [ ] Replace the archive with a non-zip file and launch — verify `translation_editor_settings.backups.zip.corrupt` appears, a fresh archive holding today's entry is written, and startup is not blocked
+- [ ] Save the settings file from an editor that writes a UTF-8 BOM — verify it loads with no recovery dialog
+- [ ] Launch with a truncated settings file *and* a file argument (`python xml_translation_editor.py Latvian.xml`) — verify the recovery dialog still appears rather than being overwritten by the "Loaded: …" info-bar message
+- [ ] After any of the above, run `git status` — verify none of the archive, `.corrupt`, `.corrupt-*` or `.tmp` files show up as untracked
+- [ ] Hand-edit `min_interval_minutes` to `"abc"` and to `-3`, relaunching for each — verify no crash, `"abc"` behaves as 5, `-3` behaves as 0
+- [ ] Create a junk directory (e.g. `notes`) inside a backup key folder alongside real slots, then reopen the file inside the interval — verify it is still correctly skipped (the unparseable name is ignored, not treated as "no slots")
+- [ ] Open a large XML file inside the interval — verify the skip message arrives essentially instantly, confirming the pre-read early exit
+- [ ] Edit an entry, then **File → Close File** (`Ctrl+W`) — verify the Save/Discard/Cancel prompt appears; Cancel leaves the file open with the edit intact; Discard clears the table, sets the title to "No file", and blanks the language/version labels in the info bar
+- [ ] Choose **Save** at that prompt — verify the file is written, then closed
+- [ ] Make the file read-only (or lock it in another app), edit an entry, Close File → **Save** — verify the save-error dialog appears and the file stays OPEN with its changes, rather than being closed and the edit lost
+- [ ] **Close File** with no unsaved changes — verify it closes immediately with no prompt; press `Ctrl+W` again with nothing open — verify nothing happens (no dialog, no error)
+- [ ] Enable autosave (1 min), open a file, Close File, wait past the interval — verify no autosave fires and no error appears
+- [ ] After a Close File, open a file again — verify it loads normally (table, filters, meta labels, backup all behave as on a fresh start)
+- [ ] Enable autosave (1 min), make a change, wait — verify green "Autosaved at" label
+- [ ] Open **View → Autosave & Backup…** — verify settings persist after restart
+- [ ] Paste rich text (e.g. from a Word doc or browser) into Edit window — verify plain text only, no formatting, leading/trailing spaces stripped
+- [ ] Open Edit window — verify `Alt+S` saves, `Alt+A` triggers auto-translate
+- [ ] Open **View → Keyboard Shortcuts…** — verify `edit_save` and `auto_translate` rows appear and rebinding persists after restart
+- [ ] Apply a status filter, edit an entry to a different status, press `F5` — verify the entry disappears from the filtered list
+- [ ] With filter active, verify the **F5 — Refresh Filter** hint appears in the info bar, preceded by a thin divider with even space on both sides and the same circular-arrow icon as Reset All, and that the divider disappears with the hint when the filter is cleared; repeat at a 14 pt UI font and in the light theme
+- [ ] Search `tab` in **Starts with** mode — verify `Tablet` matches and `database` does NOT; switch Mode → **Contains** and verify both match
+- [ ] Pick Mode = **Contains** + In: = **Source**, restart app, verify both selections are restored from `settings.search`
+- [ ] Maximise the window — verify the Search field grows (most space) and Translator field grows (less space); other filter groups keep their natural width
+- [ ] Craft a test XML file with `modifyDate="2016.05.06."` (trailing period) — open it, set a date-range filter that excludes that date, and verify the entry disappears (previously it stayed visible regardless of the range)
+- [ ] Craft a test XML file with `modifyDate="06/05/2016"` — open it, and verify it filters as May 6, 2016 on a day-first-locale machine (appears within a May 1–10 range, disappears outside it) rather than being silently misparsed as June 5
+- [ ] Open a file with a mix of legacy date formats (trailing-period dot, slash, dash, 2-digit year) — verify the "Loaded: …" message reports the correct normalized/unrecognized counts, and the file shows "Unsaved changes" immediately after open; Save, reopen it, and verify the message no longer mentions "normalized" and the file does *not* show "Unsaved changes"
+- [ ] Open **File → Restore from Backup…** — verify backup slots appear; restore a slot as copy and confirm the restored file opens
+- [ ] Open **View → Autosave & Backup…** — verify the Backup location dropdown appears (default "Next to file + Root"), persists after restart, and is disabled when backup itself is disabled
+- [ ] Set location mode to "Both", open a versioned XML file — verify independent backup slots exist at both the file's own folder and the editor root, each with its own complete `backup_info.json` (open one and confirm `version`/`culture`/`display_language`/`location`/`backup_key`/`trigger` are all populated)
+- [ ] Open two XML files sharing a filename but with different `Version` attributes — verify distinct backup keys (`<stem>__v<version1>` vs `<stem>__v<version2>`) and no interleaving
+- [ ] Open a file with no `Version` attribute — verify it still uses the plain `<stem>` key
+- [ ] Set location mode to "Next to file only", point at a folder where writing fails (e.g. simulate by pre-creating a file at the `XML_Translation_file_Backups` path) — verify the backup falls back to the root location with `is_fallback: true` recorded, and the info bar shows "Backup next to file: failed …" in red, then "Backup in root (fallback): saved at …" in amber
+- [ ] Open **File → Restore from Backup…** — verify the tree nests Filename → Version → timestamped slots with a working Location column, and the dialog renders in the active theme (not default Qt styling)
+- [ ] In **File → Restore from Backup…**, select a filename or version group header — verify **Delete Selected** stays disabled; select a leaf slot — verify it enables. Click it, decline the confirmation — verify nothing is deleted. Click it again, confirm — verify the slot's folder is gone from disk, the dialog stays open, and the tree refreshes without it (showing the "only backup remaining" warning first if it was the last slot for that file+location)
+- [ ] Restore a backup choosing "Overwrite original" over a file that currently exists — verify a new `pre_restore_safety`-triggered backup of the pre-overwrite state appears first
+- [ ] Restore a backup created before this change (old flat, unversioned folder) — verify it appears nested under "(unversioned)" and restores correctly
+- [ ] Change only "Keep last N backups" in **View → Autosave & Backup…**, Save, restart — verify `known_next_to_file_dirs` (populated by any earlier next-to-file backup) was not wiped
+- [ ] Open **File → Merge from File…** on a file with only additions — verify the dialog now appears (additions are reviewable, not auto-applied), every addition row defaults to Accept and green-tinted, and switching one to Reject before clicking Apply & Close excludes exactly that string
+- [ ] On the same additions-only merge, verify row coloring updates live: switching a row's Resolution combo between Accept and Reject immediately toggles its tint on/off in both dark and light theme
+- [ ] On a merge with a mix of additions/conflicts/deletions, Ctrl+click to select rows of different types, click a type-specific bulk button (e.g. `Keep incoming`) — verify it only changes the selected Conflict rows, leaving selected Addition/Deletion rows untouched
+- [ ] Click the `Select` button in the Additions, Conflicts and Deletions columns in turn — verify each replaces the current selection with only that row type, and is disabled when the table has zero rows of that type
+- [ ] Open **View → Keyboard Shortcuts…** — verify there is no "Merge Dialog" group (the merge dialog has no keyboard shortcuts)
+- [ ] Click the merge dialog's title-bar maximize button — verify it maximizes and the table columns reflow to fill the space; restore returns it to its prior size
+- [ ] Merge a file with only metadata differences (same text, different `modifyDate`) — verify silent auto-resolve and a correct summary count
+- [ ] Merge a file with a genuine text conflict — verify `MergeConflictDialog` appears, the default selection matches the newer `modifyDate`, and both Keep-open/Keep-incoming choices apply correctly
+- [ ] Merge a file missing a string that exists locally — verify it appears as a deletion row defaulted to Keep, and choosing Delete removes it from the visible list with a clean save (no stray `<string>` element)
+- [ ] Merge a file with a different `Culture` — verify the warning dialog appears and Cancel truly aborts (open file completely unchanged)
+- [ ] Merge a file containing duplicate source strings — verify the error dialog names the correct duplicated text and no changes are made
+- [ ] Full merge round-trip: merge, resolve a mix of conflicts/deletions, Save, reopen the file — verify all resolutions persisted correctly and the file reloads without errors
+- [ ] Click the **Select** button of a column (Additions, Conflicts or Deletions) on a merge with 2+ rows of that type — verify ALL matching rows become selected (not just the last one), both via the button and by checking the table highlight
+- [ ] With 2+ addition rows selected, click **Reject** — verify every selected row's combo switches to Reject and re-tints; repeat for **Accept** / **Keep open** / **Keep incoming** / **Delete** / **Keep** against rows of the matching type
+- [ ] On a merge with zero conflicts, verify **Keep open** / **Keep incoming** are disabled and show the ordinary disabled look instead of the amber tint; with zero additions, verify **Accept** / **Reject** are disabled; with zero deletions, verify **Delete** / **Keep** are disabled
+- [ ] Merge a conflict where the open file's translation is untranslated (equals its own source text) and the incoming file has a real, different translation with an OLDER `modifyDate` — verify the incoming (translated) side is still the default selection, not the open (untranslated) side
+- [ ] Merge the reverse — incoming untranslated with a NEWER `modifyDate`, open genuinely translated — verify the open (translated) side remains the default despite the older date
+- [ ] Check **Auto-resolve all conflicts using newest modify date** on a merge containing one of the above untranslated-vs-translated conflicts — verify it still resolves to the translated side, not just the newest date
+- [ ] Open a merge with all three row types present — verify the toolbar shows four captioned columns (Selection, Additions, Conflicts, Deletions) separated by thin dividers, the three category captions coloured green/amber/red and each of their buttons tinted to match
+- [ ] Build that merge so every conflict defaults to "Keep open" and every deletion defaults to "Keep" (no `modifyDate` differences) — verify every conflict row shows a faint amber tint and every deletion row shows a faint red tint even before touching anything (not just rows you've changed); switch one conflict to **Keep incoming** and one deletion to **Delete** and verify those two rows visibly brighten to full-strength amber/red while the untouched rows stay faint. Separately, merge a conflict where the incoming side has a strictly newer `modifyDate` (so it defaults to "Keep incoming") — verify that row renders full-strength amber immediately on load, not faint, since the tint tracks the current choice, not the row's initial preset
+- [ ] Toggle dark ↔ light theme, reopen the merge dialog — verify both the toolbar button tints and captions and the faint/full row tints render correctly in both themes
+- [ ] Widen and narrow the dialog (or resize a column) so a long source/translation string gets truncated with `…` — hover over the truncated cell and verify a tooltip shows the complete, untruncated text; verify the Type column never shows a tooltip
+- [ ] Open the merge dialog at the default UI font on an ordinary (non-ultrawide) monitor — verify the toolbar fits on one row with every label visible and the dialog opens pre-sized to fit the toolbar or the table's content, whichever is wider, without needing to be resized; then narrow the dialog and verify the columns wrap without clipping any button
+- [ ] Hover the "Auto-resolve all conflicts using newest modify date" checkbox — verify its tooltip explains the mechanism (newer Modify Date wins; ties/missing dates default to Keep Open; an untranslated side always loses regardless of date) and that the checkbox renders with the same large accent-colored indicator as other prominent checkboxes in the app (e.g. Autosave & Backup's "Enable autosave")
+- [ ] Open a merge — verify, top to bottom: the header band (accent line, four captioned columns), the table edge to edge, the footer band (auto-resolve checkbox on the left, **Apply & Close** and **Cancel** on the right) and a status bar with the counts sentence as the bottom-most strip; hover each toolbar button and verify its tooltip shows the full label (e.g. `Keep Open`)
+- [ ] Open Merge and press Enter at once — verify the dialog applies (Apply & Close) and no row gets selected; click a toolbar button, click into the table and press Enter — verify the dialog applies and no toolbar action repeats; click a toolbar button and press Enter without clicking anywhere else — verify that button acts again and the dialog stays open
+- [ ] Open Merge and press Tab repeatedly — verify focus walks the ten toolbar buttons, the auto-resolve checkbox, Apply & Close and Cancel, and that Shift+Tab walks back
+- [ ] In Glossary, click Duplicate Row, click into the table and press Enter — verify Save fires (the glossary is written and the dialog closes) and no second duplicate appears; in Restore from Backup, select a slot first, click Delete Selected, decline the confirmation, click the slot and press Enter — verify Restore Selected fires (the dialog closes and the restore prompt follows; cancel it) and the delete confirmation does not appear again
+- [ ] In a merge, click **Apply & Close** — verify the dialog closes, the title bar shows the ● bullet, the info bar shows the "Merged: …" notification and, once that expires, "Unsaved changes"; repeat with **Cancel** — verify nothing changes
+- [ ] In a merge, tick the auto-resolve checkbox in the footer — verify the per-row conflict dropdowns are disabled and every conflict resolves to the newest-date winner
+- [ ] Run `python tests/check_read_after_exec.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Merge a file, change one choice in each category, click **Apply & Close** — verify no traceback in the console and the changes are applied; restore a backup slot that has a glossary with "Also restore glossary" ticked — verify no traceback and the glossary is restored
+- [ ] Run `python tests/check_merge_compare.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Run `python tests/check_notifications.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] In both themes, open a file with a legacy date (e.g. `modifyDate="2016-05-06"`) and an unparseable one (`modifyDate="foo"`) — verify "Loaded: …", then "Dates: 1 normalized" and "Dates: 1 unrecognized (e.g. 'foo')" (both amber) play in turn, then "Backup: …"; a dim `+N` shows while messages wait; the history button shows an amber dot, and clicking it lists all four newest first with times and clears the dot
+- [ ] At a 14 pt UI font, open the message history — verify the text is legible, long lines wrap, and a selection can be copied with Ctrl+C; press Escape and click the button a second time while it is open — verify both close it and the second click does not reopen it
+- [ ] Narrow the window until a long message is cut off — verify its tooltip shows it in full, and that the language and version labels never move while messages change
+- [ ] Restore a backup slot that has a glossary with "Also restore glossary" ticked — verify "Restored…" is followed by its own "Glossary restored" message
+- [ ] In a merge with all three row kinds, double-click a conflict's Source cell — verify a compact pop-up (about the Edit window's size) shows the source, open and incoming texts side by side, wrapped, with the differing words tinted in both texts, "⇄ Conflict · <reason>" and "Row N of M" in the header, and the four metadata rows with differing values in amber; double-click the Resolution cell — verify the combo opens instead while it is enabled; tick auto-resolve first and double-click a conflict's now-disabled Resolution cell — verify the pop-up opens instead
+- [ ] In the pop-up, click the choice without the ✓ — verify the Merge row behind it re-tints, the pop-up moves to the next row and the table selection follows; press Enter repeatedly — verify it steps through rows without changing any choice; on the last row, click a choice — verify it stays there with the ✓ moved
+- [ ] Press `Alt+Left`/`Alt+Right`, `Alt+1`/`Alt+2` and Escape in the pop-up, also with the cursor in a text pane — verify each works; select text in a pane and copy it with `Ctrl+C` — verify it can be copied but not edited
+- [ ] Double-click an addition and a deletion — verify the missing side reads "Not in the open file" / "Not in the incoming file", its metadata shows "—", and the buttons read Accept/Reject and Keep/Delete; tick auto-resolve and open a conflict — verify both choice buttons are disabled and the header ends with "· auto-resolved"
+- [ ] Open the pop-up in both themes at 10 and 14 pt — verify every label and button shows in full, the text panes are at least 4 lines tall, and the window can be resized and maximized with the panes taking the space
+- [ ] Look at the filter bar in both themes — verify a 2 px accent line above it, a caption above each of the six columns (Search, Status, Translator, Date range, Is tablet, Filters), 1 px dividers between columns and a 1 px line below it separating it from the table
+- [ ] Type in Search, pick a Status and tick From — verify each active filter gets an accent border on its field and a ● after its caption, the caption text does not move, **Reset All** clears every mark, and changing only Mode or In marks nothing
+- [ ] Look at the Status column in both themes — verify rounded pills (New / Review / Complete) that stay readable on a normal, a hovered and a selected row
+- [ ] Move the mouse over the table — verify only the row under the pointer is highlighted, the highlight disappears when the pointer leaves the table, and a selected row keeps its selection colour while hovered
+- [ ] Press Tab through each dialog — verify every button, checkbox, combo box, date edit and text field shows a visible accent focus ring (a checked prominent checkbox shows it in the text colour, an unchecked one in the accent colour), and that disabled buttons, combo boxes, date edits and spin boxes look disabled everywhere. Exceptions: the Shortcuts Record button while recording (its fill and "Cancel" label show the state), and spin boxes (no `:focus` rule of ours: the Shortcuts delay box shows Fusion's native outline, the Autosave & Backup ones show no ring). The Edit dialog's read-only source box has the initial focus, so its ring shows every time Edit opens
+- [ ] Open **View → Autosave & Backup…** with backups switched off — verify "Compress backups" looks disabled (grey box), checked or not, not vivid blue
+- [ ] Open **View → Keyboard Shortcuts…** and Tab to the Shortcuts delay spin box — verify its up/down arrows stay visible while it has focus
+- [ ] Run `python tests/check_shortcuts_fit.py`, then again with `QT_QPA_PLATFORM=windows` set — verify `PASSED: 0 failure(s)` both times
+- [ ] Open **View → Keyboard Shortcuts…** at 12, 16 and 24 pt UI fonts — verify every **Record…** and **Reset** shows its full text, the buttons are no wider than their text in every section and line up across the three sections, and the delay box shows its value next to its arrows; click one **Record…** — verify it reads "Cancel" without the column moving; verify the shortcuts form one left-aligned column across all three sections, with the delay box's left edge on the same line, and the third section is titled "Selected Rows Actions" with plain labels (Mark as New, Mark as Review, Mark as Complete, Delete Selected); hover one of those four labels — verify a tooltip says it acts on the selected rows in the main table and on the entry being edited in the Edit window
+- [ ] Make an edit so "Unsaved changes" shows, then switch theme via View → Theme — verify the info-bar text changes colour immediately and stays legible in both themes; autosave and verify "Autosaved at …" likewise
+- [ ] Open every dialog in the dark theme — verify no label, checkbox or group box sits on a darker rectangle than the dialog surface, and that the row-number column and header corner of tables match the header colour
+- [ ] Open Restore from Backup and Glossary — verify an accent-topped header band, an edge-to-edge table and a footer band; in Restore verify Delete Selected has a red outline and Restore Selected is the blue primary button; in Glossary verify Add Row / Duplicate Row / Remove Selected Row and Save / Cancel share one line
+- [ ] Choose a larger UI font (View → Choose UI Font…) — verify the hint texts in the dialogs and the refresh hint grow with it instead of staying small
+- [ ] Open Edit window on a 9-char source ("Thank you"): type a 10-char translation → green; 11-char → still green; 12-char → amber; 13+ char → red. Confirm the `(+Δ)` suffix only appears when translation is longer than source.
+- [ ] Open Edit window on a 65+ char source: type a translation 7 chars longer → amber; 17+ chars longer → red. Confirms long-zone (10% / 25%) thresholds.
+- [ ] Open Edit windows on a 30-char source vs. a 31-char source — verify the formula correctly switches zones (30 uses short percentages, 31 uses long).
+- [ ] Toggle theme dark↔light while the Edit window is open — character-count label re-colors without restart.
+- [ ] Set `"char_count": {"enabled": false}` in `translation_editor_settings.json`, restart — character-count label is hidden in Edit window, no errors.
+- [ ] Open **View → Glossary…**, select a row with Term/Translation/Note filled in, click **Duplicate Row** — verify a new row appears directly below with identical values and becomes selected; click **Duplicate Row** again with nothing selected — verify nothing happens
+- [ ] Add 100+ rows to a file's glossary CSV externally, then open **View → Glossary…** — verify the dialog stops growing at roughly 3/4 of the screen height (not near-full-screen) and the table's own scrollbar reaches the remaining rows; with just 1-2 terms, verify the dialog still sizes normally to content, not forced up to that cap
+- [ ] Compare scrollbar thickness in the main table, Glossary, Merge, and Restore dialogs before/after a UI font size change (**View → Choose UI Font…**) — verify all four grow a visible scrollbar thickness together (same single QSS rule governs all of them), not just the main window
+- [ ] Open a file with 11 000+ entries and drag the main table's scroll handle to the very top and the very bottom — verify the handle never covers the up/down arrows, is a comfortably grabbable pill (at least 4× the bar's thickness), and that clicking each arrow scrolls one step; repeat in both themes
+- [ ] Narrow the window or widen the columns so the horizontal scrollbar appears — verify left/right arrows show, the handle stays clear of them at both ends, and it too keeps a minimum length
+- [ ] Check the scrollbars of Glossary, Merge, Restore and the Edit dialog's text boxes — verify each shows both arrows; switch theme and change the UI font — verify the arrows recolour and resize with the bar
+- [ ] Open the Edit dialog on an entry whose source text is long enough to need a scrollbar (dozens of lines), at a 14 pt UI font — verify the source box's handle can be dragged (it moves, not full-length and frozen) and its arrows show
+- [ ] Create a *file* (not a folder) named `XMLTranslationEditor` in `%LOCALAPPDATA%\cache` (deleting any existing `XMLTranslationEditor` folder there first), then launch — verify the app starts normally, scrollbars still work with the handle clear of the (blank) buttons, checked prominent checkboxes show a plain accent square instead of a tick, and `error_log.txt` gains a "glyph images" line; delete the file afterwards
+- [ ] Look at every prominent checkbox that is checked (the filter bar's From/To dates, Translation Settings, Autosave & Backup, Restore, Edit's Override, Merge's auto-resolve) in both themes — verify a fine, crisp white tick on the accent fill (about as light a stroke as the ✕ in the filter bar's clear button, not a heavy check) and no tick when unchecked; then make one checked box disabled (in Autosave & Backup, untick "Create backup when a file is opened" so the still-checked "Compress backups" greys out) — verify a dimmed tick on the grey fill, not a white one
+- [ ] Run `python tests/check_checkbox_mark.py` — verify `PASSED: 0 failure(s)`
+- [ ] Run `python tests/check_scrollbar.py` — verify `PASSED: 0 failure(s)`
+- [ ] Open **View → Choose UI Font…** in both themes — verify the Size box's up/down arrows are clearly visible triangles in a button strip that differs from the field, each click steps the size by 1 pt, and the strip lightens/darkens under the pointer
+- [ ] Open **View → Autosave & Backup…** in both themes — verify all three spin boxes show the same arrows, dimmed on Interval while autosave is off (and on the two backup ones after unticking "Create backup when a file is opened"), and set "Skip if backed up within" to 0 — verify "Always back up" is not clipped at the default UI font
+- [ ] Run `python tests/check_autosave_fit.py`, then again with `QT_QPA_PLATFORM=windows` set — verify `PASSED: 0 failure(s)` both times
+- [ ] Open **View → Autosave & Backup…** at 12, 14 and 24 pt UI fonts — verify "5 minutes", "5 backups", "Always back up" (Skip set to 0) and "1440 minutes" (Skip at its maximum) show in full, the three spin boxes are one width and start at one x across both sections, and the Backup location combo shows "Next to file + Root (recommended)" in full without stretching wider than its text
+- [ ] Run `python tests/check_spinbox_arrows.py` — verify `PASSED: 0 failure(s)`
+- [ ] Run `python tests/check_file_properties.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Open `Latvian.xml`, **File → Properties…** — verify Culture reads "Latvian (Latvia)  lv-LV", Language name "Latviešu", Version boxes 4 . 1 . 1140, and the facts (file, folder, size, modified, strings, status shares, untranslated, tablet) are filled in; hover the folder for the full path
+- [ ] In the Version boxes: click the arrows, scroll the wheel, and type — verify the first two stop at 99 and the last at 99999 (a sixth digit is refused), no value is ever shown as `04` or padded, and typing `7.2.15` from the first box moves on at each `.` (also the numeric keypad's decimal key)
+- [ ] Change the language and version, click OK — verify the info bar shows the new language and `v…` at once, the title shows ●, and "File properties updated" appears; Ctrl+S, reopen — verify the root tag holds the new values and nothing else in it moved
+- [ ] Open File → Properties and click OK without changing anything, and separately Cancel after changing things — verify no ● and no change
+- [ ] Clear the language name — verify OK disables; hand-edit a file to `Version="4.1"` and open it — verify the amber warning, boxes at 0.0.0 and OK disabled until a box changes
+- [ ] With no file open, **File → Properties…** — verify a warning and no dialog
+- [ ] Look at File → Properties in both themes at 10 and 14 pt — verify the version boxes show their full value next to visible arrows, the two groups' values line up, and nothing sits on a dark strip
+- [ ] Run `python tests/check_groupbox_title.py`, then again with `QT_QPA_PLATFORM=windows` set — verify `PASSED: 0 failure(s)` both times
+- [ ] At 10, 12 and 14 pt UI fonts, in both themes, open File Properties, Edit, Translation Settings, Keyboard Shortcuts and Autosave & Backup — verify each section's border line runs through the middle of its title (with a gap around the title), and the first row sits clearly below the title rather than touching it
+- [ ] Run `python tests/check_combobox.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Run `python tests/check_date_picker.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Scroll the mouse wheel over the filter bar's From/To and the Edit dialog's Date, and press Up/Down/digits in them — verify the date never changes and nothing opens
+- [ ] Click each date field (text and arrow), and press Enter/Space/F4/Alt+Down on it — verify the drum pop-up opens under the field (above it near the screen bottom), in the system date order, with a "Format: …" line matching the field (e.g. `dd.mm.yyyy`), in both themes at 10 and 14 pt: middle row large and bright in a band, the others smaller and fading
+- [ ] In the pop-up, scroll a column with the wheel and with a touchpad, drag it (a quick flick coasts on), click a row above/below the middle (it scrolls there), press Up/Down/PageUp/PageDown/Home/End and Left/Right/Tab between columns — verify every movement ends on a whole row, day and month wrap, the year stops at 2000 and 2100, and 31 January → April shows 30
+- [ ] Confirm with Enter, and separately by clicking the middle row — verify the field takes the date (and the table re-filters with From ticked); cancel with Escape and by clicking outside — verify the field keeps its old date
+- [ ] Right-click a date field — verify no Step up/Step down menu appears
+- [ ] Open the Edit dialog on an entry whose date is before 2000 (hand-edit one in a copy of `Latvian.xml`), open and cancel the date pop-up, change only the status, Save — verify the stored date is unchanged; on a second monitor, verify the pop-up opens next to the field there
+- [ ] At the 1280 × 760 startup size, choose 12 pt and then 14 pt UI fonts — verify both date pickers show the full date ("01.01.2025"), every filter-bar combo shows its longest item unclipped (pick "Translated" in In, "Complete" in Status), and Mode is no wider than "Starts with" plus its arrow
+- [ ] Look at the Reset All button in both themes at 10 and 14 pt — verify the circular-arrow icon is as tall as the label's capitals, sits on the text line, is separated from "Reset" by about a space, and recolours on a theme switch
+- [ ] Run `python -c` against `_translate_google_dt` with `GoogleTranslator.translate` patched to raise `deep_translator.exceptions.TooManyRequests` — verify one 429 is retried and succeeds, two give the "rate-limiting this network" message, and a cancelled pause returns at once without a second request
+- [ ] Look at the filter bar in both themes at the default UI font — verify every combo and both date pickers show the same crisp, clearly visible ▾ arrow with no separator line or bevel beside it, and the pickers' dates ("01.01.2025") are complete
+- [ ] Open the Status, Mode and In combos in both themes and move the pointer over the rows — verify the row under the pointer fills with the accent colour with legible text (light theme included: it used to be an outlined white row), the other rows stay unindented, and there is a single border around the list
+- [ ] Open **View → Autosave & Backup…** and drop down Backup location — verify the closed combo still shows "(recommended)" with its closing bracket, the arrow is dimmed while "Create backup when a file is opened" is unticked, and the popup shows every choice in full
+- [ ] Choose a 14 pt UI font, open the filter bar's Status combo — verify "Complete" is not elided ("Co…te") and the popup is wider than the combo when an item needs it; open Translation Settings' engine combo and Merge's per-row combos the same way
+- [ ] Open **View → Choose UI Font…** and drop down the family list — verify it looks the same as before (previews, scrollbar, selection colour)
+- [ ] Look at the Merge dialog's Resolution combos — verify each row is no taller than before and its arrow shows
+- [ ] Run `python tests/check_translation_settings_size.py` — verify `PASSED: 0 failure(s)` and exit code 0
+- [ ] Open **View → Translation Settings…** on Google Translate, switch to Claude (Subscription) and back, then to DeepL and to Disabled — verify the window's width never changes, its height grows and shrinks with each engine's group, and there is no blank band between the groups or around a hint text; repeat at a 14 pt UI font and in the light theme
+- [ ] At a 14 pt UI font, open **View → Translation Settings…** and switch between MyMemory and Claude (Subscription) ten times — verify the window's top edge stays where it opened (it used to climb 62 px per switch at 150 % display scaling); drag the window as narrow as it goes on DeepL — verify no row is clipped; click Test Connection with a bad key — verify the long error wraps and the window grows to show it
+- [ ] Open **View → Translation Settings…**, select Google Translate / MyMemory / Microsoft Translator in turn, click **Test Connection** for each — verify a translated result or a clear error (Microsoft requires an API key).
+- [ ] Select Claude engine, switch the Model dropdown between Haiku 4.5 / Sonnet 5 / Opus 5, save, translate an entry — verify the request succeeds for each model.
+- [ ] In an Edit window, Shift+click **Auto-translate** (or press `Shift+Alt+A`) — verify translate → countdown → advance repeats across several entries, and stops cleanly at the last entry or on Escape.
+- [ ] Start a Robo-Translate chain on a New entry followed by a Review/Complete entry — verify the already-translated entry is skipped untouched while chain continues to the next New entry.
+- [ ] Check **"Skip translator name prompt on startup"** in Translation Settings, restart the app — verify the startup dialog no longer appears and the info bar shows no translator name.
+- [ ] Sign in via "Sign in with Claude subscription" (real OAuth flow) — verify token stored, status turns green.
+- [ ] In the built `dist\XMLTranslationEditor.exe`, Auto-translate with the Subscription engine and sign in with "Sign in with Claude subscription" — verify no console or Windows Terminal window opens for either, and sign-in still completes (from source the launcher's console hides this; `pythonw.exe xml_translation_editor.py` reproduces the exe)
+- [ ] With `claude` CLI *not* installed, click Sign In — verify the clear "install Node.js / claude-code" error, no crash.
+- [ ] Select Claude (Subscription) engine, Auto-translate one entry — verify first call succeeds (paying the warm-up cost) and the credit label reads "Claude Subscription (AI)".
+- [ ] Immediately Auto-translate several more entries — verify no repeated subprocess-startup delay (session reused).
+- [ ] Run a Robo-Translate chain across 4–5 entries using the Subscription engine — verify it completes via the persistent session, no per-entry subprocess spawn.
+- [ ] Kill the `claude` subprocess externally (Task Manager) mid-session, then Auto-translate — verify automatic one-time reconnect recovers, or a clear error if it can't.
+- [ ] **Stream lockstep (the 2026-09-04 desync).** With the Subscription engine, Auto-translate an entry and press `Alt+Right` (Next) while "Translating…" is still showing, then Auto-translate the new entry — verify it returns *its own* translation, not the abandoned entry's, and not an empty field. Repeat on the next 2–3 entries: any one-behind offset is permanent once it starts, so a correct third and fourth entry is the real confirmation.
+- [ ] Same test, but navigate away at different moments (immediately after clicking, and again after several seconds) — both the "before any output" and "mid-response" cancel points must stay correct.
+- [ ] Run a Robo-Translate chain of 5+ entries with the Subscription engine, interrupting it once mid-countdown with a manual Next — verify every subsequent entry still receives its own translation.
+- [ ] Open Translation Settings, click Test Connection with the Subscription engine, dismiss the dialog before it finishes, then Auto-translate an entry — verify the entry gets its own translation (not the test string's result) and starts promptly.
+- [ ] Close the app while a Subscription translation is genuinely in flight — verify a clean exit with no hang (the caller is unblocked by `close()`, not left waiting out its timeout).
+- [ ] Close and reopen the app — verify the subprocess is gone from Task Manager after close, and re-launch reconnects lazily on next use without re-running Sign In (token persisted).
+- [ ] Fresh machine (no Node.js, no Claude CLI, no `claude-agent-sdk`): run `run_translator.bat` / `run_translator.ps1` — verify Node + Claude CLI are auto-installed via winget/npm, `claude-agent-sdk` is auto-installed via pip (same as PySide6/deep-translator today), or a clear non-fatal warning is shown and the editor still launches.
+- [ ] Fresh machine: run `build_exe.bat` / `build_exe.ps1` — verify the same auto-install/non-fatal-warning behavior for all three (Node, Claude CLI, `claude-agent-sdk`), and that the build still completes regardless of outcome.
+- [ ] Run launcher: `run_translator.bat` and `run_translator.ps1`
+- [ ] Delete any existing `launcher_cache.json` / `bat_launcher_cache.txt`, run the launcher twice — verify the first run does a full check and writes both cache files, and the second run shows "Fast start" and skips straight to launching
+- [ ] With a valid cache present, uninstall a required package (e.g. `pip uninstall deep-translator`), relaunch — verify the fast path detects it and falls back to a full check that reinstalls it, rather than crashing with a raw traceback
+- [ ] Edit `launcher_cache.json` to remove its `requires` field (or add a new package to `$REQUIRED_PACKAGES` and leave an old cache in place) — verify the cache is treated as stale and a full check runs
+- [ ] Edit `bat_launcher_cache.txt` to contain something other than `powershell.exe`/`pwsh.exe` — verify the launcher rejects it and runs a full check instead of attempting to execute the file's contents
+- [ ] Run launcher inside Windows Terminal — verify no console resize errors and window opens normally
+- [ ] Build: `build_exe.bat` (or `build_exe.ps1`)
+- [ ] Launch the app via `python xml_translation_editor.py` (and via `run_translator.ps1`) — verify the custom icon appears in **both** the window title bar and the Windows taskbar button, not the generic Python icon (the taskbar button specifically depends on the `SetCurrentProcessExplicitAppUserModelID` call in `main()` — title bar alone working is not sufficient confirmation)
+- [ ] After `build_exe.ps1` completes, verify `dist\XMLTranslationEditor.exe` shows the custom icon in Explorer, and that running it shows the same icon in the taskbar/title bar while it's running (confirms the `--add-data` bundling reaches `QIcon()` at runtime, not just the exe's own file icon)
+- [ ] Run the built `dist\XMLTranslationEditor.exe` and close any open file so the Welcome screen shows — verify the centered logo renders (not a blank space), confirming the `.png`'s own `--add-data` bundling also reaches `_MEIPASS` in the frozen exe
+- [ ] After `build_exe.ps1` completes, verify `dist\User_Guide.pdf` exists alongside the `.exe`
+- [ ] After `build_exe.ps1` completes, verify `dist\XMLTranslationEditor.exe` is ~170 MB (not ~360 MB) and that `python -m PyInstaller.utils.cliutils.archive_viewer -l dist\XMLTranslationEditor.exe` lists no `WebEngine` entries — confirms `--collect-all PySide6` hasn't crept back into the build command
+- [ ] Temporarily rename `Resources\xml_translation_editor.ico`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built app still runs (just without a custom icon); restore the file afterward
+- [ ] Temporarily rename `Resources\xml_translation_editor.png`, run `build_exe.ps1` — verify it completes with a `[WARN]`, the exe still builds, and the Welcome screen just shows no logo; restore the file afterward
+- [ ] Temporarily rename `Resources\User_Guide.pdf`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and `dist\` simply has no `User_Guide.pdf`; restore the file afterward
+- [ ] Run the built `dist\XMLTranslationEditor.exe` — verify the splash screen (logo, app name, "Starting…") appears promptly and stays visible through the onefile unpacking delay, then closes cleanly with no blank gap right as the main window (or Welcome screen) appears
+- [ ] Temporarily rename `Resources\xml_translation_editor_splash.png`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built exe still launches normally with no splash screen; restore the file afterward
+- [ ] Launch `python xml_translation_editor.py` directly from source — verify no error or delay from the splash-close code (`pyi_splash` isn't present when unfrozen, so it's a silent no-op)
+- [ ] Open a large XML file — verify the window is interactive immediately (scroll/click the table with no freeze) and the "Backup: …" message arrives a moment later rather than before the table paints
+- [ ] Restore a backup choosing "Overwrite original" — verify the restore still completes correctly and a `pre_restore_safety`-triggered slot capturing the pre-overwrite state still appears
+- [ ] Restore with "Overwrite original", then immediately close the app while the safety backup is still compressing — verify the restored file is actually written to disk, and the app exits cleanly (exit code 0, no crash/abort dialog) rather than hanging or aborting
+- [ ] Set `"backup": {"enabled": false}` in `translation_editor_settings.json`, restart — verify both file-open and restore-with-overwrite behave exactly as before this change: no delay, no "Backup: …" messages, no new backup slots
+- [ ] Set `backup.location_mode` to `"both"`, open a file from a folder never backed up before — verify both locations produce complete slots and `known_next_to_file_dirs` still gains that folder (it is now written from the background thread's completion signal, not inline)
+- [ ] Open a large XML file so its `file_open` backup is still running/compressing, then — before it finishes — use **File → Restore from Backup…** to restore a backup slot for that SAME file choosing "Overwrite original" (this starts a `pre_restore_safety` backup for the same key_dir while the `file_open` backup may still be in flight, producing real same-key contention) — verify both complete with distinct, uncorrupted backup slots, each with its own valid `backup_info.json` and the correct, non-clobbered `trigger` (`file_open` vs `pre_restore_safety`) — confirms the per-key_dir lock serializes same-file backups without one corrupting the other
+- [ ] Open two DIFFERENT files back-to-back (before either one's backup can finish) — verify both backups complete promptly and independently, with no visible delay from one waiting on the other — confirms unrelated files' backups still run in true parallel, not globally serialized
+- [ ] In an Edit window, start a translation, then click Next/Previous before it completes — verify the entry you navigated to is never overwritten by the now-stale result when it eventually arrives, and the entry you left is also untouched
+- [ ] Same scenario with the Claude (Subscription) engine — start a translation, navigate away immediately, then start a new translation on the next entry — verify the new translation begins promptly rather than waiting out the full ~60s timeout for the abandoned call's lock
+- [ ] Start a Robo-Translate chain, manually click Next/Previous mid-countdown — verify the chain stops cleanly with no stale advance
+- [ ] Close the app while an Auto-translate call is genuinely in flight (any engine) — verify a clean exit, no crash/abort dialog
+- [ ] Close the app while a Claude Subscription sign-in is genuinely in flight (click "Sign in with Claude subscription", then close the app before the browser login completes) — verify a clean exit, no crash/abort dialog
+- [ ] Open Translation Settings, click Test Connection, close the dialog before it completes — verify no crash and no stale result reaches the closed dialog
+- [ ] Open Translation Settings, click Test Connection, then immediately close the whole app before it completes — verify a clean exit, no crash/abort dialog
+- [ ] Select Claude (Subscription) engine in Translation Settings, click Test Connection, then immediately click Save (or close the dialog) before it completes; then open an Edit window and Auto-translate — verify the new translation begins promptly rather than waiting out the abandoned test call's lock timeout
+- [ ] In an Edit window, start a translation, then press `Alt+S` (Save) before it completes — verify the result never lands in the (now closed) dialog and, if a Robo-Translate chain was running, it does not continue after the dialog closes
+- [ ] Open Translation Settings, start a Test Connection, then click Save before it completes — verify no crash and no stale result is applied after the dialog closes
+- [ ] Select a single row in the main table, press `Ctrl+Delete` — verify a confirmation dialog names that row's source text, and confirming removes it from the table and sets "Unsaved changes"
+- [ ] Select multiple rows, press `Ctrl+Delete` — verify the confirmation dialog shows the count, and confirming removes exactly those rows
+- [ ] Press `Ctrl+Delete` with no rows selected — verify nothing happens (no dialog)
+- [ ] Decline the confirmation (No) — verify no rows are removed
+- [ ] Use Edit → Delete Selected, and right-click → Delete Selected — verify both trigger the same confirmation flow as the shortcut
+- [ ] With focus in the Search or Translator filter box, press `Ctrl+Delete` mid-word — verify normal word-deletion and no confirmation dialog
+- [ ] In the Edit dialog, press `Ctrl+Delete` with focus in the translation textbox, then the translator-name field — verify normal word-deletion in both, no confirmation dialog
+- [ ] In the Edit dialog, press `Ctrl+Delete` with focus on the Status combo — verify the delete-entry confirmation appears and, on confirming, the dialog advances to the entry now occupying that position
+- [ ] Delete the last remaining entry from within the Edit dialog — verify the dialog closes instead of trying to load a nonexistent row
+- [ ] Delete an entry from within the Edit dialog while a Robo-Translate chain is running on it — verify the chain stops cleanly
+- [ ] Delete an entry from within the Edit dialog while a translation is in flight for it — verify no crash and the stale result is discarded
+- [ ] Save after deleting entries — verify the saved XML no longer contains the deleted `<string>` elements and the file reloads cleanly
+- [ ] Open View → Keyboard Shortcuts…, verify "Delete Selected" appears in "Selected Rows Actions", rebind it, restart, and verify the new binding persists and the old `Ctrl+Del` no longer triggers deletion
+- [ ] Apply an active filter, delete a currently-visible entry — verify the table shows one fewer visible row and the total count also drops by one
+- [ ] Launch the app with no file argument — verify the Welcome screen shows (logo, "XML Translation Editor", "v36", tagline, Open File button, drop hint), the menu bar and info bar are still visible around it, and the window title reads "XML Translation Editor v36 — No file"
+- [ ] Click **Open File…** on the Welcome screen — verify it opens the same file dialog as **File → Open XML…**, and after picking a file the editor page (filter panel + table) replaces the Welcome screen
+- [ ] With a file open, **File → Close File** — verify the Welcome screen reappears
+- [ ] Launch via `python xml_translation_editor.py "Latvian.xml"` — verify it goes straight to the editor page, skipping the Welcome screen
+- [ ] Edit an entry (unsaved changes), then drag a different `.xml` file onto the window — verify the Discard/Cancel prompt appears; Cancel leaves the current file open and unchanged
+- [ ] Confirm the discard, or start from a clean file — drag a `.xml` file onto the window — verify it opens, same as using Open File
+- [ ] Drag a non-`.xml` file, a folder, or multiple files onto the window — verify the cursor shows "not allowed" and nothing happens on drop
+- [ ] Toggle dark ↔ light theme while the Welcome screen is showing — verify the name, version, tagline, hint, and Open File button all re-color correctly in both themes, and the logo (a static image, unaffected by theme) stays visible against both backgrounds
+- [ ] In light theme, look at the Welcome screen's "Icon by Magnific" credit line — verify "Magnific" renders as a clearly readable darker blue, not the pale/washed-out default; switch to dark theme and verify it re-colors to a light, readable blue there too
+- [ ] Resize the window narrow and wide with the Welcome screen showing — verify the content stays centered and doesn't clip or overflow
+- [ ] Check the window title while a file is open and modified — verify it reads "XML Translation Editor v36 — Latvian.xml ●"
+- [ ] After running `build_exe.ps1`, launch `dist\XMLTranslationEditor.exe` directly — verify the Welcome screen and version still show correctly in the frozen exe, not just the raw script
+
+---
+
+## Common pitfalls
+
+**OAuth token extraction — never trust `claude setup-token`'s stdout wholesale.**
+`ClaudeSetupTokenThread.run()` must extract the token via its `sk-ant-` prefix
+(`re.search(r"sk-ant-[A-Za-z0-9_\-\.]+", clean)`), not `proc.stdout.strip()`.
+The CLI prints multi-line login instructions and confirmation text around the
+token; capturing the whole blob produces a multi-line string that the SDK
+rejects with "Invalid Authorization header value ... it contains a line break".
+
+**`_update_title()` clears `_mod_text`/`_mod_kind`** — if you set a different `_mod_kind` (e.g. `"autosaved"`),
+always do it *after* calling `_update_title()`, then call `_update_dynamic_label()`.
+Never write to `_dynamic_label` directly — always go through `_update_dynamic_label()`.
+`MainWindow.__init__` now calls `_update_title()` once, right after `_apply_app_font()`, so the
+versioned title shows on a cold launch too — and this call must come after `_build_ui()` runs,
+since `_update_title()` → `_update_dynamic_label()` touches `self._dynamic_label`, which
+`_build_ui()` is what creates.
+
+**No Qt status bar** — `QStatusBar` / `statusBar()` is not used.  All notifications
+go through `_show_message(text, ms, level)`.  Do not call `self.statusBar().showMessage()`
+— it would create a second visible bar at the bottom of the window.
+
+**`_refresh_hint` visibility** — the refresh hint in the info bar (divider, icon and the
+`refresh_hint_label` text) is shown/hidden as one widget by `_update_count()` based on
+`visible < total`; toggling `refresh_hint_label` alone would leave the divider showing.  It is
+also restyled in `_apply_theme()`.  Any code that calls `_update_count()` will
+automatically keep the hint in sync — do not set its visibility directly elsewhere.
+
+**`is_modified` vs `_write()`** — `is_modified` is set `True` in `_mark_modified()`
+(called from `EditDialog` commit), in the bulk-mutation methods (`_bulk_status()`,
+`_apply_merge_diff()`, `_delete_entries()`) and in `_open_file_properties()`.  It is set `False` only
+in `_write()` and `_autosave_tick()`.  Do not set it directly elsewhere.
+
+**Regex parser is intentional** — `parse_file` uses regex split, not a DOM parser.
+This is deliberate: it preserves the exact bytes of every non-`<string>` region
+(BOM, processing instructions, comments, whitespace).  Don't "improve" it to use
+`xml.etree`.
+
+**Never go back to `read_text()`/`write_text()` or rebuild every row for the XML.** On Windows
+`write_text()` writes every `\n` as `\r\n`, so an LF file came back CRLF from any save (a
+whole-file diff), and rebuilding every row rewrote legacy `&#x27;` escapes and turned CDATA into
+escaped markup. `parse_file()` reads bytes, `save_file()` writes bytes (atomically), and unchanged
+rows are written back as they were. `check_core_xml.py`'s `LineEndingTests` and
+`UnchangedRowTests` guard this, including a byte-identical save of `tests/data/Latvian.xml`.
+
+**`seg_idx` is the canonical position** — always use `entry.seg_idx` to locate an
+entry in `self.segments`.  The `entries` list index changes with filtering; `seg_idx`
+does not.
+
+**Session translator is never persisted** — `session_translator` lives only in
+`MainWindow` memory.  It is intentionally not in `Settings`.  Never add it there.
+
+**Offscreen smoke tests that build `MainWindow` must neutralise the startup modals
+for the test's whole lifetime.** `MainWindow.close()` → `closeEvent()` runs
+`QApplication.processEvents()`, which fires the still-pending
+`_run_startup_prompts` single-shot; the recovery notice and the translator-name
+dialog are modal, and with nobody to click them the run hangs forever — no error,
+no timeout. Patch `QMessageBox.warning` and `TranslatorNameDialog.exec` before
+constructing the window, and pump `processEvents()` yourself (with the patches
+still active) before closing it.
+
+**Column `#` shows XML position, not filter row** — `COL_IDX` displays
+`(entry.seg_idx + 1) // 2`, which is the entry's absolute position in the XML file.
+This is intentional so the number stays stable under filtering.
+
+**XML escaping — never use `html.escape()` defaults** — `html.escape(text)` and `html.escape(text, quote=True)` both escape `'` as `&#x27;`, which is never needed in this XML format.  `html.escape(text, quote=True)` also escapes `"` in element text, which is also unnecessary.  Always use `html.escape(text, quote=False)` for element text, and `_escape_attr_value()` (called from `replace_attr()`) for attribute values.  See the [XML character escaping](#xml-character-escaping) section.
+
+**PS1 string literals** — when constructing PowerShell file content in Python, use
+raw strings (`r"…"`) or escape `\u` sequences carefully.  The actual `.ps1` files
+store menu labels as literal `\u2026` escape sequences (the backslash-u text),
+not the Unicode ellipsis character `…`.  Use `r'\u2026'` in Python when matching
+or replacing these strings.
+
+**`QKeySequence` renders Insert/Delete as `Ins`/`Del`, not spelled out** — when adding
+a new shortcut default that uses the Insert or Delete key (as `delete_entries`'s
+`Ctrl+Del` does), the string stored in `SHORTCUT_DEFAULTS` /
+`Settings.DEFAULTS["shortcuts"]` must exactly match what
+`QKeySequence(event.keyCombination()).toString(QKeySequence.PortableText)` produces
+at runtime for that key, or the comparison in `keyPressEvent` silently never matches.
+Verified directly: `Alt+Insert` renders as `"Alt+Ins"`, `Alt+Delete` as `"Alt+Del"`. If
+you're ever unsure what a key combination's portable-text form is, check it with a
+one-line script rather than guessing — there's no error if you get it wrong, the
+shortcut just quietly does nothing.
+
+**A word-wrapped `QLabel` in a `QFormLayout` row with no label widget gets the wrong height.**
+`form.addRow("", label)` creates no label widget, and Qt (PySide6 6.11.2) then sizes that row's
+height for width at the wrong width. The label's text is centred in a taller row, with a blank
+band above and below it: in Translation Settings it measured 64 px for a one-line (16 px) hint.
+`form.addRow(QLabel(), label)` (an explicit blank label widget) gives the correct height,
+verified on a bare `QGroupBox` + `QFormLayout` and in the dialog. A row that spans both columns
+(`addRow(label)`) is also correct, but it loses the indent under the fields. Rows of non-wrapping
+widgets (check boxes, buttons) are unaffected and keep `""`.
+
+**Two things sizing one top-level window: Windows can move the window.** The first fix for the
+Translation Settings sizing kept the layout's default constraint and resized the window in a
+deferred `_fit_height()`. With the default constraint, Qt grows a top-level window on its own
+as soon as a bigger child appears, and for a height-for-width layout it sizes that grow for the
+*minimum* width (500 px), so it overshoots (596 px where 527 were needed). At 150 % display
+scaling and a 14 pt UI font, the native `WM_WINDOWPOSCHANGED` for that grow came back taller than
+requested and moved up by the difference (94 device px = 62 logical, bottom edge fixed). At 10 pt
+it came back taller but unmoved. `_fit_height()` then fixed the height and kept the moved top, so
+each switch to a bigger engine climbed 62 px. Traced with a `QAbstractNativeEventFilter` logging
+`WM_WINDOWPOSCHANGING`/`CHANGED` on the dialog's HWND. Offscreen reproduces the overshoot but not
+the move, so the regression check asserts the overshoot is gone. The fix is one owner: the
+layout is `SetNoConstraint` and the dialog sizes itself, including the minimum size the
+constraint used to enforce. If another dialog ever resizes itself to its content, do the same
+rather than layering a resize on top of the layout's automatic one. Only the real app showed
+this: a stand-in parent at the default font never moved.
+
+**`QTableWidget.selectRow()` in a loop only keeps the last row selected** —
+`selectRow()` computes its selection command as if it were a fresh, unmodified click
+(`ClearAndSelect`), so calling it once per row in a loop silently collapses the
+selection to whatever row was selected last. To select multiple rows programmatically
+(see `MergeConflictDialog._select_kind()`), build a `QItemSelection` covering every
+target row and apply it once via `selectionModel().select(selection,
+QItemSelectionModel.Select | QItemSelectionModel.Rows)`. Verified directly: three
+`selectRow()` calls in a loop over rows `[0, 2, 4]` leave only row `4` selected; the
+`QItemSelection` approach selects all three.
+
+**Default-button registration — `setDefault(True)` must run after the button joins
+the dialog's layout.** A `QDialog` only registers a default button when
+`setDefault(True)` is called on a button that already has the dialog as an
+ancestor, and a focused autoDefault `QPushButton` becomes the default while it
+has focus. Called too early (before the footer is added to the dialog's layout),
+the dialog never registers the primary button, and Enter after a toolbar or footer
+button has been used repeats that button instead of applying. The mechanism: a
+button parented to a footer `QFrame` that is not yet inside the dialog only ever
+gets a `ParentChange` with no dialog above it, and adding the footer to the dialog
+sends the button no event, so it never registers as the dialog default; the old
+button rows added with `addLayout()` reparented their buttons straight to the
+dialog, which registered the default as a side effect. `MergeConflictDialog`,
+`GlossaryDialog` and `RestoreFromBackupDialog` therefore call `setDefault(True)` on
+Apply & Close, Save and Restore Selected right after the footer is added to the
+layout, and only there: a repeated call does nothing, so an earlier one would make
+the later one a no-op. With that registration a fresh dialog starts on the primary
+button and Enter applies. `MergeConflictDialog.__init__` also ends with
+`self._table.setFocus()`, which is only defensive: if the default were not
+registered and the first focusable widget were a toolbar-style button (Select All),
+Enter on open would press that button instead of the primary one, and initial focus
+in the table avoids that; the table's own `setTabKeyNavigation(False)` (see the
+Merge section above) then lets Tab and Shift+Tab reach the toolbar and footer from
+there instead of trapping focus in the table.
+`QPushButton.isDefault()` is unreliable for checking this (the focused autoDefault
+button wins) — send a real Return key event to the focused widget and look at what
+happened.
+
+**Directly-styled widgets belong in `_apply_theme()`, not just `_set_theme()`** —
+`_apply_theme()` runs at both startup (`MainWindow.__init__`) and on every theme
+switch (`_set_theme()` calls it internally); `_set_theme()` alone only runs on an
+explicit View → Theme click. Any widget whose color is set directly via
+`setStyleSheet()` (bypassing the cascading QSS stylesheet) — like
+`count_label`, `refresh_hint_label`, `_dynamic_label`, `_sb_lang_label`, and
+`_sb_ver_label` — must be refreshed inside `_apply_theme()` itself to look correct
+from the moment the window first appears. Putting it only in `_set_theme()`'s
+"refresh widgets whose colour is set directly" block means it stays wrong at
+startup for any persisted non-default theme until the user manually toggles the
+theme menu once.
+
+**Errors that can't reach the user go through `_log_error()`, not `print()`** —
+the shipped build is `--windowed` (`build_exe.ps1`), so `print()` output has no
+console to land in and is silently lost. `_log_error(context, exc)` appends a
+timestamped line to `error_log.txt` instead (same directory as
+`translation_editor_settings.json`), for exactly the kind of best-effort,
+non-fatal failure (a corrupt settings file, an unreadable backup source) that
+shouldn't interrupt the user but still deserves a diagnostic trail. It never
+raises itself, so it's always safe to call from inside an `except` block.
+
+**Opening a file can set `is_modified = True` with no user action** —
+`MainWindow._load()` calls `normalize_entry_dates()` (see [Date
+normalization](#date-normalization)), which rewrites any legacy-format
+`modify_date` to canonical form in memory. If that changes at least one
+entry, `_load()` deliberately marks the file modified even though the user
+hasn't touched anything yet — this is intentional (the in-memory state
+really does differ from disk), not a stray bug to "fix" by moving the
+`is_modified = True` line or removing it.
+
+**`QThread.wait()` doesn't pump the event loop that delivers its own queued
+signal.** `MainWindow.closeEvent()` waits on each in-flight
+`self._backup_threads` entry via `t.wait(2000)`, but that alone doesn't
+guarantee `BackupThread.finished`'s connected slot (e.g.
+`_do_restore_after_backup()` for a still-running restore) has actually run
+yet — the queued cross-thread signal is only delivered when the main
+thread's event loop processes events. `closeEvent()` follows the wait with
+a few `QApplication.processEvents()` passes for exactly this reason. Don't
+remove them thinking `wait()` alone is sufficient — a restore's actual
+file write could otherwise be silently abandoned on app exit.
+
+**Backup writes for the same file serialize; different files never do —
+`_lock_for_key_dir()`.** `BackupThread.run()`'s `write_at()` used to run
+every location's write under a single global lock, serializing ALL
+concurrent backups app-wide regardless of which file they were for — a
+real scalability regression that was never the intent (see the design
+spec's Non-goals). `_lock_for_key_dir(key_dir)` narrows this: it hands
+back the same `threading.Lock()` for the same resolved
+`root_dir / backup_key` directory every time (via a small dict guarded by
+its own short-lived mutex), so only two backups that would actually
+collide on `_write_backup_slot()`'s check-then-create slot-naming step
+contend with each other; backups of unrelated files run in true parallel.
+Never held from the UI thread — only background `BackupThread` workers
+ever acquire it. The lock dict grows for the app's lifetime (one entry
+per distinct key_dir ever backed up this session) — the same accepted
+trade-off already on record for `self._backup_threads`.
+
+**A pending restore's "Open the restored file now?" prompt is suppressed
+during shutdown.** `_do_restore_after_backup()`'s `was_open`-is-`False`
+branch normally asks via `QMessageBox.question()` whether to open the
+just-restored file. Because this method can now run from inside
+`closeEvent()`'s `processEvents()` flush (see the `QThread.wait()`
+pitfall above) when a pre-restore safety backup's `finished` signal is
+delivered mid-shutdown, that modal could otherwise pop up and block the
+window from actually closing. `_do_restore_after_backup()` checks
+`self._is_closing` first and skips the prompt entirely when `True` — the
+file has already been written by that point, so nothing is lost; the app
+just doesn't offer to open it since it's exiting anyway. Error dialogs (a
+failed write, a failed reload) are NOT suppressed by this guard — only the
+optional "open it now?" prompt is; a genuine failure should still surface
+to the user even during shutdown.
+
+**`_on_translation_done()`/`_on_translation_error()` rely on `self.sender()`
+— never call them as plain functions.** These slots discard a result whose
+originating thread's `_generation` tag (set in `EditDialog._start_translation()`)
+doesn't match `self._transl_generation`, identifying the originating thread
+via `self.sender()` — Qt's own bookkeeping of which connected signal is
+currently dispatching. `self.sender()` only resolves correctly when the slot
+is invoked through an actual Qt signal emission (e.g. `thread.finished.emit(...)`
+on a connected `TranslationThread`); calling `dlg._on_translation_done("text")`
+directly from Python returns `None` for `self.sender()`, which the generation
+check treats as stale and silently discards the result. Verifying this logic
+(see the Testing checklist above) must connect a real `QThread`'s signal and
+let it fire, not call the slot directly.
+
+**Never abandon a `receive_response()` drain — the SDK stream has no
+query→response correlation.** `ClaudeSDKClient.receive_response()` is a thin
+wrapper over `receive_messages()`, which reads from one shared, 100-slot
+buffered stream fed by a single background reader task. It yields whatever
+arrives next and stops at the first `ResultMessage`; nothing ties a response
+back to the query that caused it. Cancelling the coroutine that is consuming a
+response does **not** stop the `claude` subprocess, so its remaining messages
+stay buffered and are handed to the *next* reader — which then returns the
+previous entry's translation, and stays exactly one behind for the rest of the
+app session (the `EditDialog._transl_generation` guard cannot catch this: the
+wrong text arrives tagged with the current, correct generation). Depending on
+where the cancel lands, the next translation returns the previous answer, an
+empty string, or both concatenated. This is why
+`ClaudeSubscriptionSession._pump()` always drains to the `ResultMessage` and
+`cancel_current()` only settles the caller's future. Any future change that
+stops reading mid-response — a `wait_for` around the drain, an early `break`
+out of the `async for`, a task cancellation — must reconnect afterwards, since
+a fresh subprocess is the only way back to a known-good stream position.
+
+**The windowed exe opens a console window for every console program it starts — pass
+`CREATE_NO_WINDOW`.** The exe is `--windowed`, so it has no console, and Windows gives the
+`claude` CLI a console window of its own: a near-full-screen terminal (Windows Terminal, where it
+is the default host) over the editor on the first Subscription translation. From source the
+child inherits the launcher's console, so only the exe showed it; `pythonw.exe` reproduces it.
+`ClaudeSetupTokenThread` passes `creationflags=_NO_WINDOW_FLAGS` to `subprocess.run()`. The SDK
+has no option for it, so `_install_no_window_process_spawn()` (called from
+`ClaudeSubscriptionSession._connect()`) wraps `anyio.open_process`, which every SDK spawn goes
+through (the session and its `claude -v` check), to add the flag unless the caller set flags of
+its own. The wrapper is process-wide and idempotent. If a later SDK stops using
+`anyio.open_process` the window comes back without an error, and `check_core_translation.py`'s
+session test (which records the flags of every real SDK spawn) fails. Any new `subprocess`
+call to a console program needs the same flag.
+
+**Never add `--collect-all PySide6` to the PyInstaller command.** It bundles every
+Qt module in the wheel — WebEngine/Chromium, Quick/Qml, Multimedia, 3D, SQL drivers
+and more — whether or not the app imports it. Nothing visibly breaks (the extra
+DLLs are simply never loaded), so it is easy to re-add "for safety", but it made the
+exe 362 MB instead of 166 MB, with WebEngine alone ~126 MB of that (compressed). The
+app imports only `QtWidgets`/`QtGui`/`QtCore`; PyInstaller's own PySide6 hooks bundle
+those plus the plugins they need (`platforms/qwindows`, `styles/qmodernwindowsstyle`,
+`imageformats/qico` for the `.ico` window icon). What remains is not dead weight:
+`claude_agent_sdk\_bundled\claude.exe` (~94 MB compressed, over half the exe) is the
+CLI the SDK spawns for the `claude_subscription` engine, since the app never passes
+`cli_path`. To check a build, list its contents with
+`python -m PyInstaller.utils.cliutils.archive_viewer -l dist\XMLTranslationEditor.exe`
+and search for `WebEngine` (expect no matches). `QtWebEngineProcess.exe` entries in
+Task Manager are never this app's — it spawns no child processes — and were once
+traced to Autodesk Fusion 360.
+
+**`setFont()` on a plain widget is unreliable once any ancestor has a stylesheet —
+use the widget's own local QSS instead.** Every dialog in this app sets a
+stylesheet on itself, so this applies everywhere. `FontSettingsDialog`'s live
+preview label originally called `self._preview.setFont(QFont(family, size))` from
+`_update_preview()`; verified directly (an offscreen probe reading `label.font()`
+before/after) that the call has no visible effect at all once the dialog's own
+`setStyleSheet()` has run — Qt's `QStyleSheetStyle` resolves a plain `QLabel`'s
+effective font from the CSS cascade, not from `QWidget::setFont()`, once any
+stylesheet applies to it or an ancestor. The fix is the same rule already
+documented above one entry up ("a widget's own stylesheet beats an inherited
+one"): set the font via the label's *own* local `setStyleSheet()`
+(`f'font-family: "{family}"; font-size: {size}pt;'`), which the CSS engine does
+honor, and which doesn't need `color` repeated since ancestor rules still cascade
+per property. Also verified: a widget's resolved `.font()` does not necessarily
+reflect a fresh `setStyleSheet()` call until the widget has actually been shown
+and the event loop has processed at least one iteration (`show()` + `processEvents()`)
+— checking `.font()` immediately after construction on a widget that is never
+shown can read stale values in an offscreen/headless probe, even though the
+identical code works correctly in the real, shown dialog.
+
+**A dialog constructed with `parent=self` and never explicitly destroyed stays
+alive forever, invisibly, as a child of that parent — `Qt.WA_DeleteOnClose` is
+the fix, but only `close()` (or a real `exec()` returning) actually triggers
+it.** None of this app's `dlg.exec()` call sites ever called `dlg.deleteLater()`
+or set `WA_DeleteOnClose`, and `MergeConflictDialog` is the one dialog whose
+per-row cell widgets (a `QComboBox` per addition/conflict/deletion row) scale
+with the size of the incoming file. Reported symptom: after opening a large
+Merge from File and Cancelling without accepting, later font or theme changes
+took multiple seconds instead of being instant. Root cause, confirmed directly
+(an offscreen probe that opened, cancelled, and counted
+`QApplication.instance().allWidgets()`): closing via `reject()`/`accept()`
+alone never destroys a dialog that was constructed with a parent — Qt's C++
+parent-child ownership keeps it alive regardless of Python reference counting,
+so it (and every child widget it ever built) stays in `allWidgets()` forever.
+`MainWindow._apply_app_font()` walks `allWidgets()` explicitly, and
+`MainWindow._apply_theme()`'s stylesheet cascade reaches every descendant of
+`MainWindow` implicitly, so *both* paths kept reprocessing every zombie widget
+on every later font or theme change — for a merge with thousands of rows, that
+measured at over 400x slower (confirmed: 13 ms → 5,627 ms for
+`_apply_app_font()`, 15 ms → 10,381 ms for `_set_theme()`, on a 2,000-row
+merge). `MergeConflictDialog.__init__` now sets
+`self.setAttribute(Qt.WA_DeleteOnClose)`. Two things about this attribute are
+easy to get wrong: (1) it only fires when the widget is actually `close()`d,
+or when a real `QDialog.exec()`'s nested event loop exits via
+`accept()`/`reject()`/`done()` — calling `.reject()` directly on a widget that
+was never shown, or on one that was shown only via `.show()` with no `exec()`
+involved, does **not** trigger it (verified directly, both ways); (2) after a
+real `exec()` the destruction is **immediate, not deferred**: `QDialog::exec()`
+itself deletes a `WA_DeleteOnClose` dialog, children included, right before it
+returns. Code that reads the dialog after `exec()` may only read plain Python
+attributes, never a widget. `MainWindow._edit_row()`'s `was_modified()` returns
+a stored bool and is fine. `MergeConflictDialog` and `RestoreFromBackupDialog`
+used to read their combos and checkbox after `exec()` and raised "Internal C++
+object ... already deleted" on every Apply & Close and every accepted restore
+(an earlier version of this note claimed `deleteLater()` semantics). Both now
+override `done()`, which every way of closing goes through, to store their
+results before the widgets go. Any new `WA_DeleteOnClose` dialog with a result
+accessor must do the same. `python tests/check_read_after_exec.py` is the
+regression check. `EditDialog` also sets `WA_DeleteOnClose`
+(opened once per row edited, so a long editing session was the other place this
+actually accumulated, not just Merge's per-row-widget scaling). Every other
+`GlossaryDialog` and `RestoreFromBackupDialog` also set `WA_DeleteOnClose`, for
+consistency rather than urgency: grepping both classes turns up zero
+`setCellWidget()`/`setItemWidget()` calls — they populate their table/tree with
+plain `QTableWidgetItem`/`QTreeWidgetItem` rows, which are not `QWidget`
+subclasses and never appear in `allWidgets()` or the theme/font cascade
+regardless of row count. Verified directly: opening+cancelling `GlossaryDialog`
+at 10/100/500/2000 glossary rows leaked an identical, flat 28 widgets every
+time — no per-row scaling at all, unlike Merge's per-row `QComboBox`. Both are
+also opened far less often per session than `EditDialog` (once per row edited).
+`RestoreFromBackupDialog` is additionally simpler to reason about than
+`EditDialog` was: its actual restore work (`_do_restore_after_backup()`, the
+`BackupThread` interaction) runs on `MainWindow` *after* the dialog has already
+been `accept()`-ed and hidden, so the dialog itself never holds a live
+background-thread reference to worry about. `GlossaryDialog` spawns no threads
+at all. Settings, Shortcuts, Autosave, Translator Name, and Font remain the
+only dialogs without this fix — all have a small, fixed widget count and no
+reported or measured symptom, so the gap is left as accepted, not urgent.
+
+**Confirmed safe with the `claude_subscription` persistent session specifically.**
+Before adding `WA_DeleteOnClose` to `EditDialog`, this was checked against the
+shared, one-request-at-a-time `ClaudeSubscriptionSession` (see "persistent-session
+model" above): every `TranslationThread` is parented to `MainWindow`, never to the
+dialog, and tracked in `MainWindow._translation_threads`, so a dialog's destruction
+can never affect a thread's lifetime or the session's queue/pump — those have no
+reference to `EditDialog` at all. The one real risk was a thread's `finished`/
+`errored` signal reaching `self._on_translation_done()`/`_on_translation_error()`
+on a dialog whose C++ object has already been destroyed; `_abandon_stale_translation()`
+already disconnects both signals synchronously on every dismissal path
+(`reject`/`closeEvent`/`_save`/`_navigate`/`_delete_current`) *before* Qt's deferred
+deletion could ever run, so this can't happen — verified directly by emitting a
+`TranslationThread.finished` signal after `reject()` + a `WA_DeleteOnClose` pump
+cycle and confirming no "wrapped C/C++ object has been deleted" error.
+`_on_translation_done()`/`_on_translation_error()` now also clear
+`self._transl_thread = None` on a normal (non-stale) completion — previously only
+`_abandon_stale_translation()` cleared it, and only when the old thread was still
+running, so a dialog whose last translation finished normally kept one dead
+`TranslationThread` object referenced forever. That reference was never a
+`QWidget` (so it never showed up in `allWidgets()` and played no part in the
+font/theme freeze above), and held no live thread or session resource — a harmless
+memory footnote of the same root cause, not a correctness risk, fixed anyway while
+touching this code.
+
+**`QTextDocument` renders `<img>` wider than its `width` attribute asks for —
+verified directly, root cause unconfirmed.** Building `Tools/build_user_guide.py`
+(see [Tools folder](#tools-folder)), a 1380×720 screenshot placed at
+`width="657"` (exactly the printable page width) overflowed the page and had
+its right ~30% clipped by the physical page boundary. This reproduced
+identically whether the oversized dimensions came from the HTML `width`/
+`height` attributes on the original image or from pre-resizing the source PNG
+with PIL to that exact pixel size first and adding no attributes at all — so
+it isn't a scaling-quality issue; Qt's layout genuinely allocates more space
+than the box it was given. Both images involved had identical PNG DPI
+metadata (96.012), ruling out a `pHYs`-chunk/device-pixel-ratio explanation.
+Two other images (2250px-wide, a much larger downscale factor) showed no
+visible clipping at the same nominal 100%-of-page-width target, so the excess
+is not a fixed percentage of the requested size. Root cause not tracked down
+further; the fix in `build_user_guide.py`'s `fig()` is a flat 90% safety
+margin (`_WIDTH_SAFETY`) applied to every image regardless of its requested
+`width_pct`, verified empirically on the worst-case (widest, least-downscaled)
+image rather than derived from the underlying mechanism. 93% was tried first,
+to keep images larger on the page, but reproduced the same clipping on that
+same image (its Resolution column and Cancel button cut off) — margin only
+moves in the safe direction from here. If a future image still clips at 90%,
+lower `_WIDTH_SAFETY` further rather than assuming the margin only needs to
+cover the one image that exposed this.
+
+**`QTextDocument.print_()` silently draws its own bare page number on every
+page unless you give it an explicit page height.** `doc.setTextWidth(w)`
+alone (no height) leaves the document's own page size unset, and Qt's default
+multi-page print path then appends a plain `"1"`, `"2"`, ... at the bottom of
+each page — verified directly: printing a bare 2-page HTML document with no
+page-number markup anywhere produced `"...Text.\n1"` / `"...Text.\n2"` when
+the pages were text-extracted. This showed up in `build_user_guide.py` two
+ways: a stray number on the cover page (which the reportlab footer overlay in
+`add_footers()` deliberately skips, since the cover has no "Page N of M"), and
+every content page showing the number twice — once from Qt, once from the
+overlay — once both exist on the same page. The fix is
+`doc.setPageSize(QSizeF(page_rect.width(), page_rect.height()))` right
+alongside `setTextWidth()`, using the same `page_rect` the printer itself
+reports; giving Qt the full page size (not just the wrap width) suppresses
+its own numbering entirely, confirmed by re-running the same 2-page
+extraction test and finding no trailing digit on either page.
+
+**A PDF's internal links can validate perfectly under `pypdf` and PyMuPDF and
+still fail to click in Edge — lenient parsers are not proof of a spec-clean
+file.** The TOC's `<a href="#sec">` links stopped working in Edge (PDFium)
+after later changes to `build_user_guide.py`, despite `pypdf` reporting
+well-formed `/Link` annotations and PyMuPDF (`fitz`) independently resolving
+every one to the correct page — both tolerate a structure the PDF spec
+doesn't actually sanction: Qt's `/Root/Names/Dests` name tree stored full
+`/GoTo` **action** dictionaries (`{"/D": [...], "/S": "/GoTo"}`) as its
+values, not the plain destination arrays ISO 32000 12.3.2.3 specifies for a
+Names-tree entry. `pikepdf` (qpdf's C++ engine via Python bindings, a third,
+independently-implemented parser) surfaced this shape immediately, where two
+lenient/complete-recovery parsers had both silently accepted it — a reminder
+that cross-checking with *another* library only rules out one lenient parser
+being uniquely broken, not whether the file is actually spec-conformant.
+Confirmed this shape was present from `build_user_guide.py`'s very first
+version (not something a recent edit introduced), so treat "worked in Edge
+before, not now" reports as informative about *something* having changed,
+not necessarily this. Fixed in `add_footers()`'s `_named_dest_page_map()` +
+the rewrite pass right after all pages are added to the writer: every link's
+`/Dest` is rewritten from a name (requiring a Names-tree lookup) to a literal
+`[page_ref, mode, *args]` array pointing straight at the target page, read
+from Qt's own tree before it becomes irrelevant. This also incidentally
+surfaced that `doc.setPageSize()` (the page-number fix above) changed the
+destination mode Qt emits from `/FitH` to `/XYZ` — harmless, `/XYZ` is if
+anything the more universally-supported of the two, and the rewrite preserves
+whichever mode is actually present rather than hard-coding one. Verified via
+`pikepdf`: every annotation now holds a self-contained destination array with
+no `/GoTo` action wrapper and no Names-tree dependency at all; PyMuPDF's link
+`kind` changed from `4` (`LINK_NAMED`) to `1` (`LINK_GOTO`) confirming the
+same thing from a different angle.
+
+**A `QLabel`'s rich-text `<a href>` link colour ignores both `QPalette.Link`
+and an inline `style="color:..."` — only the old `<font color="...">` tag
+actually works.** The Welcome screen's "Icon by Magnific" attribution
+(`WelcomeScreen.attribution_lbl`) rendered as Qt/Windows' own default link
+blue (`#0078d4`) in both themes, giving only ~4.3:1 contrast against the
+light theme's `#f0f0f0` background — reported as unreadable. Two fixes were
+tried and both verified, by sampling the actual rendered pixel colour, to
+have zero effect: setting `QPalette.Link` in `MainWindow._apply_palette()`,
+and an inline `<a href="..." style="color:...">` on the tag itself — both
+left the rendered colour completely unchanged. The one thing that actually
+worked is wrapping the link text in the HTML 4-era `<font color="...">` tag:
+`<a href="..."><font color="#0050a0">Magnific</font></a>`. Confirmed in
+isolation first (a bare label with just that markup rendered the exact
+requested RGB), then confirmed in the full app via `WelcomeScreen.apply_link_color()`,
+which rebuilds the label's HTML with the current theme's `header_fg` and is
+called from `MainWindow._apply_theme()` (the label has no stylesheet cascade
+to rely on, same reasoning as every other directly-styled widget in this
+file). **Verifying this one is easy to get wrong**: two rounds of pixel
+sampling on a whole-window screenshot both appeared to show the fix had no
+effect, and both were sampling errors, not real failures — the first used
+hardcoded x/y coordinates from an earlier capture with a different offscreen
+DPI scale factor (landing on the wrong part of a differently-sized image),
+and the second scanned too wide a vertical band and picked up the unrelated
+"Open File…" button's similar blue instead of the attribution line. The fix
+was only confirmed once the scan was narrowed to the exact row range the
+text line actually occupies. Grabbing the label widget directly
+(`lbl.grab()`) alongside the whole-window grab, and diffing the two, is a
+more reliable way to isolate a single widget's rendered colour than
+eyeballing coordinates in a full-window capture.

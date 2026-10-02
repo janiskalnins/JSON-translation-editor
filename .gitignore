@@ -1,3 +1,68 @@
+# Runtime files — never commit
+translation_editor_settings.json
+# Any other copy of the settings (e.g. "translation_editor_settings - real.json")
+# holds real API keys too
+translation_editor_settings*.json
+# Settings backups, damaged-file copies and atomic-write leftovers all
+# contain API keys in plain text
+translation_editor_settings.backups.zip
+translation_editor_settings.backups.zip.corrupt
+translation_editor_settings.json.corrupt-*
+.translation_editor_settings.*.tmp
+json_translation_editor_settings*.json
+json_translation_editor_settings.backups.zip
+json_translation_editor_settings.backups.zip.corrupt
+json_translation_editor_settings.json.corrupt-*
+.json_translation_editor_settings.*.tmp
+JSON_Translation_file_Backups/
+# Damaged sidecars kept aside by the editor
+*.json.meta.corrupt-*
+launcher_cache.json
+bat_launcher_cache.txt
+error_log.txt
+
+# Backup folder
+XML_Translation_file_Backups/
+
+# Python / build artefacts
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+.worktrees/
+*.db
+XML_Translation_file_Backups/
+.claude/*
+!.claude/rules/
+trash/
+
+#NPP backup files
+*.bak
+
+CLAUDE.local.md
+
+# Brainstorming visual companion (session-local mockups)
+.superpowers/
+
+# Reusable dev-only scripts (screenshot capture, doc builds, etc.) -- not part
+# of the shipped app, never committed. See "Tools/" in CLAUDE.md.
+Tools/
+
+# Test-run reports written by tests/run_all.py (local history, never committed)
+tests/reports/
+
+# Real-world translation files for check_core_corpus.py: local only, may be private
+tests/data/real/*
+!tests/data/real/README.md
+
+# Translation test files
+*.xml
+*.csv
+!tests/data/*.xml
+!tests/data/*.csv
+
+# Python template from the initial repo
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,2 +1,19 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Git runs hooks with sh; a CRLF first line ("#!/bin/sh\r") fails with "not found".
+tests/hooks/* text eol=lf
+
+# Language files and their sidecars keep LF in the working copy, exactly as the consuming program reads them
+*.json text eol=lf
+*.json.meta text eol=lf
+
+# Kept out of GitHub's "Source code" zip/tar.gz (git archive): dev-only files.
+.claude         export-ignore
+.swarm          export-ignore
+tests           export-ignore
+docs/superpowers   export-ignore
+docs/architecture  export-ignore
+CLAUDE.md       export-ignore
+.gitignore      export-ignore
+.gitattributes  export-ignore
