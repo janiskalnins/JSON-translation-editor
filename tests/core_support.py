@@ -7,7 +7,6 @@ folder, points the glyph cache there and creates the one QApplication, so no tes
 real settings file, backups or cache.
 """
 
-import html
 import json
 import os
 import shutil
@@ -16,7 +15,6 @@ import tempfile
 import time
 import traceback
 import unittest
-import xml.etree.ElementTree as ET
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import date
@@ -48,25 +46,6 @@ def temp_dir() -> Path:
 # ── Builders ────────────────────────────────────────────────────────────────
 
 DEFAULT_DATE = jte.format_date_for_storage(date(2025, 2, 1))
-HEADER = ('<?xml version="1.0" encoding="utf-8"?>\n'
-          '<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu" Version="4.1.1140">\n'
-          '  <resources>\n')
-FOOTER = '  </resources>\n</TRNExportImportModel>\n'
-
-
-def row(name: str, text: str, translator: str = "Jane", status: str = "Complete",
-        modify_date: str = DEFAULT_DATE, istablet: str = "false") -> str:
-    """One <string> line, indented and ending in a newline, escaped exactly as the app writes it."""
-    attrs = (f'name="{jte._escape_attr_value(name)}" '
-             f'translator="{jte._escape_attr_value(translator)}" status="{status}" '
-             f'modifyDate="{modify_date}" istablet="{istablet}"')
-    return f'    <string {attrs}>{html.escape(text, quote=False)}</string>\n'
-
-
-def xml_doc(rows: List[str], header: str = HEADER, newline: str = "\n", bom: bool = False) -> str:
-    """A whole translation file as text, every newline written as *newline*."""
-    text = (header + "".join(rows) + FOOTER).replace("\n", newline)
-    return "\ufeff" + text if bom else text
 
 
 def write_exact(path: Path, data: Union[str, bytes]) -> Path:
@@ -77,25 +56,19 @@ def write_exact(path: Path, data: Union[str, bytes]) -> Path:
 
 def make_entry(**fields: Any) -> "jte.StringEntry":
     values = dict(name="Save", translator="Jane", status="Complete", modify_date=DEFAULT_DATE,
-                  istablet="false", text="Saglabāt", seg_idx=1)
+                  text="Guardar", position=1)
     values.update(fields)
     return jte.StringEntry(**values)
 
 
-# ── The oracle ──────────────────────────────────────────────────────────────
-
-def assert_xml_intact(tc: unittest.TestCase, path: Path, expected_names: List[str]) -> None:
-    """The independent judge of a saved file: xml.etree (not the app's regex parser) must find a
-    well-formed file holding exactly *expected_names* as <string name> values, in order, none
-    twice."""
-    try:
-        root = ET.parse(str(path)).getroot()
-    except ET.ParseError as e:
-        tc.fail(f"{path.name} is not well-formed XML: {e}")
-    names = [el.get("name") for el in root.iter("string")]
-    duplicates = sorted({n for n in names if names.count(n) > 1})
-    tc.assertEqual(duplicates, [], f"{path.name} holds a name twice")
-    tc.assertEqual(names, list(expected_names))
+def write_pair(folder: Path, stem: str, pairs, meta: Optional[Dict[str, Tuple[str, str, str]]] = None,
+               header: Optional[Dict[str, str]] = None) -> Path:
+    """Write <stem>.json from *pairs* and, when *meta* is given (even {}), its sidecar with those
+    entries and *header* fields (sidecar_doc's defaults otherwise). Returns the .json path."""
+    path = write_exact(folder / f"{stem}.json", json_doc(pairs))
+    if meta is not None:
+        write_exact(folder / f"{stem}.json.meta", sidecar_doc(meta, **(header or {})))
+    return path
 
 
 def json_doc(pairs, indent: Optional[str] = " ", newline: str = "\n", bom: bool = False) -> bytes:
@@ -105,6 +78,8 @@ def json_doc(pairs, indent: Optional[str] = " ", newline: str = "\n", bom: bool 
     data = text.replace("\n", newline).encode("utf-8")
     return b"\xef\xbb\xbf" + data if bom else data
 
+
+# ── The oracle ──────────────────────────────────────────────────────────────
 
 def assert_json_intact(tc: unittest.TestCase, path: Path, expected_names: List[str]) -> None:
     """The independent judge of a saved language file: the json module must read one object whose

@@ -1,7 +1,7 @@
 """Core tests: end-to-end workflows through a real, offscreen MainWindow. Editing through the Edit
-dialog, legacy dates, bulk status, delete, Close File, Save As, Merge from File, Restore from
-Backup and autosave, each ending in a saved file judged by the oracle. Every modal is answered by
-core_support.patched_modals().
+dialog, bulk status, delete, Close File, Save (sidecar failures included), Save As, Merge from
+File, Restore from Backup and autosave, each ending in a saved file judged by the oracle. Every
+modal is answered by core_support.patched_modals().
 
 Run:  python tests/check_core_workflows.py      (exit code 0 = all passed)
 """
@@ -15,7 +15,7 @@ import unittest
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
@@ -24,11 +24,16 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 
 jte = cs.jte
 
-ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atcelt"), cs.row("Open", "Atvērt")]
-NAMES = ["Save", "Cancel", "Open"]
+DEFAULT_ISO = "2025-02-01"   # cs.DEFAULT_DATE as the sidecar stores it
+PAIRS = {"Save": "Guardar", "Cancel": "Cancelar", "Open": "Abrir"}
+META = {name: ("Complete", "Jane", DEFAULT_ISO) for name in PAIRS}
+NAMES = list(PAIRS)
 TODAY = jte.format_date_for_storage(date.today())
-OLD = jte.format_date_for_storage(date(2024, 1, 1))
-NEW = jte.format_date_for_storage(date(2025, 6, 1))
+
+
+def _reread(path: Path) -> List["jte.StringEntry"]:
+    """The entries a fresh load of *path* (and its sidecar) gives."""
+    return jte.load_translation_file(path).entries
 
 
 class WindowTestCase(unittest.TestCase):
@@ -49,8 +54,9 @@ class WindowTestCase(unittest.TestCase):
         self.modals.shown.clear()
         self.win.session_translator = ""
 
-    def load(self, rows: List[str] = ROWS, name: str = "Latvian.xml") -> Path:
-        path = cs.write_exact(cs.temp_dir() / name, cs.xml_doc(rows))
+    def load(self, pairs: Dict[str, str] = PAIRS,
+             meta: Optional[Dict[str, Tuple[str, str, str]]] = META, name: str = "es") -> Path:
+        path = cs.write_pair(cs.temp_dir(), name, pairs, meta=meta)
         self.win.is_modified = False
         self.win._load(path)
         cs.pump()
@@ -85,39 +91,35 @@ class EditTests(WindowTestCase):
     def test_translation_edit_survives_save_and_reopen(self):
         path = self.load()
         self.win.session_translator = "Anna"
-        _edit(self.win, 1, text="Atsaukt")
+        _edit(self.win, 1, text="Anular")
         self.win._save()
-        expected = jte.StringEntry("Cancel", "Anna", "Complete", TODAY, "false", "Atsaukt", seg_idx=3)
-        self.assertEqual(jte.parse_file(path)[1][1], expected)
+        expected = jte.StringEntry(name="Cancel", translator="Anna", status="Complete",
+                                   modify_date=TODAY, text="Anular", position=2)
+        self.assertEqual(_reread(path)[1], expected)
 
     def test_translation_edit_saves_an_intact_file(self):
         path = self.load()
-        _edit(self.win, 1, text="Atsaukt")
+        _edit(self.win, 1, text="Anular")
         self.win._save()
-        cs.assert_xml_intact(self, path, NAMES)
+        cs.assert_json_intact(self, path, NAMES)
 
     def test_metadata_edit_survives_save_and_reopen(self):
         path = self.load()
         _edit(self.win, 0, status="Review", translator="Bob")
         self.win._save()
-        expected = jte.StringEntry("Save", "Bob", "Review", cs.DEFAULT_DATE, "false", "Saglabāt",
-                                   seg_idx=1)
-        self.assertEqual(jte.parse_file(path)[1][0], expected)
+        expected = jte.StringEntry(name="Save", translator="Bob", status="Review",
+                                   modify_date=cs.DEFAULT_DATE, text="Guardar", position=1)
+        self.assertEqual(_reread(path)[0], expected)
 
-    def test_file_with_legacy_dates_opens_modified(self):
-        self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
-        self.assertTrue(self.win.is_modified)
-
-    def test_save_writes_canonical_dates(self):
-        path = self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
+    def test_metadata_edit_saves_an_intact_file(self):
+        path = self.load()
+        _edit(self.win, 0, status="Review", translator="Bob")
         self.win._save()
-        canonical = jte.format_date_for_storage(date(2016, 5, 6))
-        self.assertEqual([e.modify_date for e in jte.parse_file(path)[1]], [canonical, canonical])
+        cs.assert_json_intact(self, path, NAMES)
 
-    def test_save_with_canonical_dates_saves_an_intact_file(self):
-        path = self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
-        self.win._save()
-        cs.assert_xml_intact(self, path, ["A", "B"])
+    def test_file_with_a_sidecar_opens_unmodified(self):
+        self.load()
+        self.assertFalse(self.win.is_modified)
 
 
 class EditShortcutTests(WindowTestCase):
@@ -153,7 +155,7 @@ class BulkStatusTests(WindowTestCase):
         _select_rows(self.win, [0, 2])
         self.win._bulk_status("Review")
         self.win._save()
-        self.assertEqual([e.status for e in jte.parse_file(path)[1]],
+        self.assertEqual([e.status for e in _reread(path)],
                          ["Review", "Complete", "Review"])
 
     def test_bulk_status_saves_an_intact_file(self):
@@ -161,7 +163,7 @@ class BulkStatusTests(WindowTestCase):
         _select_rows(self.win, [0, 2])
         self.win._bulk_status("Review")
         self.win._save()
-        cs.assert_xml_intact(self, path, NAMES)
+        cs.assert_json_intact(self, path, NAMES)
 
 
 class DeleteTests(WindowTestCase):
@@ -170,14 +172,14 @@ class DeleteTests(WindowTestCase):
         self.modals.answers["question"] = QMessageBox.Yes
         self.win._delete_entries([self.win.entries[1]])
         self.win._save()
-        cs.assert_xml_intact(self, path, ["Save", "Open"])
+        cs.assert_json_intact(self, path, ["Save", "Open"])
 
     def test_deleting_several_rows_saves_an_intact_file_without_them(self):
         path = self.load()
         self.modals.answers["question"] = QMessageBox.Yes
         self.win._delete_entries([self.win.entries[0], self.win.entries[2]])
         self.win._save()
-        cs.assert_xml_intact(self, path, ["Cancel"])
+        cs.assert_json_intact(self, path, ["Cancel"])
 
     def test_declining_the_confirmation_deletes_nothing(self):
         self.load()
@@ -185,12 +187,22 @@ class DeleteTests(WindowTestCase):
         self.win._delete_entries([self.win.entries[1]])
         self.assertEqual([e.name for e in self.win.entries], NAMES)
 
-    def test_deleting_a_row_leaves_no_blank_line(self):
+    def _lines_after_deleting(self, row: int) -> Tuple[List[str], List[str]]:
+        """(lines before, lines after) deleting entry *row* and saving. Line 0 is the '{'."""
         path = self.load()
+        before = path.read_bytes().decode("utf-8").splitlines(keepends=True)
         self.modals.answers["question"] = QMessageBox.Yes
-        self.win._delete_entries([self.win.entries[1]])
+        self.win._delete_entries([self.win.entries[row]])
         self.win._save()
-        self.assertEqual(path.read_bytes(), cs.xml_doc([ROWS[0], ROWS[2]]).encode("utf-8"))
+        return before, path.read_bytes().decode("utf-8").splitlines(keepends=True)
+
+    def test_deleting_a_middle_row_changes_only_its_line(self):
+        before, after = self._lines_after_deleting(1)
+        self.assertEqual(after, before[:2] + before[3:])
+
+    def test_deleting_the_last_row_also_drops_the_comma_before_it(self):
+        before, after = self._lines_after_deleting(2)
+        self.assertEqual(after, before[:2] + [before[2].replace('",\n', '"\n')] + before[4:])
 
 
 class CloseFileTests(WindowTestCase):
@@ -205,13 +217,13 @@ class CloseFileTests(WindowTestCase):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
         self.win._close_file()
-        self.assertEqual(jte.parse_file(path)[1][0].text, "Changed")
+        self.assertEqual(_reread(path)[0].text, "Changed")
 
     def test_close_with_save_saves_an_intact_file(self):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
         self.win._close_file()
-        cs.assert_xml_intact(self, path, NAMES)
+        cs.assert_json_intact(self, path, NAMES)
 
     def test_close_with_save_closes_the_file(self):
         self._load_modified()
@@ -234,26 +246,84 @@ class CloseFileTests(WindowTestCase):
     def test_failed_save_keeps_the_file_open(self):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
-        with mock.patch.object(jte, "save_file", side_effect=OSError("locked")):
+        with mock.patch.object(jte, "save_translation_file", side_effect=OSError("locked")):
             self.win._close_file()
         self.assertEqual(self.win.current_file, path)
+
+    def test_failed_sidecar_save_keeps_the_file_open(self):
+        path, _ = self._load_modified()
+        self.modals.answers["question"] = QMessageBox.Save
+        with mock.patch.object(jte, "save_translation_file",
+                               side_effect=jte.MetadataWriteError("locked")):
+            self.win._close_file()
+        self.assertEqual(self.win.current_file, path)
+
+
+class SaveTests(WindowTestCase):
+    def _save_with_sidecar_blocked(self) -> Path:
+        """Load, edit, make the sidecar path a folder (so its write fails) and Save."""
+        path = self.load(meta=None)
+        self.win.entries[0].text = "Changed"
+        self.win.is_modified = True
+        jte.meta_path_for(path).mkdir()
+        self.win._save()
+        return path
+
+    def test_sidecar_failure_keeps_the_file_modified(self):
+        self._save_with_sidecar_blocked()
+        self.assertTrue(self.win.is_modified)
+
+    def test_sidecar_failure_shows_a_save_error(self):
+        self._save_with_sidecar_blocked()
+        self.assertEqual(self.modals.titles("critical"), ["Save Error"])
+
+    def test_sidecar_failure_still_saves_an_intact_language_file(self):
+        path = self._save_with_sidecar_blocked()
+        cs.assert_json_intact(self, path, NAMES)
+
+    def _load_with_unreadable_sidecar(self) -> Path:
+        """Load a file whose sidecar is a folder: reading it fails, so it must not be overwritten."""
+        path = cs.write_pair(cs.temp_dir(), "es", PAIRS)
+        jte.meta_path_for(path).mkdir()
+        self.win.is_modified = False
+        self.win._load(path)
+        self.win.entries[0].text = "Changed"
+        self.win.is_modified = True
+        return path
+
+    def test_unreadable_sidecar_is_skipped_on_save(self):
+        self._load_with_unreadable_sidecar()
+        self.win._save()
+        self.assertFalse(self.win.is_modified)
+
+    def test_unreadable_sidecar_still_saves_an_intact_language_file(self):
+        path = self._load_with_unreadable_sidecar()
+        self.win._save()
+        cs.assert_json_intact(self, path, NAMES)
+
+    def test_save_as_after_an_unreadable_sidecar_writes_the_new_sidecar(self):
+        path = self._load_with_unreadable_sidecar()
+        copy = path.parent / "Copy.json"
+        self.modals.answers["save_path"] = str(copy)
+        self.win._save_as()
+        self.assertTrue(jte.meta_path_for(copy).is_file())
 
 
 class SaveAsTests(WindowTestCase):
     def test_save_as_rederives_the_glossary(self):
         path = self.load()
-        copy = path.parent / "Copy.xml"
-        jte.write_glossary(jte.glossary_path_for(copy), [jte.GlossaryEntry("Lane", "Celiņš")])
+        copy = path.parent / "Copy.json"
+        jte.write_glossary(jte.glossary_path_for(copy), [jte.GlossaryEntry("Lane", "Carril")])
         self.modals.answers["save_path"] = str(copy)
         self.win._save_as()
         self.assertEqual([g.term for g in self.win.glossary], ["Lane"])
 
     def test_save_as_writes_an_intact_file(self):
         path = self.load()
-        copy = path.parent / "Copy.xml"
+        copy = path.parent / "Copy.json"
         self.modals.answers["save_path"] = str(copy)
         self.win._save_as()
-        cs.assert_xml_intact(self, copy, NAMES)
+        cs.assert_json_intact(self, copy, NAMES)
 
 
 def _accept_merge_defaults(dlg) -> int:
@@ -263,14 +333,23 @@ def _accept_merge_defaults(dlg) -> int:
 
 
 class MergeWorkflowTests(WindowTestCase):
-    OPEN_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atcelt", modify_date=OLD),
-                 cs.row("Old", "Vecs")]
-    INCOMING_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atsaukt", modify_date=NEW),
-                     cs.row("New", "Jauns")]
+    OPEN_PAIRS = {"Save": "Guardar", "Cancel": "Cancelar", "Old": "Viejo"}
+    OPEN_META = {"Save": ("Complete", "Jane", DEFAULT_ISO),
+                 "Cancel": ("Complete", "Jane", "2024-01-01"),
+                 "Old": ("Complete", "Jane", DEFAULT_ISO)}
+    INCOMING_PAIRS = {"Save": "Guardar", "Cancel": "Anular", "New": "Nuevo"}
+    INCOMING_META = {"Save": ("Complete", "Jane", DEFAULT_ISO),
+                     "Cancel": ("Complete", "Jane", "2025-06-01"),
+                     "New": ("Complete", "Jane", DEFAULT_ISO)}
 
-    def _merge_defaults(self) -> Path:
-        path = self.load(self.OPEN_ROWS)
-        incoming = cs.write_exact(path.parent / "incoming.xml", cs.xml_doc(self.INCOMING_ROWS))
+    def _merge_defaults(self, incoming_sidecar: Optional[bytes] = None) -> Path:
+        """Merge the incoming file with every default choice and save. *incoming_sidecar*
+        replaces the incoming file's sidecar bytes when given."""
+        path = self.load(self.OPEN_PAIRS, self.OPEN_META)
+        incoming = cs.write_pair(path.parent, "incoming", self.INCOMING_PAIRS,
+                                 meta=self.INCOMING_META)
+        if incoming_sidecar is not None:
+            cs.write_exact(jte.meta_path_for(incoming), incoming_sidecar)
         self.modals.answers["open_path"] = str(incoming)
         with mock.patch.object(jte.MergeConflictDialog, "exec", _accept_merge_defaults):
             self.win._merge_from_file()
@@ -279,11 +358,21 @@ class MergeWorkflowTests(WindowTestCase):
 
     def test_full_merge_saves_an_intact_file(self):
         path = self._merge_defaults()
-        cs.assert_xml_intact(self, path, ["Save", "Cancel", "Old", "New"])
+        cs.assert_json_intact(self, path, ["Save", "Cancel", "Old", "New"])
 
     def test_full_merge_takes_the_newer_conflicting_text(self):
         path = self._merge_defaults()
-        self.assertEqual(jte.parse_file(path)[1][1].text, "Atsaukt")
+        self.assertEqual(_reread(path)[1].text, "Anular")
+
+    def test_damaged_incoming_sidecar_is_left_in_place(self):
+        path = self._merge_defaults(incoming_sidecar=b"{")
+        self.assertEqual(jte.meta_path_for(path.parent / "incoming.json").read_bytes(), b"{")
+
+    def test_damaged_incoming_sidecar_is_reported(self):
+        self._merge_defaults(incoming_sidecar=b"{")
+        self.assertIn(("Incoming file: Metadata: incoming.json.meta is damaged — statuses shown as "
+                       "New", "error"),
+                      [(n.text, n.level) for n in self.win._notice_history])
 
 
 def _backup_manifests(folder: Path) -> List[dict]:
@@ -293,8 +382,8 @@ def _backup_manifests(folder: Path) -> List[dict]:
 
 class RestoreTests(WindowTestCase):
     backup = True
-    OLD_TEXT = cs.xml_doc([cs.row("Old", "Vecs")]).encode("utf-8")
-    GLOSSARY = "term,translation,note\r\nLane,Celiņš,\r\n".encode("utf-8-sig")
+    OLD_TEXT = cs.json_doc({"Old": "Viejo"})
+    GLOSSARY = "term,translation,note\r\nLane,Carril,\r\n".encode("utf-8-sig")
 
     @classmethod
     def setUpClass(cls):
@@ -314,8 +403,8 @@ class RestoreTests(WindowTestCase):
             glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
             glossary_bytes=glossary,
             glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
-            compress=True, max_count=5, trigger="file_open", culture="lv-LV",
-            display_language="Latviešu", version="4.1.1140", is_fallback=False)
+            compress=True, max_count=5, trigger="file_open", culture="es",
+            display_language="Español", version="4.1.1140", is_fallback=False)
         return slot, json.loads((slot / "backup_info.json").read_text(encoding="utf-8"))
 
     def _overwrite_restore(self) -> Tuple[Path, bytes]:
@@ -347,7 +436,7 @@ class RestoreTests(WindowTestCase):
         slot, info = self._slot(path)
         self.modals.answers.update(button="Save as copy", question=QMessageBox.No)
         self.win._do_restore(slot, info)
-        copies = sorted(path.parent.glob("Latvian_restored_*.xml"))
+        copies = sorted(path.parent.glob("es_restored_*.json"))
         self.assertEqual([c.read_bytes() for c in copies], [self.OLD_TEXT])
 
     def test_copy_restore_restores_the_glossary_with_it(self):
@@ -355,7 +444,7 @@ class RestoreTests(WindowTestCase):
         slot, info = self._slot(path, glossary=self.GLOSSARY)
         self.modals.answers.update(button="Save as copy", question=QMessageBox.No)
         self.win._do_restore(slot, info, restore_glossary=True)
-        copy = next(path.parent.glob("Latvian_restored_*.xml"))
+        copy = next(path.parent.glob("es_restored_*.json"))
         self.assertEqual(jte.glossary_path_for(copy).read_bytes(), self.GLOSSARY)
 
     def test_checksum_mismatch_warns(self):
@@ -372,21 +461,21 @@ class AutosaveTests(WindowTestCase):
         self.win.entries[0].text = "Changed"
         self.win.is_modified = False
         self.win._autosave_tick()
-        self.assertEqual(jte.parse_file(path)[1][0].text, "Saglabāt")
+        self.assertEqual(_reread(path)[0].text, "Guardar")
 
     def test_autosave_tick_saves_a_modified_file(self):
         path = self.load()
         self.win.entries[0].text = "Changed"
         self.win.is_modified = True
         self.win._autosave_tick()
-        self.assertEqual(jte.parse_file(path)[1][0].text, "Changed")
+        self.assertEqual(_reread(path)[0].text, "Changed")
 
     def test_autosave_tick_saves_an_intact_file(self):
         path = self.load()
         self.win.entries[0].text = "Changed"
         self.win.is_modified = True
         self.win._autosave_tick()
-        cs.assert_xml_intact(self, path, NAMES)
+        cs.assert_json_intact(self, path, NAMES)
 
     def test_autosave_tick_clears_the_modified_flag(self):
         self.load()
@@ -394,6 +483,22 @@ class AutosaveTests(WindowTestCase):
         self.win.is_modified = True
         self.win._autosave_tick()
         self.assertFalse(self.win.is_modified)
+
+    def _autosave_with_sidecar_blocked(self) -> Path:
+        path = self.load(meta=None)
+        self.win.entries[0].text = "Changed"
+        self.win.is_modified = True
+        jte.meta_path_for(path).mkdir()
+        self.win._autosave_tick()
+        return path
+
+    def test_autosave_sidecar_failure_keeps_the_file_modified(self):
+        self._autosave_with_sidecar_blocked()
+        self.assertTrue(self.win.is_modified)
+
+    def test_autosave_sidecar_failure_still_saves_an_intact_language_file(self):
+        path = self._autosave_with_sidecar_blocked()
+        cs.assert_json_intact(self, path, NAMES)
 
 
 if __name__ == "__main__":

@@ -266,5 +266,119 @@ class SidecarPathTests(unittest.TestCase):
         self.assertEqual(jte.read_file_header(folder / "es.json").version, "3.1.4")
 
 
+def _pair(pairs, meta=None, name="es"):
+    return cs.write_pair(cs.temp_dir(), name, pairs, meta=meta)
+
+
+class LoadTests(unittest.TestCase):
+    def test_without_a_sidecar_every_entry_is_new(self):
+        loaded = jte.load_translation_file(_pair(PAIRS))
+        self.assertEqual({e.status for e in loaded.entries}, {"New"})
+
+    def test_sidecar_metadata_is_applied(self):
+        loaded = jte.load_translation_file(_pair(PAIRS, {"Save": ("Review", "Jo", ISO)}))
+        self.assertEqual(loaded.entries[0].status, "Review")
+
+    def test_positions_count_from_one(self):
+        loaded = jte.load_translation_file(_pair(PAIRS))
+        self.assertEqual([e.position for e in loaded.entries], [1, 2, 3])
+
+    def test_header_comes_from_the_sidecar(self):
+        loaded = jte.load_translation_file(_pair(PAIRS, {}))
+        self.assertEqual(loaded.header.version, "1.0.0")
+
+    def test_damaged_sidecar_is_kept_aside(self):
+        path = _pair(PAIRS)
+        cs.write_exact(jte.meta_path_for(path), b"{")
+        jte.load_translation_file(path)
+        self.assertEqual(len(list(path.parent.glob("es.json.meta.corrupt-*"))), 1)
+
+    def test_damaged_sidecar_gives_an_error_notice(self):
+        path = _pair(PAIRS)
+        cs.write_exact(jte.meta_path_for(path), b"{")
+        self.assertEqual(jte.load_translation_file(path).notices[0][1], "error")
+
+    def test_damaged_sidecar_stays_put_when_not_keeping(self):
+        path = _pair(PAIRS)
+        cs.write_exact(jte.meta_path_for(path), b"{")
+        jte.load_translation_file(path, keep_damaged=False)
+        self.assertTrue(jte.meta_path_for(path).exists())
+
+    def test_unreadable_sidecar_blocks_its_overwrite(self):
+        path = _pair(PAIRS)
+        jte.meta_path_for(path).mkdir()   # reading a folder raises OSError
+        self.assertTrue(jte.load_translation_file(path).meta_blocked)
+
+    def test_round_trip_flag(self):
+        cases = {"canonical": (cs.json_doc(PAIRS), True),
+                 "no space after colons": (b'{\n "a":"A"\n}\n', False)}
+        for label, (data, expected) in cases.items():
+            with self.subTest(label):
+                path = cs.write_exact(cs.temp_dir() / "es.json", data)
+                self.assertEqual(jte.load_translation_file(path).round_trips, expected)
+
+    def test_refused_file_raises(self):
+        path = cs.write_exact(cs.temp_dir() / "es.json", b'{"a": 1}')
+        with self.assertRaises(jte.JsonFormatError):
+            jte.load_translation_file(path)
+
+
+class SaveTests(unittest.TestCase):
+    def _loaded(self, meta=None):
+        path = _pair(PAIRS, meta)
+        return path, jte.load_translation_file(path)
+
+    def test_saved_language_file_is_intact(self):
+        path, loaded = self._loaded()
+        loaded.entries[0].text = "Guardar ya"
+        jte.save_translation_file(path, loaded.entries, loaded.style, loaded.header)
+        cs.assert_json_intact(self, path, [k for k, _v in PAIRS])
+
+    def test_saved_sidecar_holds_the_metadata(self):
+        path, loaded = self._loaded()
+        loaded.entries[0].status = "Complete"
+        jte.save_translation_file(path, loaded.entries, loaded.style, loaded.header)
+        self.assertEqual(json.loads(jte.meta_path_for(path).read_bytes())["entries"]["Save"]["status"],
+                         "Complete")
+
+    def test_write_meta_false_leaves_the_sidecar_alone(self):
+        path, loaded = self._loaded({"Save": ("Review", "Jo", ISO)})
+        before = jte.meta_path_for(path).read_bytes()
+        loaded.entries[0].status = "Complete"
+        jte.save_translation_file(path, loaded.entries, loaded.style, loaded.header, write_meta=False)
+        self.assertEqual(jte.meta_path_for(path).read_bytes(), before)
+
+    def test_sidecar_failure_raises_metadata_write_error(self):
+        path, loaded = self._loaded()
+        jte.meta_path_for(path).mkdir()
+        with self.assertRaises(jte.MetadataWriteError):
+            jte.save_translation_file(path, loaded.entries, loaded.style, loaded.header)
+
+    def test_sidecar_failure_still_writes_the_language_file(self):
+        path, loaded = self._loaded()
+        jte.meta_path_for(path).mkdir()
+        loaded.entries[0].text = "Guardar ya"
+        try:
+            jte.save_translation_file(path, loaded.entries, loaded.style, loaded.header)
+        except jte.MetadataWriteError:
+            pass
+        self.assertIn("Guardar ya".encode("utf-8"), path.read_bytes())
+
+    def test_failed_language_write_raises(self):
+        path = cs.temp_dir() / "missing folder" / "es.json"
+        with self.assertRaises(OSError):
+            jte.save_translation_file(path, [cs.bare_entry("a")], jte.DEFAULT_JSON_STYLE,
+                                      jte.FileHeader())
+
+    def test_failed_language_write_writes_no_sidecar(self):
+        path = cs.temp_dir() / "missing folder" / "es.json"
+        try:
+            jte.save_translation_file(path, [cs.bare_entry("a")], jte.DEFAULT_JSON_STYLE,
+                                      jte.FileHeader())
+        except OSError:
+            pass
+        self.assertFalse(jte.meta_path_for(path).exists())
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))

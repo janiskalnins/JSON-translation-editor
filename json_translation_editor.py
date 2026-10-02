@@ -25,7 +25,7 @@ import zipfile
 import zlib
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, date
 from pathlib import Path
 from typing import Callable, Optional, List, Tuple, Dict, Deque
@@ -260,13 +260,12 @@ HEADERS = ["#", "Source Text", "Translated Text", "Status", "Translator", "Date"
 
 @dataclass
 class StringEntry:
-    name: str          # source text (name attribute)
+    name: str          # source text (the JSON key)
     translator: str
     status: str        # New / Review / Complete
-    modify_date: str   # format follows system regional short-date setting
-    istablet: str      # "true" / "false"
-    text: str          # translated text
-    seg_idx: int = 0   # position in segments list (for saving)
+    modify_date: str   # shown and edited in the system short-date format; ISO in the sidecar
+    text: str          # translated text (the JSON value)
+    position: int = 0  # 1-based place in the file when it was loaded; the # column
 
     def clone(self) -> "StringEntry":
         return deepcopy(self)
@@ -279,34 +278,6 @@ class GlossaryEntry:
     term:        str
     translation: str
     note:        str = ""
-
-
-def normalize_entry_dates(entries: List[StringEntry]) -> Tuple[int, List[str]]:
-    """Rewrite each entry's modify_date to the canonical DATE_FMT string in
-    place, using parse_date()'s locale-aware, punctuation-tolerant parsing.
-
-    Entries with an empty modify_date are skipped -- no date was ever
-    recorded, so there's nothing to normalize and nothing to flag.
-
-    Returns (normalized_count, unrecognized_raw_values): how many entries
-    were actually rewritten, and the raw modify_date strings that couldn't
-    be parsed at all (left unchanged).
-    """
-    normalized = 0
-    unrecognized: List[str] = []
-    for entry in entries:
-        raw = entry.modify_date
-        if not raw:
-            continue
-        parsed = parse_date(raw)
-        if parsed is None:
-            unrecognized.append(raw)
-            continue
-        canonical = format_date_for_storage(parsed)
-        if canonical != raw:
-            entry.modify_date = canonical
-            normalized += 1
-    return normalized, unrecognized
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1218,195 +1189,14 @@ class Settings:
 
 
 # ══════════════════════════════════════════════════════════════
-#  XML FILE PARSER / SERIALIZER
-# ══════════════════════════════════════════════════════════════
-
-# A <string> start tag up to, not including, its closing '>' or '/>'. Quote-aware: a raw '>' is
-# legal inside an attribute value and must not end the tag (the technique of _ROOT_TAG_RE).
-_START_TAG_PATTERN = r'<string\b(?:[^>"/]|"[^"]*"|/(?!>))*'
-_START_TAG_RE = re.compile(_START_TAG_PATTERN)
-# One row: a self-closing <string .../>, or <string ...>text</string>.
-_SPLIT_RE = re.compile(rf'({_START_TAG_PATTERN}(?:/>|>[\s\S]*?</string>))')
-# (?<=\s): an attribute must follow whitespace, so data-name="..." is not read as name.
-_ATTR_RE = {
-    "name":       re.compile(r'(?<=\s)name="([^"]*)"'),
-    "translator": re.compile(r'(?<=\s)translator="([^"]*)"'),
-    "status":     re.compile(r'(?<=\s)status="([^"]*)"'),
-    "modifyDate": re.compile(r'(?<=\s)modifyDate="([^"]*)"'),
-    "istablet":   re.compile(r'(?<=\s)istablet="([^"]*)"'),
-}
-# What parse_file() reads for a missing attribute.
-_ATTR_PARSE_DEFAULTS = {"translator": "", "status": "New", "modifyDate": "", "istablet": "false"}
-_TEXT_RE = re.compile(rf'{_START_TAG_PATTERN}>([\s\S]*?)</string>')
-
-
-def _start_tag(raw: str) -> str:
-    return raw[:_START_TAG_RE.match(raw).end()]
-
-
-def _get_attr(raw: str, key: str, default: str = "") -> str:
-    m = _ATTR_RE[key].search(_start_tag(raw))
-    return html.unescape(m.group(1)).replace("\r\n", "\n") if m else default
-
-
-_CDATA_RE = re.compile(r'<!\[CDATA\[([\s\S]*?)\]\]>')
-
-
-def _get_text(raw: str) -> str:
-    """The row's text: entities unescaped, CDATA sections read literally, CRLF read as LF."""
-    m = _TEXT_RE.match(raw)
-    if not m:
-        return ""
-    parts = _CDATA_RE.split(m.group(1))   # odd indices hold CDATA contents
-    text = "".join(part if i % 2 else html.unescape(part) for i, part in enumerate(parts))
-    return text.replace("\r\n", "\n")
-
-
-_CULTURE_RE          = re.compile(r'Culture="([^"]+)"')
-_DISPLAY_LANGUAGE_RE = re.compile(r'DisplayLanguage="([^"]+)"')
-_VERSION_RE          = re.compile(r'Version="([^"]+)"')
-
-
-def parse_xml_header(path: Path) -> Tuple[str, str, str]:
-    """
-    Returns (culture, display_language, version) read from the first 512
-    characters of *path*'s XML header -- the same attributes parse_file()
-    extracts, without the full segment/entry parse. Used wherever only the
-    header metadata is needed (e.g. backup manifests) for a file that isn't
-    necessarily the one currently open in the UI.
-
-    Returns ("", "", "") on any read/decode error rather than raising --
-    header metadata is always best-effort, never blocking.
-    """
-    try:
-        content = path.read_text(encoding="utf-8")
-    except Exception:
-        return "", "", ""
-    header = content[:512]
-    m       = _CULTURE_RE.search(header)
-    culture = m.group(1) if m else ""
-    # Unescaped because build_header_xml() escapes: a name saved as "R&amp;D" must read back as "R&D".
-    m_dl             = _DISPLAY_LANGUAGE_RE.search(header)
-    display_language = html.unescape(m_dl.group(1)) if m_dl else ""
-    m_ver   = _VERSION_RE.search(header)
-    version = html.unescape(m_ver.group(1)) if m_ver else ""
-    return culture, display_language, version
-
-
-def _file_label(name: str, version: str) -> str:
-    """File name plus header version for info-bar messages. A missing version is named, since
-    the file's backups then go under the plain, unversioned key."""
-    return f"{name}  v{version}" if version else f"{name}  (no version)"
-
-
-def _entry_from_segment(seg: str, seg_idx: int) -> StringEntry:
-    """The entry a <string> segment holds, with parse_file()'s defaults for missing attributes."""
-    return StringEntry(
-        name        = _get_attr(seg, "name"),
-        translator  = _get_attr(seg, "translator", _ATTR_PARSE_DEFAULTS["translator"]),
-        status      = _get_attr(seg, "status", _ATTR_PARSE_DEFAULTS["status"]),
-        modify_date = _get_attr(seg, "modifyDate", _ATTR_PARSE_DEFAULTS["modifyDate"]),
-        istablet    = _get_attr(seg, "istablet", _ATTR_PARSE_DEFAULTS["istablet"]),
-        text        = _get_text(seg),
-        seg_idx     = seg_idx,
-    )
-
-
-def parse_file(path: Path) -> Tuple[List, List[StringEntry], str, str, str]:
-    """
-    Returns (segments, entries, culture, display_language, version).
-    segments:         list where every other item (odd index) is a raw XML string-element snippet.
-    entries:          list of StringEntry with seg_idx pointing into segments.
-    culture:          BCP-47 culture code from the XML header (e.g. "lv-LV"), or "".
-    display_language: human-readable language name from DisplayLanguage attribute, or "".
-    version:          Version attribute from the XML header, or "".
-    """
-    # Bytes, not read_text(): no newline translation, so the segments hold the file's own line
-    # endings (and BOM) and an unchanged save writes them back as they were.
-    content = path.read_bytes().decode("utf-8")
-    culture, display_language, version = parse_xml_header(path)
-
-    segments = _SPLIT_RE.split(content)  # [text, string_tag, text, string_tag, ...]
-    entries = [_entry_from_segment(seg, i) for i, seg in enumerate(segments) if i % 2 == 1]
-
-    return segments, entries, culture, display_language, version
-
-
-def _escape_attr_value(value: str) -> str:
-    """Escape a value for use inside a double-quoted XML attribute.
-
-    Do NOT escape ' to &#x27; — it is unnecessary inside double-quoted
-    attributes and makes values like "O'Brien" unnecessarily verbose.
-    html.escape(quote=True) would escape both " and ', so the four required
-    substitutions are done explicitly instead.
-    """
-    return (value
-            .replace("&",  "&amp;")
-            .replace("<",  "&lt;")
-            .replace(">",  "&gt;")
-            .replace('"', "&quot;"))
-
-
-def _set_attr(tag: str, attr: str, value: str) -> str:
-    """Set *attr* in the start tag *tag*: replaced in place, or appended when missing. A missing
-    attribute whose value is what parse_file() reads for it stays missing."""
-    new_attr = f'{attr}="{_escape_attr_value(value)}"'
-    if _ATTR_RE[attr].search(tag):
-        return _ATTR_RE[attr].sub(lambda _m: new_attr, tag, count=1)
-    if value == _ATTR_PARSE_DEFAULTS[attr]:
-        return tag
-    body = tag.rstrip()
-    return f"{body} {new_attr}{tag[len(body):]}"
-
-
-def build_string_xml(entry: StringEntry, original_seg: str, newline: str = "\n") -> str:
-    """Rebuild a <string ...> segment with the entry's attribute values and text, keeping the
-    original tag's attribute order and spacing. A self-closing row stays self-closing while its
-    text is empty. Newlines in the text are written as *newline*, the file's own line ending."""
-    tag = _start_tag(original_seg)
-    for attr, value in (("translator", entry.translator), ("status", entry.status),
-                        ("modifyDate", entry.modify_date), ("istablet", entry.istablet)):
-        tag = _set_attr(tag, attr, value)
-    # quote=False: inside element text only &, < and > need escaping.
-    escaped_text = html.escape(entry.text, quote=False).replace("\n", newline)
-    if original_seg.endswith("/>"):
-        if not entry.text:
-            return tag + "/>"
-        tag = tag.rstrip()
-    return f"{tag}>{escaped_text}</string>"
-
-
-def _file_newline(segments: List[str]) -> str:
-    """The file's line ending, taken from the text between rows: CRLF if it holds one, else LF."""
-    return "\r\n" if any("\r\n" in seg for seg in segments[0::2]) else "\n"
-
-
-def save_file(path: Path, segments: List[str], entries: List[StringEntry]):
-    """Rebuild the file from segments. A row whose values are unchanged keeps its original bytes
-    (legacy escapes and CDATA included), so a Save diff shows only the rows really edited; rebuilt
-    rows use the file's own line ending. Written as bytes, so nothing is translated. Written
-    atomically (temp file + os.replace()): a failed write leaves the original file as it was and
-    raises."""
-    newline  = _file_newline(segments)
-    new_segs = list(segments)
-    for entry in entries:
-        original = segments[entry.seg_idx]
-        if _entry_from_segment(original, entry.seg_idx) != entry:
-            new_segs[entry.seg_idx] = build_string_xml(entry, original, newline)
-    _atomic_write_bytes(path, "".join(new_segs).encode("utf-8"))
-
-
-# ══════════════════════════════════════════════════════════════
 #  FILE PROPERTIES
 # ══════════════════════════════════════════════════════════════
 
-# Quote-aware: a raw '>' is legal inside an attribute value and must not end the tag.
-_ROOT_TAG_RE = re.compile(r'<TRNExportImportModel\b(?:[^>"]|"[^"]*")*>')
-# Each part as the Version attribute holds it today (e.g. 4.1.1140); File -> Properties edits them
-# in spin boxes limited to the same digit counts.
+# Each part as the version has always held it (e.g. 4.1.1140); File -> Properties edits them in
+# spin boxes limited to the same digit counts.
 _VERSION_PARTS_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{1,5})$")
 VERSION_PART_MAXIMA = (99, 99, 99999)
-DISPLAY_LANGUAGE_MAX_LEN = 64   # parse_xml_header() reads only the first 512 characters
+DISPLAY_LANGUAGE_MAX_LEN = 64   # keeps the info bar and title readable
 
 
 def parse_version_parts(text: str) -> Optional[Tuple[int, int, int]]:
@@ -1419,28 +1209,10 @@ def format_version(parts: Tuple[int, int, int]) -> str:
     return ".".join(str(p) for p in parts)
 
 
-def build_header_xml(header_seg: str, display_language: Optional[str],
-                     version: Optional[str]) -> str:
-    """Set DisplayLanguage and/or Version on the root <TRNExportImportModel ...> tag of
-    *header_seg* (segments[0]). A value of None leaves that attribute byte-for-byte alone; an
-    existing attribute is replaced in place, a missing one is appended to the end of the tag.
-    Raises ValueError when the root tag is not there."""
-    m = _ROOT_TAG_RE.search(header_seg)
-    if not m:
-        raise ValueError("root <TRNExportImportModel> tag not found")
-    tag = m.group(0)
-    for attr, value in (("DisplayLanguage", display_language), ("Version", version)):
-        if value is None:
-            continue
-        new_attr = f'{attr}="{_escape_attr_value(value)}"'
-        # The lookbehind keeps a prefixed attribute such as xsi:Version from matching.
-        pattern = re.compile(rf'(?<=\s){attr}="[^"]*"')
-        if pattern.search(tag):
-            tag = pattern.sub(lambda _m: new_attr, tag, count=1)
-        else:
-            end = 2 if tag.endswith("/>") else 1
-            tag = f"{tag[:-end].rstrip()} {new_attr}{tag[-end:]}"
-    return header_seg[:m.start()] + tag + header_seg[m.end():]
+def _file_label(name: str, version: str) -> str:
+    """File name plus header version for info-bar messages. A missing version is named, since
+    the file's backups then go under the plain, unversioned key."""
+    return f"{name}  v{version}" if version else f"{name}  (no version)"
 
 
 def describe_culture(culture: str) -> str:
@@ -1557,7 +1329,7 @@ _GUESSABLE_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})*$")
 
 @dataclass
 class FileHeader:
-    """What the XML header held: the language code ("" = guess it from the file name), its
+    """The sidecar's header: the language code ("" = guess it from the file name), its
     human-readable name and the file's version."""
     language: str = ""
     language_name: str = ""
@@ -1679,6 +1451,103 @@ def read_file_header(json_path: Path) -> FileHeader:
         return header
     except (OSError, SidecarError):
         return FileHeader()
+
+
+def entries_from_pairs(pairs: List[Tuple[str, str]]) -> List[StringEntry]:
+    """Fresh entries for a language file's pairs: New, no translator, no date."""
+    return [StringEntry(name=key, translator="", status="New", modify_date="", text=value,
+                        position=i) for i, (key, value) in enumerate(pairs, start=1)]
+
+
+def dump_json(entries: List[StringEntry], style: JsonStyle) -> bytes:
+    return dump_json_pairs([(e.name, e.text) for e in entries], style)
+
+
+@dataclass
+class LoadedFile:
+    entries: List[StringEntry]
+    style: JsonStyle
+    round_trips: bool                 # writing it back unchanged reproduces its bytes
+    header: FileHeader
+    notices: List[Tuple[str, str]]    # (text, level) for the info bar, in order
+    meta_blocked: bool                # the sidecar exists but could not be read: never overwrite it
+
+
+class MetadataWriteError(Exception):
+    """The language file was saved but its sidecar was not."""
+
+
+def _keep_damaged_sidecar(meta_path: Path) -> Optional[Path]:
+    """Move a damaged sidecar aside so the next save cannot overwrite it; copy it when another
+    process holds it (os.replace fails on a lock, a copy needs only read access). None if both fail."""
+    aside = meta_path.with_name(f"{meta_path.name}.corrupt-{datetime.now():%Y-%m-%d_%H-%M-%S}")
+    try:
+        os.replace(meta_path, aside)
+        return aside
+    except OSError:
+        try:
+            shutil.copy2(meta_path, aside)
+            return aside
+        except OSError as e:
+            _log_error(f"keeping damaged sidecar {meta_path}", e)
+            return None
+
+
+def load_translation_file(path: Path, keep_damaged: bool = True) -> LoadedFile:
+    """Read a language file and its sidecar. Raises JsonFormatError or OSError for the language
+    file itself; a missing sidecar means everything is New, a damaged one is moved aside (unless
+    *keep_damaged* is False, as for a file merged from) and reported in the notices."""
+    raw = path.read_bytes()
+    pairs, style = parse_json_bytes(raw)
+    entries = entries_from_pairs(pairs)
+    round_trips = dump_json(entries, style) == raw
+    header = FileHeader()
+    notices: List[Tuple[str, str]] = []
+    blocked = False
+    meta_path = meta_path_for(path)
+    try:
+        meta_raw: Optional[bytes] = meta_path.read_bytes()
+    except FileNotFoundError:
+        meta_raw = None
+    except OSError as e:
+        _log_error(f"reading {meta_path}", e)
+        notices.append((f"Metadata: {meta_path.name} could not be read — statuses shown as New, "
+                        "and it will not be overwritten", "error"))
+        meta_raw, blocked = None, True
+    if meta_raw is not None:
+        try:
+            header, meta = parse_sidecar_bytes(meta_raw)
+            notices.extend((w, "warning") for w in apply_sidecar_meta(entries, meta))
+        except SidecarError as e:
+            _log_error(f"damaged sidecar {meta_path}", e)
+            if not keep_damaged:
+                notices.append((f"Metadata: {meta_path.name} is damaged — statuses shown as New",
+                                "error"))
+            else:
+                aside = _keep_damaged_sidecar(meta_path)
+                if aside is None:
+                    blocked = True
+                    notices.append((f"Metadata: {meta_path.name} is damaged and could not be kept "
+                                    "aside — statuses shown as New, and it will not be overwritten",
+                                    "error"))
+                else:
+                    notices.append((f"Metadata: {meta_path.name} was damaged (kept as {aside.name}) "
+                                    "— statuses shown as New", "error"))
+    return LoadedFile(entries, style, round_trips, header, notices, blocked)
+
+
+def save_translation_file(path: Path, entries: List[StringEntry], style: JsonStyle,
+                          header: FileHeader, write_meta: bool = True) -> None:
+    """Write the language file, then its sidecar, each atomically. A failed language-file write
+    raises before the sidecar is touched, so the pair never splits that way; a failed sidecar write
+    raises MetadataWriteError after the language file is already saved."""
+    _atomic_write_bytes(path, dump_json(entries, style))
+    if not write_meta:
+        return
+    try:
+        _atomic_write_bytes(meta_path_for(path), build_sidecar_bytes(entries, header))
+    except Exception as e:
+        raise MetadataWriteError(str(e)) from e
 
 
 @dataclass
@@ -1893,69 +1762,6 @@ def _blend_hex(top_hex: str, bottom_hex: str, alpha: float) -> str:
                   round(top.blue() * alpha + bottom.blue() * (1 - alpha))).name()
 
 
-# The line break and indentation in front of a new row go into the text segment before it, so a
-# row segment always starts with '<string', like the ones parse_file() produces.
-_NEW_STRING_INDENT = "    "
-_NEW_STRING_TEMPLATE = (
-    '<string name="{name}" translator="" status="New" '
-    'modifyDate="" istablet="false"></string>'
-)
-
-
-def insert_additions(
-    segments: List[str],
-    entries: List[StringEntry],
-    additions: List[StringEntry],
-) -> Tuple[List[str], List[StringEntry]]:
-    """Append `additions` as new <string> segments just before </resources>.
-
-    Returns new (segments, entries) lists — the inputs are not mutated,
-    except that each entry in `additions` has its .seg_idx updated in place
-    to point at its new position. A filler segment holding the line break and
-    indentation is inserted before each new <string> segment, so seg_idx stays
-    odd and the row starts with '<string', matching the even/odd
-    alternation parse_file produces (COL_IDX depends on this for stable,
-    non-colliding row numbers).
-    Raises ValueError if the file's closing </resources> tag can't be found.
-    """
-    if not additions:
-        return list(segments), list(entries)
-
-    tail = segments[-1]
-    marker = "</resources>"
-    marker_idx = tail.find(marker)
-    if marker_idx == -1:
-        raise ValueError("Could not find </resources> to insert new strings before")
-
-    prefix, suffix = tail[:marker_idx], tail[marker_idx:]
-    newline = _file_newline(segments)
-
-    new_segments = list(segments[:-1])
-    new_entries = list(entries)
-    for entry in additions:
-        template = _NEW_STRING_TEMPLATE.format(name=_escape_attr_value(entry.name))
-        raw_segment = build_string_xml(entry, template, newline)
-        new_segments.append(newline + _NEW_STRING_INDENT)
-        new_segments.append(raw_segment)
-        entry.seg_idx = len(new_segments) - 1
-        new_entries.append(entry)
-    new_segments.append(prefix + suffix)
-
-    return new_segments, new_entries
-
-
-# The line break and indentation in front of a row, at the end of the text before it.
-_ROW_LEAD_RE = re.compile(r'\r?\n[ \t]*\Z')
-
-
-def _remove_entry_segment(segments: List[str], seg_idx: int) -> None:
-    """Remove the row at *seg_idx* from *segments* in place: blank it (seg_idx stays odd and no
-    other entry's seg_idx moves) and drop the line break and indentation it sat on from the end of
-    the text before it, so no blank line is left where the row was."""
-    segments[seg_idx] = ""
-    segments[seg_idx - 1] = _ROW_LEAD_RE.sub("", segments[seg_idx - 1])
-
-
 # ══════════════════════════════════════════════════════════════
 #  GLOSSARY FILE I/O
 # ══════════════════════════════════════════════════════════════
@@ -1967,12 +1773,12 @@ _GLOSSARY_HEADER_ALIASES = {
 }
 
 
-def glossary_path_for(xml_path: Path) -> Path:
-    """Return the glossary CSV path paired with an XML translation file.
+def glossary_path_for(json_path: Path) -> Path:
+    """Return the glossary CSV path paired with a JSON language file.
 
-    e.g. Latvian.xml -> Latvian.glossary.csv, in the same directory.
+    e.g. es.json -> es.glossary.csv, in the same directory.
     """
-    return xml_path.parent / f"{xml_path.stem}.glossary.csv"
+    return json_path.parent / f"{json_path.stem}.glossary.csv"
 
 
 def _sniff_glossary_delimiter(sample: str) -> str:
@@ -2146,7 +1952,7 @@ class TranslationModel(QAbstractTableModel):
         entry = self._vis[row]
 
         if role == Qt.DisplayRole:
-            if col == COL_IDX:    return str((entry.seg_idx + 1) // 2)
+            if col == COL_IDX:    return str(entry.position)
             if col == COL_SRC:    return entry.name
             if col == COL_TRANS:  return entry.text
             if col == COL_STATUS: return entry.status
@@ -4326,8 +4132,8 @@ class FontSettingsDialog(QDialog):
 
 
 class FilePropertiesDialog(QDialog):
-    """File -> Properties…: edit the root tag's DisplayLanguage and Version and show read-only facts
-    about the open file. Culture is shown but never edited. A form dialog (no bands), same
+    """File -> Properties…: edit the sidecar header's language name and version and show read-only
+    facts about the open file. Culture is shown but never edited. A form dialog (no bands), same
     __init__ -> _build_ui() -> _load_values() shape as the other settings dialogs; the caller reads
     display_language()/version_parts() after exec() and applies them."""
 
@@ -4369,7 +4175,7 @@ class FilePropertiesDialog(QDialog):
 
         self._lang_edit = QLineEdit()
         self._lang_edit.setMaxLength(DISPLAY_LANGUAGE_MAX_LEN)
-        self._lang_edit.setPlaceholderText("e.g. Latviešu")
+        self._lang_edit.setPlaceholderText("e.g. Español")
         self._lang_edit.textChanged.connect(self._validate)
         form.addRow("Language name:", self._lang_edit)
 
@@ -5529,7 +5335,7 @@ class EditDialog(QDialog):
         self._original_status     = self.status_combo.currentText()
         self._original_translator = self.user_edit.text()
         # Normalise to system format so comparison with new_date is consistent.
-        # Legacy XML dates (dd.mm.yyyy) are converted to the current DATE_FMT.
+        # A date held in another format is converted to the current DATE_FMT.
         _parsed_orig = parse_date(src_entry.modify_date)
         self._original_date = (
             format_date_for_storage(_parsed_orig)
@@ -5653,7 +5459,7 @@ class EditDialog(QDialog):
         """Delete the entry currently open for editing, after confirmation.
 
         The actual removal is delegated to MainWindow (self._mw) -- this
-        dialog doesn't own self.entries/self.segments. After a confirmed
+        dialog doesn't own self.entries. After a confirmed
         delete, loads whichever entry now occupies the same visible
         position (like Next), or closes if none remain.
         """
@@ -6082,7 +5888,7 @@ def _write_backup_slot(
                 info["glossary_md5_checksum"] = glossary_md5
                 glossary_backed_up = True
             except Exception:
-                pass  # glossary backup is best-effort; never blocks the XML backup
+                pass  # glossary backup is best-effort; never blocks the language file's backup
         info["glossary_backed_up"] = glossary_backed_up
 
         _atomic_write_bytes(
@@ -6242,7 +6048,10 @@ class BackupThread(QThread):
             # interval unconditionally.
             throttle_enabled = min_interval > 0 and trigger == "file_open"
 
-            culture, display_language, version = parse_xml_header(source_path)
+            header           = read_file_header(source_path)
+            culture          = effective_language(header, source_path)
+            display_language = header.language_name
+            version          = header.version
             sanitized_version = _sanitize_path_component(version) if version else ""
             backup_key = (f"{source_path.stem}__v{sanitized_version}"
                           if sanitized_version else source_path.stem)
@@ -6905,7 +6714,7 @@ class AutosaveBackupDialog(QDialog):
             "is never skipped.")
         bk_lay.addWidget(self._bk_min_interval_spin, 2, 1)
         self._bk_compress = QCheckBox(
-            "Compress backups (.xml.gz)  — saves ~70% disk space")
+            "Compress backups (.json.gz)  — saves ~70% disk space")
         self._bk_compress.setProperty("filterChk", True)
         bk_lay.addWidget(self._bk_compress, 3, 0, 1, 3)
         bk_lay.addWidget(QLabel("Backup location:"), 4, 0)
@@ -6993,7 +6802,7 @@ class AutosaveBackupDialog(QDialog):
 # ══════════════════════════════════════════════════════════════
 
 class GlossaryDialog(QDialog):
-    """Table editor for the glossary CSV paired with the current XML file."""
+    """Table editor for the glossary CSV paired with the current language file."""
 
     def __init__(self, mw: "MainWindow", parent=None):
         super().__init__(parent)
@@ -8431,7 +8240,7 @@ class WelcomeScreen(QWidget):
         version_lbl.setAlignment(Qt.AlignCenter)
         outer.addWidget(version_lbl)
 
-        tagline_lbl = QLabel("A structured editor for XML translation files")
+        tagline_lbl = QLabel("A structured editor for JSON translation files")
         tagline_lbl.setObjectName("welcomeTaglineLbl")
         tagline_lbl.setAlignment(Qt.AlignCenter)
         outer.addWidget(tagline_lbl)
@@ -8444,7 +8253,7 @@ class WelcomeScreen(QWidget):
         outer.addWidget(open_btn, alignment=Qt.AlignHCenter)
         outer.addSpacing(8)
 
-        hint_lbl = QLabel("or drop an .xml file anywhere in the main window area")
+        hint_lbl = QLabel("or drop a .json file anywhere in the main window area")
         hint_lbl.setObjectName("welcomeHintLbl")
         hint_lbl.setAlignment(Qt.AlignCenter)
         outer.addWidget(hint_lbl)
@@ -8495,7 +8304,6 @@ class MainWindow(QMainWindow):
         # After Settings() so a damaged file has already been recovered and
         # what gets archived is what is actually in use.
         backup_settings_daily(SETTINGS_FILE)
-        self.segments:  List[str]         = []
         self.entries:   List[StringEntry] = []
         self.model      = TranslationModel(
             theme_fn=lambda: self.settings.get("theme", "dark")
@@ -8508,9 +8316,10 @@ class MainWindow(QMainWindow):
         self._backup_threads: List["BackupThread"] = []
         self._translation_threads: List["TranslationThread"] = []
         self._is_closing = False
-        self.target_culture:    str = ""   # BCP-47 code from XML header, e.g. "lv-LV"
-        self.display_language:  str = ""   # Human-readable name from DisplayLanguage attribute
-        self.xml_version:       str = ""   # Version attribute from XML header
+        self.header:     FileHeader = FileHeader()          # the open file's sidecar header
+        self.json_style: JsonStyle  = DEFAULT_JSON_STYLE    # layout to write the open file back in
+        self.round_trips: bool      = True                  # Task 7 asks before reformatting when False
+        self._meta_blocked: bool    = False                 # its sidecar could not be read: leave it alone
         self.glossary:               List[GlossaryEntry] = []   # parsed rows for the open file's glossary
         self.glossary_path:          Optional[Path]      = None # <stem>.glossary.csv next to current_file
         self.glossary_load_warnings: List[str]           = []   # corrections applied on the most recent load
@@ -8724,12 +8533,12 @@ class MainWindow(QMainWindow):
         if self.session_translator:
             self._show_message(f"—  Translator: {self.session_translator}  —", 4000)
         else:
-            self._show_message("Ready — open an XML translation file", 4000)
+            self._show_message("Ready — open a JSON translation file", 4000)
 
     def _update_file_meta_labels(self):
-        """Update the file metadata labels with language and version from the loaded XML."""
+        """Update the file metadata labels with language and version from the loaded file's sidecar."""
         self._sb_lang_label.setText(self.display_language or self.target_culture)
-        self._sb_ver_label.setText(f"v{self.xml_version}" if self.xml_version else "")
+        self._sb_ver_label.setText(f"v{self.file_version}" if self.file_version else "")
 
     def _build_ui(self):
         central = QWidget()
@@ -8851,7 +8660,7 @@ class MainWindow(QMainWindow):
         self._history_btn.setAutoRaise(True)
         self._history_btn.clicked.connect(self._open_message_history)
         info_bar.addWidget(self._history_btn)
-        # File metadata: language and version from loaded XML
+        # File metadata: language and version from the loaded file's sidecar
         self._sb_lang_label = QLabel("")
         info_bar.addWidget(self._sb_lang_label)
         self._sb_ver_label = QLabel("")
@@ -8863,7 +8672,7 @@ class MainWindow(QMainWindow):
 
         # File
         fm = mb.addMenu("&File")
-        self._act(fm, "Open XML…",           self._open,               "Ctrl+O")
+        self._act(fm, "Open…",               self._open,               "Ctrl+O")
         self._act(fm, "Save",                self._save,               "Ctrl+S")
         self._act(fm, "Save As…",            self._save_as,            "Ctrl+Shift+S")
         self._act(fm, "Close File",          self._close_file,         "Ctrl+W")
@@ -8941,6 +8750,19 @@ class MainWindow(QMainWindow):
         """Return the active theme colour dict."""
         name = self.settings.get("theme", "dark")
         return THEMES.get(name, THEMES["dark"])
+
+    @property
+    def target_culture(self) -> str:
+        """The language to translate into: the sidecar's code, else the file name's."""
+        return effective_language(self.header, self.current_file)
+
+    @property
+    def display_language(self) -> str:
+        return self.header.language_name
+
+    @property
+    def file_version(self) -> str:
+        return self.header.version
 
     def _set_theme(self, name: str):
         """Switch theme, persist it, and refresh all styles."""
@@ -9093,7 +8915,12 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            save_file(self.current_file, self.segments, self.entries)
+            self._write_files(self.current_file)
+
+        except MetadataWriteError as e:
+            _log_error(f"autosave: writing the sidecar of {self.current_file}", e)
+            self._show_message("Autosave: translations saved, metadata not — Save to retry", 6000, "error")
+            return
 
         except PermissionError as e:
             # File is locked by another process (common on Windows when the
@@ -9121,7 +8948,7 @@ class MainWindow(QMainWindow):
         self._mod_kind = "autosaved"
         self._mod_text = f"Autosaved at {ts}"
         self._update_dynamic_label()
-        self._show_message(f"Autosaved: {_file_label(self.current_file.name, self.xml_version)}  ({ts})", 4000)
+        self._show_message(f"Autosaved: {_file_label(self.current_file.name, self.file_version)}  ({ts})", 4000)
 
     def _autosave_locked(self, error: Exception):
         """Handle a failed autosave due to a locked or inaccessible file."""
@@ -9160,8 +8987,8 @@ class MainWindow(QMainWindow):
             <location_root>/JSON_Translation_file_Backups/
                 <stem>[__v<version>]/
                     2025-03-05_14-30-00/
-                        Latvian.xml.gz
-                        Latvian.glossary.csv.gz
+                        es.json.gz
+                        es.glossary.csv.gz
                         backup_info.json
 
         Each enabled location gets its own complete, independently
@@ -9291,7 +9118,7 @@ class MainWindow(QMainWindow):
 
         # Ask: overwrite at original location, or save as copy?
         ts_now    = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        orig_name = original_path.name or "restored.xml"
+        orig_name = original_path.name or "restored.json"
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Restore — Choose Destination")
@@ -9310,7 +9137,7 @@ class MainWindow(QMainWindow):
             dest_path = original_path
         elif clicked is copy_btn:
             stem = original_path.stem or "restored"
-            ext  = original_path.suffix or ".xml"
+            ext  = original_path.suffix or ".json"
             dest_path = original_path.parent / f"{stem}_restored_{ts_now}{ext}"
         else:
             return  # Cancel
@@ -9386,7 +9213,7 @@ class MainWindow(QMainWindow):
             return
 
         # Write the glossary bytes read above, if any. A glossary-restore
-        # failure never blocks or rolls back the XML restore above, which
+        # failure never blocks or rolls back the language file restore above, which
         # has already completed successfully.
         restored_glossary_to = None
         if glossary_raw_bytes is not None:
@@ -9414,7 +9241,7 @@ class MainWindow(QMainWindow):
             and dest_path.resolve() == self.current_file.resolve()
         )
         # Read from the written file, not the manifest: slots older than versioned backups have no "version".
-        restored_label = _file_label(dest_path.name, parse_xml_header(dest_path)[2])
+        restored_label = _file_label(dest_path.name, read_file_header(dest_path).version)
         if was_open:
             self._load(dest_path)
             self._show_message(f"Restored and reloaded: {restored_label}", 6000)
@@ -9442,7 +9269,7 @@ class MainWindow(QMainWindow):
             self._show_message(glossary_msg[0], 6000, glossary_msg[1])
 
     def _read_glossary_backup(self, slot_dir: Path, info: dict):
-        """Decompress and verify the glossary paired with a restored XML
+        """Decompress and verify the glossary paired with a restored language
         file, without writing anything.
 
         Split out from the writing half (_write_restored_glossary) so
@@ -9493,7 +9320,7 @@ class MainWindow(QMainWindow):
     def _write_restored_glossary(self, dest_path: Path, raw_bytes: bytes):
         """Write previously-read glossary backup bytes (from
         _read_glossary_backup) to the glossary companion of dest_path. A
-        glossary-restore failure never blocks or rolls back the XML restore
+        glossary-restore failure never blocks or rolls back the file restore
         in _do_restore(), which has already completed successfully by the
         time this runs. Any failure here is reported to the caller only via
         the return value; _do_restore_after_backup() shows it after its own
@@ -9556,13 +9383,13 @@ class MainWindow(QMainWindow):
             pass
 
     def _open_file_properties(self):
-        """Edit DisplayLanguage/Version in the root tag (File → Properties…). An in-memory edit
+        """Edit the sidecar's language name and version (File → Properties…). An in-memory edit
         like any other: nothing is written until Save."""
         if not self.current_file:
             QMessageBox.warning(self, "File Properties",
                                  "Open a file first before viewing its properties.")
             return
-        dlg = FilePropertiesDialog(self.target_culture, self.display_language, self.xml_version,
+        dlg = FilePropertiesDialog(self.target_culture, self.display_language, self.file_version,
                                    compute_file_facts(self.entries, self.current_file),
                                    self.is_modified, parent=self)
         if dlg.exec() != QDialog.Accepted:
@@ -9571,30 +9398,20 @@ class MainWindow(QMainWindow):
         parts = dlg.version_parts()
         language_changed = language != self.display_language
         # Compared as numbers, so a stored "04.1.1140" is not rewritten when nothing was changed.
-        version_changed = parts != parse_version_parts(self.xml_version)
+        version_changed = parts != parse_version_parts(self.file_version)
         if not (language_changed or version_changed):
             return
-        try:
-            self.segments[0] = build_header_xml(
-                self.segments[0],
-                language if language_changed else None,
-                format_version(parts) if version_changed else None)
-        except ValueError:
-            QMessageBox.critical(self, "File Properties",
-                                 "The file's root element could not be found, "
-                                 "so its properties were not changed.")
-            return
-        if language_changed:
-            self.display_language = language
-        if version_changed:
-            self.xml_version = format_version(parts)
+        self.header = replace(
+            self.header,
+            language_name=language if language_changed else self.header.language_name,
+            version=format_version(parts) if version_changed else self.header.version)
         self.is_modified = True
         self._update_title()
         self._update_file_meta_labels()
         self._show_message("File properties updated", 4000)
 
     def _merge_from_file(self):
-        """Reconcile the open file with a second XML file (File → Merge from File…)."""
+        """Reconcile the open file with a second language file (File → Merge from File…)."""
         if not self.current_file:
             QMessageBox.warning(self, "Merge from File",
                                  "Open a file first before merging.")
@@ -9603,17 +9420,17 @@ class MainWindow(QMainWindow):
         start = self.settings.get("last_directory") or ""
         path, _ = QFileDialog.getOpenFileName(
             self, "Select File to Merge From", start,
-            "XML Files (*.xml);;All Files (*)"
+            "JSON Files (*.json);;All Files (*)"
         )
         if not path:
             return
 
         try:
-            _, incoming_entries, incoming_culture, _, _ = parse_file(Path(path))
+            incoming = load_translation_file(Path(path), keep_damaged=False)
         except Exception as e:
             QMessageBox.critical(self, "Merge Error", f"Failed to read file:\n{e}")
             return
-        dates_normalized, dates_unrecognized = normalize_entry_dates(incoming_entries)
+        incoming_culture = effective_language(incoming.header, Path(path))
 
         if incoming_culture and self.target_culture and incoming_culture != self.target_culture:
             r = QMessageBox.warning(
@@ -9626,7 +9443,7 @@ class MainWindow(QMainWindow):
                 return
 
         try:
-            diff = compute_merge_diff(self.entries, incoming_entries)
+            diff = compute_merge_diff(self.entries, incoming.entries)
         except ValueError as e:
             QMessageBox.critical(self, "Merge Error", str(e))
             return
@@ -9645,8 +9462,9 @@ class MainWindow(QMainWindow):
             conflict_resolutions = dlg.resolved_conflicts()
             deletions_to_remove  = dlg.deletions_to_remove()
 
-        self._apply_merge_diff(diff, additions_to_add, conflict_resolutions, deletions_to_remove,
-                                dates_normalized, dates_unrecognized)
+        self._apply_merge_diff(diff, additions_to_add, conflict_resolutions, deletions_to_remove)
+        for text, level in incoming.notices:
+            self._show_message(f"Incoming file: {text}", 6000, level)
 
     def _apply_merge_diff(
         self,
@@ -9654,18 +9472,8 @@ class MainWindow(QMainWindow):
         additions_to_add: List[StringEntry],
         conflict_resolutions: List[StringEntry],
         deletions_to_remove: List[StringEntry],
-        dates_normalized: int,
-        dates_unrecognized: List[str],
     ):
-        """Apply a resolved MergeDiff into self.entries / self.segments."""
-        if additions_to_add and "</resources>" not in self.segments[-1]:
-            QMessageBox.critical(
-                self, "Merge Error",
-                "Could not find </resources> in the open file — cannot add new strings.\n"
-                "No changes were made."
-            )
-            return
-
+        """Apply a resolved MergeDiff into self.entries."""
         entries_by_name = {entry.name: entry for entry in self.entries}
         updated_count = 0
 
@@ -9692,23 +9500,15 @@ class MainWindow(QMainWindow):
             resolved_count += 1
 
         delete_names = {entry.name for entry in deletions_to_remove}
-        deleted_count = 0
+        deleted_count = sum(1 for entry in self.entries if entry.name in delete_names)
         if delete_names:
-            remaining_entries = []
-            for entry in self.entries:
-                if entry.name in delete_names:
-                    _remove_entry_segment(self.segments, entry.seg_idx)
-                    deleted_count += 1
-                else:
-                    remaining_entries.append(entry)
-            self.entries = remaining_entries
+            self.entries = [entry for entry in self.entries if entry.name not in delete_names]
 
-        added_count = 0
+        added_count = len(additions_to_add)
         if additions_to_add:
-            self.segments, self.entries = insert_additions(
-                self.segments, self.entries, additions_to_add
-            )
-            added_count = len(additions_to_add)
+            next_position = max((e.position for e in self.entries), default=0) + 1
+            self.entries = self.entries + [replace(entry, position=next_position + i)
+                                           for i, entry in enumerate(additions_to_add)]
 
         self.is_modified = True
         self.model.load(self.entries)
@@ -9720,14 +9520,6 @@ class MainWindow(QMainWindow):
             f"{resolved_count} conflict(s) resolved, {deleted_count} deleted."
         )
         self._show_message(merge_msg, 6000)
-        if dates_normalized:
-            self._show_message(f"Dates: {dates_normalized} normalized in incoming file", 6000, "warning")
-        if dates_unrecognized:
-            examples = ", ".join(repr(v) for v in dates_unrecognized[:3])
-            more = f" (+{len(dates_unrecognized) - 3} more)" if len(dates_unrecognized) > 3 else ""
-            self._show_message(
-                f"Dates: {len(dates_unrecognized)} unrecognized in incoming file (e.g. {examples}{more})",
-                6000, "warning")
 
     def _open_shortcuts(self):
         """Open the keyboard shortcuts configuration dialog."""
@@ -9742,7 +9534,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_glossary(self):
-        """Open the glossary editor for the currently loaded XML file."""
+        """Open the glossary editor for the currently loaded language file."""
         if not self.current_file:
             self._show_message("Open a file first to edit its glossary.", 4000, "warning")
             return
@@ -9821,23 +9613,24 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard(): return
         start = self.settings.get("last_directory") or ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open XML Translation File", start,
-            "XML Files (*.xml);;All Files (*)"
+            self, "Open JSON Translation File", start,
+            "JSON Files (*.json);;All Files (*)"
         )
         if path:
             self._load(Path(path))
 
     def _load(self, path: Path):
         try:
-            self.segments, self.entries, self.target_culture, \
-                self.display_language, self.xml_version = parse_file(path)
-            dates_normalized, dates_unrecognized = normalize_entry_dates(self.entries)
-            self.model.load(self.entries)
-            self._apply_filters()
+            loaded = load_translation_file(path)
+            self.entries      = loaded.entries
+            self.json_style   = loaded.style
+            self.round_trips  = loaded.round_trips
+            self.header       = loaded.header
+            self._meta_blocked = loaded.meta_blocked
             self.current_file = path
             self.is_modified  = False
-            if dates_normalized:
-                self.is_modified = True
+            self.model.load(self.entries)
+            self._apply_filters()
             self.glossary_path = glossary_path_for(path)
             try:
                 self.glossary, self.glossary_load_warnings = parse_glossary(self.glossary_path)
@@ -9852,17 +9645,11 @@ class MainWindow(QMainWindow):
             self._update_file_meta_labels()
             self._main_stack.setCurrentIndex(1)   # switch from Welcome to editor page
             self._show_message(
-                f"Loaded: {_file_label(path.name, self.xml_version)}  ({len(self.entries)} strings)", 5000)
+                f"Loaded: {_file_label(path.name, self.file_version)}  ({len(self.entries)} strings)", 5000)
             if self.glossary_load_warnings:
                 self._show_message("Glossary: " + "; ".join(self.glossary_load_warnings), 5000, "warning")
-            if dates_normalized:
-                # A warning: the dates were rewritten in memory and the file is now marked modified.
-                self._show_message(f"Dates: {dates_normalized} normalized", 5000, "warning")
-            if dates_unrecognized:
-                examples = ", ".join(repr(v) for v in dates_unrecognized[:3])
-                more = f" (+{len(dates_unrecognized) - 3} more)" if len(dates_unrecognized) > 3 else ""
-                self._show_message(
-                    f"Dates: {len(dates_unrecognized)} unrecognized (e.g. {examples}{more})", 5000, "warning")
+            for text, level in loaded.notices:
+                self._show_message(text, 5000, level)
             self._create_backup(path)
         except Exception as e:
             QMessageBox.critical(self, "Open Error", f"Failed to load file:\n{e}")
@@ -9875,30 +9662,54 @@ class MainWindow(QMainWindow):
     def _save_as(self):
         start = str(self.current_file.parent) if self.current_file else self.settings.get("last_directory") or ""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save XML Translation File", start,
-            "XML Files (*.xml);;All Files (*)"
+            self, "Save JSON Translation File", start,
+            "JSON Files (*.json);;All Files (*)"
         )
         if path:
             self._write(Path(path))
 
+    def _write_files(self, path: Path) -> None:
+        """Save the open entries to *path* and its sidecar. The sidecar is skipped only when it is
+        the open file's own and could not be read on open (it would be overwritten with defaults)."""
+        same_file = self.current_file is not None and path == self.current_file
+        save_translation_file(path, self.entries, self.json_style, self.header,
+                              write_meta=not (self._meta_blocked and same_file))
+
     def _write(self, path: Path):
         try:
-            save_file(path, self.segments, self.entries)
-            self.current_file = path
-            self.is_modified  = False
-            # Save As can point current_file at a different file than the one
-            # that was open -- re-derive the paired glossary so GlossaryDialog
-            # and future translations don't keep using the previous file's.
-            self.glossary_path = glossary_path_for(path)
-            try:
-                self.glossary, self.glossary_load_warnings = parse_glossary(self.glossary_path)
-            except Exception as e:
-                self.glossary = []
-                self.glossary_load_warnings = [f"glossary unreadable ({e}); treated as empty"]
+            self._write_files(path)
+        except MetadataWriteError as e:
+            _log_error(f"writing the sidecar of {path}", e)
+            self._after_write(path)
+            self.is_modified = True
             self._update_title()
-            self._show_message(f"Saved: {_file_label(path.name, self.xml_version)}", 4000)
+            QMessageBox.critical(
+                self, "Save Error",
+                f"{path.name} was saved, but its metadata file ({meta_path_for(path).name}) could "
+                "not be written. Statuses, translators and dates are not saved yet; Save again to retry.")
+            return
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save:\n{e}")
+            return
+        self._after_write(path)
+        self._update_title()
+        self._show_message(f"Saved: {_file_label(path.name, self.file_version)}", 4000)
+
+    def _after_write(self, path: Path) -> None:
+        """State after the language file reached disk (with or without its sidecar)."""
+        if self.current_file is None or path != self.current_file:
+            self._meta_blocked = False   # a new file's sidecar is ours to write
+        self.current_file = path
+        self.is_modified  = False
+        self.round_trips  = True         # it is in our own style now
+        # Save As can point current_file at a different file than the one that was open --
+        # re-derive the paired glossary so GlossaryDialog and translations use the new one.
+        self.glossary_path = glossary_path_for(path)
+        try:
+            self.glossary, self.glossary_load_warnings = parse_glossary(self.glossary_path)
+        except Exception as e:
+            self.glossary = []
+            self.glossary_load_warnings = [f"glossary unreadable ({e}); treated as empty"]
 
     def _close_file(self):
         """Close the open file and return to the empty no-file state, so
@@ -9907,14 +9718,14 @@ class MainWindow(QMainWindow):
             return          # nothing open; a dialog here would just be noise
         if not self._confirm_close_file():
             return
-        closed_label = _file_label(self.current_file.name, self.xml_version)
-        self.segments = []
+        closed_label = _file_label(self.current_file.name, self.file_version)
         self.entries  = []
         self.current_file = None
         self.is_modified  = False
-        self.target_culture   = ""
-        self.display_language = ""
-        self.xml_version      = ""
+        self.header       = FileHeader()
+        self.json_style   = DEFAULT_JSON_STYLE
+        self.round_trips  = True
+        self._meta_blocked = False
         self.glossary = []
         self.glossary_path = None
         self.glossary_load_warnings = []
@@ -10000,8 +9811,6 @@ class MainWindow(QMainWindow):
             return False
 
         delete_ids = {id(e) for e in entries}
-        for entry in entries:
-            _remove_entry_segment(self.segments, entry.seg_idx)
         self.entries = [e for e in self.entries if id(e) not in delete_ids]
         self.is_modified = True
         self.model.load(self.entries)
@@ -10134,7 +9943,7 @@ class MainWindow(QMainWindow):
     def dragEnterEvent(self, event):
         urls = event.mimeData().urls()
         if (len(urls) == 1 and urls[0].isLocalFile()
-                and urls[0].toLocalFile().lower().endswith(".xml")):
+                and urls[0].toLocalFile().lower().endswith(".json")):
             event.acceptProposedAction()
 
     def dropEvent(self, event):

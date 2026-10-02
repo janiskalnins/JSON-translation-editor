@@ -2,28 +2,27 @@
 
 Covers, first without a MainWindow:
 
-  * build_header_xml(): replaces DisplayLanguage/Version in place inside the root
-    <TRNExportImportModel ...> tag only, inserts a missing attribute, escapes values, leaves an
-    attribute passed as None byte-for-byte alone, never touches the <?xml version=...?> line,
-    and raises ValueError when there is no root tag;
-  * a save_file() -> parse_file() round trip, including a name with & and " in it;
+  * a save_translation_file() -> read_file_header() round trip of the sidecar header, including a
+    name with & and " in it, leaving the language file itself unchanged;
   * parse_version_parts()/format_version(): N.N.N within 99.99.99999, no zero padding added;
   * describe_culture(): known, region-less, unknown and empty codes;
   * compute_file_facts(): status/untranslated counts, and a file gone from disk;
   * the dialog: spin-box limits, a stored version loads unpadded, OK disabled for a blank name,
     an invalid stored version blocks OK until a box changes, '.' jumps to the next box.
 
-then through a real MainWindow on a copy of Latvian.xml, run from a throwaway folder with the
-startup modals patched (the app derives its settings file and backup root from the working
-directory / argv[0], so the real ones are never touched):
+then through a real MainWindow on a copy of es.json and its sidecar, run from a throwaway folder
+with the startup modals patched (the app derives its settings file and backup root from the
+working directory / argv[0], so the real ones are never touched):
 
-  * OK with changes: segments[0], info bar, title bullet, is_modified; Save + reopen persists them;
+  * OK with changes: the header, info bar, title bullet, is_modified; Save + reopen persists them
+    in the sidecar and leaves the language file byte for byte as it was;
   * OK with nothing changed, and Cancel: no change, file not marked modified;
   * no file open: a warning, no dialog.
 
 Run:  python tests/check_file_properties.py      (exit code 0 = all passed)
 """
 
+import json
 import os
 import shutil
 import sys
@@ -37,7 +36,8 @@ SCRATCH = Path(tempfile.mkdtemp(prefix="xte_file_properties_"))
 os.chdir(SCRATCH)
 sys.argv[0] = str(SCRATCH / "check_file_properties.py")
 sys.path.insert(0, str(REPO))
-shutil.copy(Path(__file__).resolve().parent / "data" / "Latvian.xml", SCRATCH / "Latvian.xml")
+for _name in ("es.json", "es.json.meta"):
+    shutil.copy(Path(__file__).resolve().parent / "data" / _name, SCRATCH / _name)
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -46,16 +46,20 @@ from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
 import json_translation_editor as jte
 
-HEADER = ('<?xml version="1.0" encoding="utf-8"?>\n'
-          '<TRNExportImportModel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-          'Culture="lv-LV" DisplayLanguage="Latviešu" IsModifiable="false" Version="4.1.1140">\n'
-          '  <resources>\n    ')
-BARE_HEADER = '<?xml version="1.0" encoding="utf-8"?>\n<TRNExportImportModel Culture="lv-LV">\n  <resources>\n    '
-BODY = ('<string name="A" translator="x" status="New" modifyDate="01.01.2025" istablet="false">A</string>\n'
-        '    <string name="B" translator="x" status="Complete" modifyDate="01.01.2025" istablet="true">Bē</string>\n'
-        '    <string name="C" translator="x" status="Review" modifyDate="01.01.2025" istablet="false">Cē</string>\n'
-        '    <string name="D" translator="x" status="Complete" modifyDate="01.01.2025" istablet="true">D</string>\n'
-        '  </resources>\n</TRNExportImportModel>\n')
+PAIRS = {"A": "A", "B": "Bē", "C": "Cē", "D": "D"}
+SIDECAR = {"format": 1, "language": "es", "language_name": "Español", "version": "4.1.1140",
+           "entries": {"B": {"status": "Complete", "translator": "x", "modified": "2025-01-01"},
+                       "C": {"status": "Review", "translator": "x", "modified": "2025-01-01"},
+                       "D": {"status": "Complete", "translator": "x", "modified": "2025-01-01"}}}
+
+
+def _write_sample(folder: Path) -> Path:
+    """es.json from PAIRS plus its sidecar, written with the json module (not the app)."""
+    path = folder / "es.json"
+    path.write_bytes((json.dumps(PAIRS, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+    (folder / "es.json.meta").write_bytes(
+        (json.dumps(SIDECAR, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+    return path
 
 
 def check(failures, label, ok, detail=""):
@@ -63,65 +67,21 @@ def check(failures, label, ok, detail=""):
         failures.append(f"{label}{': ' + detail if detail else ''}")
 
 
-def check_build_header(failures):
-    out = jte.build_header_xml(HEADER, "Latviešu 2", "4.2.7")
-    check(failures, "replace keeps attribute order",
-          out == HEADER.replace('DisplayLanguage="Latviešu"', 'DisplayLanguage="Latviešu 2"')
-                       .replace('Version="4.1.1140"', 'Version="4.2.7"'), out)
-    check(failures, "xml declaration untouched", out.startswith('<?xml version="1.0" encoding="utf-8"?>'))
-
-    only_version = jte.build_header_xml(HEADER, None, "5.0.1")
-    check(failures, "None leaves DisplayLanguage alone",
-          only_version == HEADER.replace('Version="4.1.1140"', 'Version="5.0.1"'), only_version)
-
-    inserted = jte.build_header_xml(BARE_HEADER, "Latviešu", "4.1.1220")
-    check(failures, "missing attributes are inserted at the end of the root tag",
-          '<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu" Version="4.1.1220">' in inserted,
-          inserted)
-    check(failures, "insert leaves the rest intact", inserted.count("<TRNExportImportModel") == 1)
-
-    escaped = jte.build_header_xml(HEADER, 'R&D "x" <y>', None)
-    check(failures, "values are escaped",
-          'DisplayLanguage="R&amp;D &quot;x&quot; &lt;y&gt;"' in escaped, escaped)
-
-    backslash = jte.build_header_xml(HEADER, r"a\1b\g<0>", None)
-    check(failures, "backslashes are literal", r'DisplayLanguage="a\1b\g&lt;0&gt;"' in backslash, backslash)
-
-    xsi_version = HEADER.replace('Version="4.1.1140"', 'xsi:Version="9" Version="4.1.1140"')
-    out = jte.build_header_xml(xsi_version, None, "1.2.3")
-    check(failures, "a prefixed attribute ending in Version is not matched",
-          'xsi:Version="9" Version="1.2.3"' in out, out)
-
-    self_closing = jte.build_header_xml('<TRNExportImportModel Culture="lv-LV"/>\n', None, "1.2.3")
-    check(failures, "self-closing root keeps its />",
-          self_closing == '<TRNExportImportModel Culture="lv-LV" Version="1.2.3"/>\n', self_closing)
-
-    raw_gt = BARE_HEADER.replace('Culture="lv-LV"', 'Culture="lv-LV" Note="a > b"')
-    out = jte.build_header_xml(raw_gt, None, "1.2.3")
-    check(failures, "a raw > inside a quoted value is not the end of the tag",
-          '<TRNExportImportModel Culture="lv-LV" Note="a > b" Version="1.2.3">' in out, out)
-
-    try:
-        jte.build_header_xml('<?xml version="1.0"?>\n<Other/>', "x", "1.2.3")
-        check(failures, "missing root tag raises ValueError", False)
-    except ValueError:
-        pass
-
-
 def check_round_trip(failures):
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "Latvian.xml"
-        path.write_text(HEADER + BODY, encoding="utf-8")
-        segments, entries, culture, lang, version = jte.parse_file(path)
-        segments[0] = jte.build_header_xml(segments[0], 'Latviešu & "Co"', "4.1.1220")
-        jte.save_file(path, segments, entries)
-        _, entries2, culture2, lang2, version2 = jte.parse_file(path)
-        check(failures, "round trip language", lang2 == 'Latviešu & "Co"', repr(lang2))
-        check(failures, "round trip version", version2 == "4.1.1220", repr(version2))
-        check(failures, "round trip culture", culture2 == "lv-LV", repr(culture2))
-        check(failures, "round trip entries", [e.text for e in entries2] == [e.text for e in entries])
-        check(failures, "only the header changed",
-              path.read_text(encoding="utf-8").endswith(BODY))
+        path = _write_sample(Path(tmp))
+        before = path.read_bytes()
+        loaded = jte.load_translation_file(path)
+        header = jte.FileHeader(loaded.header.language, 'Español & "Co"', "4.1.1220")
+        jte.save_translation_file(path, loaded.entries, loaded.style, header)
+        header2 = jte.read_file_header(path)
+        check(failures, "round trip language", header2.language_name == 'Español & "Co"',
+              repr(header2.language_name))
+        check(failures, "round trip version", header2.version == "4.1.1220", repr(header2.version))
+        check(failures, "round trip culture", header2.language == "es", repr(header2.language))
+        check(failures, "round trip entries",
+              [e.text for e in jte.load_translation_file(path).entries] == list(PAIRS.values()))
+        check(failures, "only the sidecar changed", path.read_bytes() == before)
 
 
 def check_version_helpers(failures):
@@ -145,9 +105,8 @@ def check_culture(failures):
 
 def check_facts(failures):
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "Latvian.xml"
-        path.write_text(HEADER + BODY, encoding="utf-8")
-        _, entries, *_ = jte.parse_file(path)
+        path = _write_sample(Path(tmp))
+        entries = jte.load_translation_file(path).entries
         facts = jte.compute_file_facts(entries, path)
         check(failures, "facts total", facts.total == 4, repr(facts.total))
         check(failures, "facts by status",
@@ -164,7 +123,7 @@ def check_facts(failures):
         check(failures, "file gone: size None", gone.size_bytes is None)
         check(failures, "file gone: modified None", gone.modified is None)
         check(failures, "file gone: counts still there", gone.total == 4)
-    empty = jte.compute_file_facts([], Path("nowhere.xml"))
+    empty = jte.compute_file_facts([], Path("nowhere.json"))
     check(failures, "empty file facts", (empty.total, empty.by_status) == (0, {"New": 0, "Review": 0, "Complete": 0}))
 
 
@@ -191,15 +150,15 @@ class _StubMain(QWidget):
 
 
 def _facts():
-    return jte.FileFacts(file_name="Latvian.xml",
+    return jte.FileFacts(file_name="es.json",
                          folder="C:\\Users\\translator\\Documents\\Localization\\Projects\\2026\\"
-                                "Release 4.1\\Latvian\\Incoming from customer\\Reviewed",
+                                "Release 4.1\\Spanish\\Incoming from customer\\Reviewed",
                          size_bytes=1234, modified=0.0,
                          total=4, by_status={"New": 1, "Review": 1, "Complete": 2},
                          untranslated=2)
 
 
-def _dialog(stub, lang="Latviešu", version="4.1.1220", culture="lv-LV"):
+def _dialog(stub, lang="Español", version="4.1.1220", culture="es"):
     dlg = jte.FilePropertiesDialog(culture, lang, version, _facts(), False, stub)
     dlg.show()
     QApplication.processEvents()
@@ -228,9 +187,9 @@ def check_dialog(failures):
 
         dlg._lang_edit.setText("   ")
         check(failures, f"{theme}: OK disabled for a blank name", not dlg._ok_btn.isEnabled())
-        dlg._lang_edit.setText("  Latviešu  ")
+        dlg._lang_edit.setText("  Español  ")
         check(failures, f"{theme}: OK back for a name", dlg._ok_btn.isEnabled())
-        check(failures, f"{theme}: name trimmed", dlg.display_language() == "Latviešu")
+        check(failures, f"{theme}: name trimmed", dlg.display_language() == "Español")
         check(failures, f"{theme}: name capped", dlg._lang_edit.maxLength() == 64)
 
         spins[2].lineEdit().selectAll()
@@ -288,16 +247,10 @@ def _run_dialog(win, language=None, parts=None, accept=True):
 
 def check_main_window(failures):
     app = QApplication.instance()
-    path = SCRATCH / "Latvian.xml"
-    # What a plain load + save writes: MainWindow._load() rewrites every date into this machine's
-    # short-date format (dots or slashes, from the Windows regional setting), and a row whose date
-    # changed is rebuilt, so the Properties change is measured against that, not the raw file.
-    baseline_path = SCRATCH / "baseline.xml"
-    shutil.copy(path, baseline_path)
-    segments, entries, *_ = jte.parse_file(baseline_path)
-    jte.normalize_entry_dates(entries)
-    jte.save_file(baseline_path, segments, entries)
-    original = baseline_path.read_text(encoding="utf-8")
+    path = SCRATCH / "es.json"
+    meta_path = jte.meta_path_for(path)
+    original = path.read_bytes()
+    original_meta = meta_path.read_text(encoding="utf-8")
     win = jte.MainWindow()
     win.settings.data.setdefault("backup", {})["enabled"] = False
     win.show()
@@ -315,39 +268,41 @@ def check_main_window(failures):
 
     win._load(path)
     app.processEvents()
-    lang, version = win.display_language, win.xml_version
-    check(failures, "loaded header", (lang, version) == ("Latviešu", "4.1.1140"), repr((lang, version)))
+    lang, version = win.display_language, win.file_version
+    check(failures, "loaded header", (lang, version) == ("Español", "1.0.0"), repr((lang, version)))
     win.is_modified = False
     win._update_title()
-    header_before = win.segments[0]
+    header_before = win.header
 
     _run_dialog(win, accept=False, language="Other", parts=(9, 9, 9))
-    check(failures, "cancel: header unchanged", win.segments[0] == header_before)
+    check(failures, "cancel: header unchanged", win.header == header_before)
     check(failures, "cancel: not modified", not win.is_modified)
 
     _run_dialog(win)
-    check(failures, "unchanged OK: header unchanged", win.segments[0] == header_before)
+    check(failures, "unchanged OK: header unchanged", win.header == header_before)
     check(failures, "unchanged OK: not modified", not win.is_modified)
 
-    _run_dialog(win, language="Latviešu valoda", parts=(4, 2, 7))
+    _run_dialog(win, language="Español de España", parts=(4, 2, 7))
     check(failures, "OK: header rewritten",
-          'DisplayLanguage="Latviešu valoda"' in win.segments[0] and 'Version="4.2.7"' in win.segments[0],
-          win.segments[0][:400])
-    check(failures, "OK: state updated", (win.display_language, win.xml_version) == ("Latviešu valoda", "4.2.7"))
+          win.header == jte.FileHeader("es", "Español de España", "4.2.7"), repr(win.header))
+    check(failures, "OK: state updated",
+          (win.display_language, win.file_version) == ("Español de España", "4.2.7"))
     check(failures, "OK: modified", win.is_modified)
     check(failures, "OK: title bullet", win.windowTitle().endswith("●"), win.windowTitle())
-    check(failures, "OK: info bar language", win._sb_lang_label.text() == "Latviešu valoda")
+    check(failures, "OK: info bar language", win._sb_lang_label.text() == "Español de España")
     check(failures, "OK: info bar version", win._sb_ver_label.text() == "v4.2.7")
 
     win._save()
     check(failures, "save cleared modified", not win.is_modified)
-    saved = path.read_text(encoding="utf-8")
-    check(failures, "save wrote only the two attributes",
-          saved == original.replace('DisplayLanguage="Latviešu"', 'DisplayLanguage="Latviešu valoda"')
-                           .replace('Version="4.1.1140"', 'Version="4.2.7"'))
-    _, _, culture, lang2, version2 = jte.parse_file(path)
-    check(failures, "reopen", (culture, lang2, version2) == ("lv-LV", "Latviešu valoda", "4.2.7"),
-          repr((culture, lang2, version2)))
+    check(failures, "save left the language file as it was", path.read_bytes() == original)
+    check(failures, "save wrote only the two header fields",
+          meta_path.read_text(encoding="utf-8")
+          == original_meta.replace('"language_name": "Español"', '"language_name": "Español de España"')
+                          .replace('"version": "1.0.0"', '"version": "4.2.7"'))
+    header2 = jte.read_file_header(path)
+    check(failures, "reopen",
+          (header2.language, header2.language_name, header2.version) == ("es", "Español de España", "4.2.7"),
+          repr(header2))
 
     win.is_modified = False
     win.close()
@@ -369,7 +324,7 @@ def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")
     failures = []
-    for step in (check_build_header, check_round_trip, check_version_helpers, check_culture, check_facts):
+    for step in (check_round_trip, check_version_helpers, check_culture, check_facts):
         try:
             step(failures)
         except Exception as e:

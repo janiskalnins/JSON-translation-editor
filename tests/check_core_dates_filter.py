@@ -1,6 +1,5 @@
 """Core tests: dates and filtering. parse_date() on every supported format,
-format_date_for_storage() round trips, normalize_entry_dates(), and FilterEngine's search modes,
-fields and filters.
+format_date_for_storage() round trips, and FilterEngine's search modes, fields and filters.
 
 Run:  python tests/check_core_dates_filter.py      (exit code 0 = all passed)
 """
@@ -45,37 +44,13 @@ class ParseDateTests(unittest.TestCase):
         self.assertEqual(jte.format_date_for_storage(QDate(2025, 12, 31)), _stored(date(2025, 12, 31)))
 
 
-class NormalizeTests(unittest.TestCase):
-    def test_legacy_date_is_rewritten_to_the_storage_format(self):
-        entries = [cs.make_entry(modify_date="2016-05-06")]
-        jte.normalize_entry_dates(entries)
-        self.assertEqual(entries[0].modify_date, _stored(MAY_6))
-
-    def test_count_includes_only_rewritten_entries(self):
-        entries = [cs.make_entry(modify_date="2016-05-06"), cs.make_entry(modify_date=_stored(MAY_6)),
-                   cs.make_entry(modify_date="")]
-        self.assertEqual(jte.normalize_entry_dates(entries), (1, []))
-
-    def test_unparseable_value_is_reported(self):
-        self.assertEqual(jte.normalize_entry_dates([cs.make_entry(modify_date="foo")]), (0, ["foo"]))
-
-    def test_unparseable_value_is_left_unchanged(self):
-        entries = [cs.make_entry(modify_date="foo")]
-        jte.normalize_entry_dates(entries)
-        self.assertEqual(entries[0].modify_date, "foo")
-
-    def test_empty_date_is_skipped(self):
-        entries = [cs.make_entry(modify_date="")]
-        self.assertEqual((jte.normalize_entry_dates(entries), entries[0].modify_date), ((0, []), ""))
-
-
 ENTRIES = [
     cs.make_entry(name="Tablet mode", text="Planšetes režīms", translator="Anna", status="Complete",
-                  modify_date=_stored(date(2025, 1, 10)), istablet="true"),
+                  modify_date=_stored(date(2025, 1, 10))),
     cs.make_entry(name="Database", text="Datu bāze", translator="Bob", status="New",
-                  modify_date=_stored(date(2025, 3, 1)), istablet="false"),
+                  modify_date=_stored(date(2025, 3, 1))),
     cs.make_entry(name="data-tablet (x)", text="Cits", translator="anna k", status="Review",
-                  modify_date="nonsense", istablet="false"),
+                  modify_date="nonsense"),
 ]
 
 

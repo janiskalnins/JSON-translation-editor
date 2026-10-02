@@ -21,7 +21,7 @@ BALL = G("Ball", "Bumba")
 
 
 def _parse(data: bytes) -> Tuple[list, List[str]]:
-    return jte.parse_glossary(cs.write_exact(cs.temp_dir() / "Latvian.glossary.csv", data))
+    return jte.parse_glossary(cs.write_exact(cs.temp_dir() / "es.glossary.csv", data))
 
 
 class ParseGlossaryTests(unittest.TestCase):
@@ -86,12 +86,12 @@ class WriteGlossaryTests(unittest.TestCase):
     ENTRIES = [G("Lane", "Celiņš", 'a "note", with comma'), G("Pin setter", "Ķegļu cēlājs")]
 
     def test_write_then_parse_round_trips(self):
-        path = cs.temp_dir() / "Latvian.glossary.csv"
+        path = cs.temp_dir() / "es.glossary.csv"
         jte.write_glossary(path, self.ENTRIES)
         self.assertEqual(jte.parse_glossary(path), (self.ENTRIES, []))
 
     def test_written_file_has_a_bom_and_the_canonical_header(self):
-        path = cs.temp_dir() / "Latvian.glossary.csv"
+        path = cs.temp_dir() / "es.glossary.csv"
         jte.write_glossary(path, self.ENTRIES)
         self.assertTrue(path.read_bytes().startswith(b"\xef\xbb\xbfterm,translation,note"))
 
@@ -127,9 +127,9 @@ class MatchGlossaryTests(unittest.TestCase):
 
 
 class GlossaryPathTests(unittest.TestCase):
-    def test_glossary_sits_next_to_the_xml_file(self):
-        self.assertEqual(jte.glossary_path_for(Path("C:/work/Latvian.xml")),
-                         Path("C:/work/Latvian.glossary.csv"))
+    def test_glossary_sits_next_to_the_language_file(self):
+        self.assertEqual(jte.glossary_path_for(Path("C:/work/es.json")),
+                         Path("C:/work/es.glossary.csv"))
 
 
 if __name__ == "__main__":

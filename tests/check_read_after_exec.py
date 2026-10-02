@@ -42,7 +42,7 @@ def check(failures, label, ok, detail=""):
 
 
 def _e(name, text):
-    return jte.StringEntry(name, "x", "Review", "", "false", text)
+    return jte.StringEntry(name=name, translator="x", status="Review", modify_date="", text=text)
 
 
 def _exec_then(dlg, before_accept):

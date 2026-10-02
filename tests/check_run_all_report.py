@@ -21,7 +21,7 @@ import run_all
 META = {"time": "2026-09-27 14:05:33", "trigger": "pre-commit", "selection": "all checks",
         "branch": "core-tests", "commit": "1421aef docs: core suites", "uncommitted": "no",
         "python": "3.14.3", "pyside6": "6.11.2"}
-PASSING = run_all.CheckResult("check_core_xml", "PASS", 0.52, "54 test(s) run\nPASSED: 0 failure(s)\n")
+PASSING = run_all.CheckResult("check_core_json", "PASS", 0.52, "54 test(s) run\nPASSED: 0 failure(s)\n")
 FAILING = run_all.CheckResult("check_scrollbar", "FAIL", 1.25,
                               "noise\nFAIL handle overlaps arrow\nFAILED: 1 failure(s)\n")
 NOW = datetime(2026, 9, 27, 14, 5, 33)
@@ -54,7 +54,7 @@ class BuildReportTests(unittest.TestCase):
         self.assertIn("**1 passed, 1 failed** (25.4 s)", _report([PASSING, FAILING]))
 
     def test_table_row_holds_result_time_and_test_count(self):
-        self.assertIn("| check_core_xml | PASS | 0.5 s | 54 |", _report([PASSING]))
+        self.assertIn("| check_core_json | PASS | 0.5 s | 54 |", _report([PASSING]))
 
     def test_check_without_a_count_shows_a_dash(self):
         self.assertIn("| check_scrollbar | FAIL | 1.2 s | — |", _report([FAILING]))
@@ -64,8 +64,8 @@ class BuildReportTests(unittest.TestCase):
 
     def test_notes_section_lists_each_note_under_its_check(self):
         noted = run_all.CheckResult("check_core_corpus", "PASS", 2.0,
-                                    "NOTE big.xml: 11024 strings\r\n6 test(s) run\r\n")
-        self.assertIn("## Notes\n\n### check_core_corpus\n\n- big.xml: 11024 strings\n",
+                                    "NOTE big.json: 11024 strings\r\n6 test(s) run\r\n")
+        self.assertIn("## Notes\n\n### check_core_corpus\n\n- big.json: 11024 strings\n",
                       _report([PASSING, noted]))
 
     def test_no_notes_means_no_notes_section(self):
@@ -100,9 +100,9 @@ class WriteReportTests(unittest.TestCase):
                           "run_2026-09-27_14-05-33.md"])
 
 
-def _main(reports_dir: Path, argv=("core_xml",)) -> int:
+def _main(reports_dir: Path, argv=("core_json",)) -> int:
     """run_all.main() with the checks and git faked: one passing check, reports in *reports_dir*."""
-    with mock.patch.object(run_all, "discover", lambda: [Path("check_core_xml.py")]), \
+    with mock.patch.object(run_all, "discover", lambda: [Path("check_core_json.py")]), \
             mock.patch.object(run_all, "run_check", lambda script: ("PASS", 0.5, PASSING.output)), \
             mock.patch.object(run_all, "collect_meta", lambda trigger, selection: dict(META)), \
             mock.patch.object(run_all, "REPORTS_DIR", reports_dir), \
@@ -121,7 +121,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(_main(blocker), 0)
 
     def test_trigger_flag_is_not_read_as_a_check_name(self):
-        self.assertEqual(_main(cs.temp_dir() / "reports", ("--trigger", "pre-commit", "core_xml")), 0)
+        self.assertEqual(_main(cs.temp_dir() / "reports", ("--trigger", "pre-commit", "core_json")), 0)
 
 
 if __name__ == "__main__":

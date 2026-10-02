@@ -18,8 +18,9 @@ from typing import List, Tuple
 
 jte = cs.jte
 
-RAW = cs.xml_doc([cs.row("Save", "Saglabāt")]).encode("utf-8")
-KEY = "Latvian__v4.1.1140"
+PAIRS = {"Save": "Guardar"}
+RAW = cs.json_doc(PAIRS)
+KEY = "es__v4.1.1140"
 STAMP = "%Y-%m-%d_%H-%M-%S"
 
 
@@ -45,15 +46,15 @@ class AtomicWriteTests(unittest.TestCase):
 
 def _write_slot(root: Path, ts: str = "2025-01-01_00-00-00", compress: bool = True,
                 glossary: bytes = None, max_count: int = 5) -> Path:
-    source = root.parent / "Latvian.xml"
+    source = root.parent / "es.json"
     return jte._write_backup_slot(
         root_dir=root, location_id="root", backup_key=KEY, ts=ts, source_path=source,
         raw_bytes=RAW, md5=hashlib.md5(RAW).hexdigest(),
         glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
         glossary_bytes=glossary,
         glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
-        compress=compress, max_count=max_count, trigger="file_open", culture="lv-LV",
-        display_language="Latviešu", version="4.1.1140", is_fallback=False)
+        compress=compress, max_count=max_count, trigger="file_open", culture="es",
+        display_language="Español", version="4.1.1140", is_fallback=False)
 
 
 def _manifest(slot: Path) -> dict:
@@ -66,22 +67,22 @@ class WriteSlotTests(unittest.TestCase):
         keys = ("backup_file", "compressed", "md5_checksum", "trigger", "version", "location",
                 "backup_key", "is_fallback", "glossary_backed_up")
         self.assertEqual({k: info[k] for k in keys},
-                         {"backup_file": "Latvian.xml.gz", "compressed": True,
+                         {"backup_file": "es.json.gz", "compressed": True,
                           "md5_checksum": hashlib.md5(RAW).hexdigest(), "trigger": "file_open",
                           "version": "4.1.1140", "location": "root", "backup_key": KEY,
                           "is_fallback": False, "glossary_backed_up": False})
 
     def test_compressed_slot_holds_the_source_bytes(self):
         slot = _write_slot(cs.temp_dir() / "bk")
-        self.assertEqual(gzip.decompress((slot / "Latvian.xml.gz").read_bytes()), RAW)
+        self.assertEqual(gzip.decompress((slot / "es.json.gz").read_bytes()), RAW)
 
     def test_plain_slot_holds_the_source_bytes(self):
         slot = _write_slot(cs.temp_dir() / "bk", compress=False)
-        self.assertEqual((slot / "Latvian.xml").read_bytes(), RAW)
+        self.assertEqual((slot / "es.json").read_bytes(), RAW)
 
-    def test_glossary_is_backed_up_with_the_xml(self):
+    def test_glossary_is_backed_up_with_the_language_file(self):
         slot = _write_slot(cs.temp_dir() / "bk", compress=False, glossary=b"term,translation\n")
-        self.assertEqual((slot / "Latvian.glossary.csv").read_bytes(), b"term,translation\n")
+        self.assertEqual((slot / "es.glossary.csv").read_bytes(), b"term,translation\n")
 
     def test_second_slot_in_the_same_second_gets_a_suffix(self):
         root = cs.temp_dir() / "bk"
@@ -122,7 +123,10 @@ class BackupRun:
         folder = cs.temp_dir()
         self.docs = folder / "docs"
         self.docs.mkdir()
-        self.source = cs.write_exact(self.docs / "Latvian.xml", RAW)
+        # The sidecar gives the version (and so the backup key) but no language code: the code
+        # is then guessed from the file name.
+        self.source = cs.write_pair(self.docs, "es", PAIRS, meta={},
+                                    header={"language": "", "version": "4.1.1140"})
         self.app_dir = folder / "app"
         self.next_to_file = self.docs / jte.BACKUP_DIR_NAME
         self.root = self.app_dir / jte.BACKUP_DIR_NAME
@@ -172,6 +176,13 @@ class BackupThreadTests(unittest.TestCase):
         b = BackupRun()
         b.run(location_mode="root")
         self.assertEqual((b.slots(b.next_to_file), len(b.slots(b.root))), ([], 1))
+
+    def test_manifest_header_comes_from_the_sidecar(self):
+        b = BackupRun()
+        b.run(location_mode="root")
+        info = _manifest(b.root / KEY / b.slots(b.root)[0])
+        self.assertEqual((info["culture"], info["display_language"], info["version"]),
+                         ("es", "Español", "4.1.1140"))
 
     def test_written_next_to_file_folder_is_reported(self):
         b = BackupRun()

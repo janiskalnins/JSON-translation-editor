@@ -34,7 +34,8 @@ SCRATCH = Path(tempfile.mkdtemp(prefix="xte_groupbox_"))
 os.chdir(SCRATCH)
 sys.argv[0] = str(SCRATCH / "check_groupbox_title.py")
 sys.path.insert(0, str(REPO))
-shutil.copy(Path(__file__).resolve().parent / "data" / "Latvian.xml", SCRATCH / "Latvian.xml")
+for _name in ("es.json", "es.json.meta"):
+    shutil.copy(Path(__file__).resolve().parent / "data" / _name, SCRATCH / _name)
 
 from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor
@@ -115,7 +116,7 @@ def _window(app, theme, pt):
     win.resize(1500, 850)
     win.show()
     _pump(app)
-    win._load(SCRATCH / "Latvian.xml")
+    win._load(SCRATCH / "es.json")
     for thread in list(win._backup_threads):
         thread.wait(8000)
     _pump(app)
@@ -129,7 +130,7 @@ def _dialogs(win):
     transl._engine_combo.setCurrentIndex(transl._engine_combo.findData("deepl"))
     yield "Translation Settings", transl
     yield "File Properties", jte.FilePropertiesDialog(
-        win.target_culture, win.display_language, win.xml_version,
+        win.target_culture, win.display_language, win.file_version,
         jte.compute_file_facts(win.entries, win.current_file), win.is_modified, parent=win)
     yield "Edit", jte.EditDialog(win.model, 0, win.settings.get_font(),
                                  shortcuts=win.settings.get("shortcuts", {}),

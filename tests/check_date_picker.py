@@ -29,7 +29,8 @@ SCRATCH = Path(tempfile.mkdtemp(prefix="xte_date_picker_"))
 os.chdir(SCRATCH)
 sys.argv[0] = str(SCRATCH / "check_date_picker.py")
 sys.path.insert(0, str(REPO))
-shutil.copy(Path(__file__).resolve().parent / "data" / "Latvian.xml", SCRATCH / "Latvian.xml")
+for _name in ("es.json", "es.json.meta"):
+    shutil.copy(Path(__file__).resolve().parent / "data" / _name, SCRATCH / _name)
 
 from PySide6.QtCore import QDate, QPoint, QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QWheelEvent
@@ -518,7 +519,7 @@ def _window(app, theme, pt):
     win.resize(1500, 850)
     win.show()
     _pump(app)
-    win._load(SCRATCH / "Latvian.xml")
+    win._load(SCRATCH / "es.json")
     for thread in list(win._backup_threads):
         thread.wait(8000)
     _pump(app)
@@ -566,8 +567,6 @@ def check_real_pickers(app):
                     _pump(app)
                 edit.close()
             finally:
-                # Loading the sample file normalizes its dates on a machine whose short-date format
-                # differs, which marks the window modified and makes close() ask to discard.
                 win.is_modified = False
                 win.close()
                 _pump(app)
@@ -575,19 +574,21 @@ def check_real_pickers(app):
 
 
 def check_edit_keeps_old_date(app):
-    """An entry dated before 2000: open and cancel the pop-up, change only the status, Save -- the
-    stored date must be unchanged (clamping the field would rewrite it)."""
+    """An entry dated before 2000 (the sample sidecar dates its second entry 1998-05-06): open and
+    cancel the pop-up, change only the status, Save -- the stored date must be unchanged (clamping
+    the field would rewrite it)."""
     failures = []
     win = _window(app, "dark", 10)
     try:
-        entry = win.model.get_entry(0)
-        entry.modify_date = jte.format_date_for_storage(date(1998, 5, 5))
+        entry = win.model.get_entry(1)
         stored = entry.modify_date
-        edit = _edit_dialog(win, 0)
+        if stored != jte.format_date_for_storage(date(1998, 5, 6)):
+            failures.append(f"the sample's second entry is dated {stored!r}, expected 1998-05-06")
+        edit = _edit_dialog(win, 1)
         edit.show()
         _pump(app)
-        if _show(edit.date_edit.date()) != "05.05.1998":
-            failures.append(f"the Edit dialog shows {_show(edit.date_edit.date())} for 05.05.1998")
+        if _show(edit.date_edit.date()) != "06.05.1998":
+            failures.append(f"the Edit dialog shows {_show(edit.date_edit.date())} for 06.05.1998")
         popup = edit.date_edit.open_popup()
         _pump(app)
         popup.close()

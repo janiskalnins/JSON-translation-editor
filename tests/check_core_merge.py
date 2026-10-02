@@ -1,7 +1,7 @@
-"""Core tests: Merge from File. The pure diff (compute_merge_diff, _pick_newer_entry,
-insert_additions), then whole-file merges: open and incoming files, every combination of choices
+"""Core tests: Merge from File. The pure diff (compute_merge_diff, _pick_newer_entry), then
+whole-file merges: open and incoming language files with sidecars, every combination of choices
 applied through MainWindow._apply_merge_diff(), saved, and judged by the oracle. No choice may
-lose a row or create a duplicate.
+lose an entry or create a duplicate.
 
 Run:  python tests/check_core_merge.py      (exit code 0 = all passed)
 """
@@ -9,6 +9,7 @@ Run:  python tests/check_core_merge.py      (exit code 0 = all passed)
 import core_support as cs  # first: offscreen Qt, scratch working folder, isolated caches
 
 import itertools
+import json
 import sys
 import unittest
 from contextlib import ExitStack
@@ -83,46 +84,13 @@ class PickNewerTests(unittest.TestCase):
         self.assertIsNone(jte._pick_newer_entry(_entry("A", "a", "later"), _entry("A", "b", NEW)))
 
 
-OPEN_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atcelt", modify_date=OLD),
-             cs.row("Old", "Vecs")]
-INCOMING_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atsaukt", modify_date=NEW),
-                 cs.row("New", "Jauns")]
-
-
-class InsertAdditionsTests(unittest.TestCase):
-    def setUp(self):
-        self.path = cs.write_exact(cs.temp_dir() / "open.xml", cs.xml_doc(OPEN_ROWS))
-        self.segments, self.entries, *_ = jte.parse_file(self.path)
-        self.additions = [_entry("New", "Jauns"), _entry("Newer", "Jaunāks")]
-
-    def test_additions_land_before_the_closing_resources_tag(self):
-        segments, _ = jte.insert_additions(self.segments, self.entries, self.additions)
-        text = "".join(segments)
-        self.assertLess(text.index('name="Newer"'), text.index("</resources>"))
-
-    def test_added_rows_have_odd_seg_idx(self):
-        _, entries = jte.insert_additions(self.segments, self.entries, self.additions)
-        self.assertEqual([e.seg_idx % 2 for e in entries], [1] * 5)
-
-    def test_added_entries_point_at_their_own_rows(self):
-        segments, entries = jte.insert_additions(self.segments, self.entries, self.additions)
-        self.assertEqual([jte._get_attr(segments[e.seg_idx], "name") for e in entries],
-                         ["Save", "Cancel", "Old", "New", "Newer"])
-
-    def test_input_lists_are_not_mutated(self):
-        before = (list(self.segments), list(self.entries))
-        jte.insert_additions(self.segments, self.entries, self.additions)
-        self.assertEqual((self.segments, self.entries), before)
-
-    def test_missing_closing_resources_tag_raises(self):
-        self.segments[-1] = "\n</TRNExportImportModel>\n"
-        with self.assertRaises(ValueError):
-            jte.insert_additions(self.segments, self.entries, self.additions)
-
-    def test_saved_file_with_additions_is_intact(self):
-        segments, entries = jte.insert_additions(self.segments, self.entries, self.additions)
-        jte.save_file(self.path, segments, entries)
-        cs.assert_xml_intact(self, self.path, ["Save", "Cancel", "Old", "New", "Newer"])
+OLD_ISO, NEW_ISO, DEFAULT_ISO = "2024-01-01", "2025-06-01", "2025-02-01"
+OPEN_PAIRS = {"Save": "Guardar", "Cancel": "Cancelar", "Old": "Viejo"}
+OPEN_META = {"Save": ("Complete", "Jane", DEFAULT_ISO), "Cancel": ("Complete", "Jane", OLD_ISO),
+             "Old": ("Complete", "Jane", DEFAULT_ISO)}
+INCOMING_PAIRS = {"Save": "Guardar", "Cancel": "Anular", "New": "Nuevo"}
+INCOMING_META = {"Save": ("Complete", "Jane", DEFAULT_ISO), "Cancel": ("Complete", "Jane", NEW_ISO),
+                 "New": ("Complete", "Jane", DEFAULT_ISO)}
 
 
 class FileMergeTests(unittest.TestCase):
@@ -137,60 +105,94 @@ class FileMergeTests(unittest.TestCase):
     def tearDownClass(cls):
         cls._stack.close()
 
-    def _merge(self, accept_addition: bool, keep_incoming: bool, delete: bool) -> Path:
-        """Merge INCOMING_ROWS into OPEN_ROWS with the given choice for the addition ("New"), the
-        conflict ("Cancel") and the deletion ("Old"), save, and return the saved path."""
+    def _open_pair(self):
+        """A fresh open file and incoming file in a folder of their own; the open one loaded."""
         folder = cs.temp_dir()
-        path = cs.write_exact(folder / "open.xml", cs.xml_doc(OPEN_ROWS))
-        incoming = cs.write_exact(folder / "incoming.xml", cs.xml_doc(INCOMING_ROWS))
+        path = cs.write_pair(folder, "es", OPEN_PAIRS, meta=OPEN_META)
+        incoming = cs.write_pair(folder, "incoming", INCOMING_PAIRS, meta=INCOMING_META)
         self.win._load(path)
-        _, incoming_entries, *_ = jte.parse_file(incoming)
+        return path, jte.load_translation_file(incoming).entries
+
+    def _merge(self, accept_addition: bool, keep_incoming: bool, delete: bool) -> Path:
+        """Merge INCOMING_PAIRS into OPEN_PAIRS with the given choice for the addition ("New"), the
+        conflict ("Cancel") and the deletion ("Old"), save, and return the saved path."""
+        path, incoming_entries = self._open_pair()
         diff = jte.compute_merge_diff(self.win.entries, incoming_entries)
         additions = diff.additions if accept_addition else []
         resolutions = [inc if keep_incoming else op for op, inc in diff.conflicts]
         deletions = diff.deletions if delete else []
-        self.win._apply_merge_diff(diff, additions, resolutions, deletions, 0, [])
+        self.win._apply_merge_diff(diff, additions, resolutions, deletions)
         self.win._write(path)
         return path
 
-    def test_every_choice_combination_saves_the_expected_rows(self):
+    def _add(self, names):
+        """Apply additions named *names* to a freshly loaded open file; returns (path, additions)."""
+        path, _incoming = self._open_pair()
+        additions = [_entry(name, name.lower(), position=9) for name in names]
+        diff = jte.MergeDiff(additions=additions, conflicts=[], deletions=[], auto_updated=[])
+        self.win._apply_merge_diff(diff, additions, [], [])
+        return path, additions
+
+    def test_additions_are_appended(self):
+        self._add(["New", "Newer"])
+        self.assertEqual([e.name for e in self.win.entries][-2:], ["New", "Newer"])
+
+    def test_added_entries_take_the_next_positions(self):
+        self._add(["New", "Newer"])
+        self.assertEqual([e.position for e in self.win.entries], [1, 2, 3, 4, 5])
+
+    def test_incoming_entries_are_not_changed(self):
+        _path, additions = self._add(["New", "Newer"])
+        self.assertEqual([e.position for e in additions], [9, 9])
+
+    def test_saved_file_with_additions_is_intact(self):
+        path, _additions = self._add(["New", "Newer"])
+        self.win._write(path)
+        cs.assert_json_intact(self, path, ["Save", "Cancel", "Old", "New", "Newer"])
+
+    def test_every_choice_combination_saves_the_expected_entries(self):
         for accept, keep_incoming, delete in itertools.product((True, False), repeat=3):
             with self.subTest(accept=accept, keep_incoming=keep_incoming, delete=delete):
                 path = self._merge(accept, keep_incoming, delete)
                 expected = (["Save", "Cancel"] + ([] if delete else ["Old"])
                             + (["New"] if accept else []))
-                cs.assert_xml_intact(self, path, expected)
+                cs.assert_json_intact(self, path, expected)
 
     def test_keep_incoming_writes_the_incoming_text(self):
         path = self._merge(accept_addition=False, keep_incoming=True, delete=False)
-        self.assertEqual(jte.parse_file(path)[1][1].text, "Atsaukt")
+        self.assertEqual(jte.load_translation_file(path).entries[1].text, "Anular")
+
+    def test_keep_incoming_writes_the_incoming_date_to_the_sidecar(self):
+        path = self._merge(accept_addition=False, keep_incoming=True, delete=False)
+        meta = json.loads(jte.meta_path_for(path).read_bytes())
+        self.assertEqual(meta["entries"]["Cancel"]["modified"], NEW_ISO)
 
     def test_keep_open_keeps_the_open_text(self):
         path = self._merge(accept_addition=False, keep_incoming=False, delete=False)
-        self.assertEqual(jte.parse_file(path)[1][1].text, "Atcelt")
+        self.assertEqual(jte.load_translation_file(path).entries[1].text, "Cancelar")
 
     def test_merging_the_same_file_again_adds_nothing(self):
         path = self._merge(accept_addition=True, keep_incoming=False, delete=False)
-        _, incoming_entries, *_ = jte.parse_file(path.parent / "incoming.xml")
+        incoming_entries = jte.load_translation_file(path.parent / "incoming.json").entries
         diff = jte.compute_merge_diff(self.win.entries, incoming_entries)
-        self.win._apply_merge_diff(diff, diff.additions, [op for op, _ in diff.conflicts], [], 0, [])
+        self.win._apply_merge_diff(diff, diff.additions, [op for op, _ in diff.conflicts], [])
         self.win._write(path)
-        cs.assert_xml_intact(self, path, ["Save", "Cancel", "Old", "New"])
+        cs.assert_json_intact(self, path, ["Save", "Cancel", "Old", "New"])
 
     def test_merging_a_file_into_itself_changes_nothing(self):
-        text = cs.xml_doc(OPEN_ROWS)
-        path = cs.write_exact(cs.temp_dir() / "open.xml", text)
+        path = cs.write_pair(cs.temp_dir(), "es", OPEN_PAIRS, meta=OPEN_META)
+        before = (path.read_bytes(), jte.meta_path_for(path).read_bytes())
         self.win._load(path)
-        _, same_entries, *_ = jte.parse_file(path)
+        same_entries = jte.load_translation_file(path).entries
         diff = jte.compute_merge_diff(self.win.entries, same_entries)
         self.win._apply_merge_diff(diff, diff.additions, [op for op, _ in diff.conflicts],
-                                   diff.deletions, 0, [])
+                                   diff.deletions)
         self.win._write(path)
-        self.assertEqual(path.read_bytes(), text.encode("utf-8"))
+        self.assertEqual((path.read_bytes(), jte.meta_path_for(path).read_bytes()), before)
 
-    def test_merge_deletion_leaves_no_blank_line(self):
+    def test_merge_deletion_drops_only_that_entry(self):
         path = self._merge(accept_addition=False, keep_incoming=False, delete=True)
-        self.assertEqual(path.read_bytes(), cs.xml_doc(OPEN_ROWS[:2]).encode("utf-8"))
+        self.assertEqual(path.read_bytes(), cs.json_doc({"Save": "Guardar", "Cancel": "Cancelar"}))
 
 
 if __name__ == "__main__":

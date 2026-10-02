@@ -13,9 +13,9 @@
     surface, newest-first order with times, escaping, place above the button inside the screen,
     width limits, Escape, a second press on the button (no replay), widgets freed; both themes at
     10 and 14 pt with a long history that scrolls.
-  * call sites: opening a file with a legacy and an unparseable date gives separate Loaded, Dates
-    normalized and Dates unrecognized messages (both warnings), then Backup; a merge with date
-    problems gives the same split; no message holds a "  |  " join.
+  * call sites: opening a file whose sidecar holds an orphan, an unknown status and an
+    unparseable date gives Loaded, then one Metadata warning each, then Backup; a merge gives its
+    one summary; no message holds a "  |  " join.
   * file messages: _file_label(); Loaded, Saved (after a Properties-style version change),
     Autosaved, Closed, Restored and Restored and reloaded name the header version, and a file
     without one reads "(no version)".
@@ -37,7 +37,7 @@ import shutil
 import sys
 import tempfile
 from contextlib import contextmanager
-from datetime import date
+from dataclasses import replace
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -98,15 +98,21 @@ def _set_look(win, theme, pt):
     QApplication.processEvents()
 
 
-LEGACY_XML = (
-    '<?xml version="1.0" encoding="utf-8"?>\n'
-    '<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu" Version="4.1.1140">\n'
-    '  <resources>\n'
-    '    <string name="A" translator="x" status="New" modifyDate="{good}" istablet="false">A</string>\n'
-    '    <string name="B" translator="x" status="New" modifyDate="{legacy}" istablet="false">B</string>\n'
-    '    <string name="C" translator="x" status="New" modifyDate="foo" istablet="false">C</string>\n'
-    '  </resources>\n'
-    '</TRNExportImportModel>\n')
+def _write_json(path: Path, pairs: dict) -> Path:
+    """A language file written with the json module, in the editor's canonical layout."""
+    path.write_bytes((json.dumps(pairs, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+    return path
+
+
+def _write_sidecar(path: Path, version: str, entries: dict = None) -> None:
+    """The sidecar of language file *path*: language es, the given version and *entries*."""
+    data = {"format": 1, "language": "es", "language_name": "Español", "version": version,
+            "entries": entries or {}}
+    jte.meta_path_for(path).write_bytes(
+        (json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+
+
+PAIRS = {"A": "A", "B": "B", "C": "C"}
 
 
 def check_queue(failures, win):
@@ -339,11 +345,12 @@ def check_popup_sizes(failures, win):
 
 
 def check_load_messages(failures, win):
-    canonical = jte.format_date_for_storage(date(2016, 5, 6))
-    legacy = "2016-05-06" if canonical != "2016-05-06" else "06.05.2016"
-    path = SCRATCH / "legacy.xml"
-    path.write_text(LEGACY_XML.format(good=jte.format_date_for_storage(date(2025, 1, 1)), legacy=legacy),
-                    encoding="utf-8")
+    path = _write_json(SCRATCH / "meta.json", PAIRS)
+    _write_sidecar(path, "4.1.1140", {
+        "A": {"status": "Complete", "translator": "x", "modified": "2025-01-01"},
+        "B": {"status": "Done", "translator": "x", "modified": "2025-01-01"},
+        "C": {"status": "Review", "translator": "x", "modified": "foo"},
+        "Z": {"status": "Review", "translator": "x", "modified": "2025-01-01"}})
     _reset(win)
     win._load(path)
     for _ in range(100):   # the backup thread reports within a few hundred ms
@@ -352,15 +359,15 @@ def check_load_messages(failures, win):
         QTest.qWait(50)
     messages = [(n.text, n.level) for n in win._notice_history]
     check(failures, "load: Loaded first",
-          messages[:1] == [("Loaded: legacy.xml  v4.1.1140  (3 strings)", "info")], repr(messages))
-    check(failures, "load: normalized dates as a warning",
-          messages[1:2] == [("Dates: 1 normalized", "warning")], repr(messages))
-    check(failures, "load: unrecognized dates as a warning",
-          len(messages) > 2 and messages[2][0].startswith("Dates: 1 unrecognized (e.g. 'foo')")
-          and messages[2][1] == "warning", repr(messages))
+          messages[:1] == [("Loaded: meta.json  v4.1.1140  (3 strings)", "info")], repr(messages))
+    check(failures, "load: one warning per sidecar problem",
+          messages[1:4] == [("Metadata: 1 entries for keys no longer in the file", "warning"),
+                            ("Metadata: 1 unknown status value(s) read as New", "warning"),
+                            ("Metadata: 1 unrecognized date(s) (e.g. 'foo')", "warning")],
+          repr(messages))
     # The default location mode is "both": one message per location follows.
     check(failures, "load: one backup message per location follows",
-          [(text.split(":")[0], level) for text, level in messages[3:]]
+          [(text.split(":")[0], level) for text, level in messages[4:]]
           == [("Backup next to file", "info"), ("Backup in root", "info")], repr(messages))
     check(failures, "load: no joined line", not any("  |  " in text for text, _ in messages),
           repr(messages))
@@ -371,15 +378,10 @@ def check_load_messages(failures, win):
 def check_merge_messages(failures, win):
     # Needs the file check_load_messages opened.
     _reset(win)
-    win._apply_merge_diff(jte.MergeDiff([], [], [], []), [], [], [], 2, ["bad"])
+    win._apply_merge_diff(jte.MergeDiff([], [], [], []), [], [], [])
     messages = [(n.text, n.level) for n in win._notice_history]
-    check(failures, "merge: summary first",
-          len(messages) == 3 and messages[0][0].startswith("Merged: 0 added") and messages[0][1] == "info",
-          repr(messages))
-    check(failures, "merge: normalized dates as a warning",
-          messages[1:2] == [("Dates: 2 normalized in incoming file", "warning")], repr(messages))
-    check(failures, "merge: unrecognized dates as a warning",
-          messages[2:3] == [("Dates: 1 unrecognized in incoming file (e.g. 'bad')", "warning")],
+    check(failures, "merge: one summary",
+          len(messages) == 1 and messages[0][0].startswith("Merged: 0 added") and messages[0][1] == "info",
           repr(messages))
     win.is_modified = False
     win._update_title()
@@ -445,8 +447,7 @@ def check_backup_messages(failures):
     docs, app = case / "docs", case / "app"
     docs.mkdir(parents=True)
     app.mkdir()
-    source = docs / "sample.xml"
-    source.write_text(LEGACY_XML.format(good="01.01.2025", legacy="01.01.2025"), encoding="utf-8")
+    source = _write_json(docs / "sample.json", PAIRS)
     (docs / "sample.glossary.csv").write_text("term,translation,note\nA,Ā,\n", encoding="utf-8-sig")
     ntf_dir = docs / jte.BACKUP_DIR_NAME
     root_dir = app / jte.BACKUP_DIR_NAME
@@ -506,7 +507,7 @@ def check_backup_messages(failures):
           matches(notices, [(f"Backup next to file: {failed}", "error"), (f"Backup in root: {failed}", "error")]),
           repr(notices))
 
-    notices, _ = run("both", 0, docs / "missing.xml")
+    notices, _ = run("both", 0, docs / "missing.json")
     check(failures, "backup source unreadable: one error",
           notices == [("Backup failed — could not read source file", "error")], repr(notices))
 
@@ -536,11 +537,11 @@ def check_startup_order(failures, win):
 
 def check_file_label(failures):
     check(failures, "file label: with a version",
-          jte._file_label("Latvian.xml", "4.1.1140") == "Latvian.xml  v4.1.1140",
-          repr(jte._file_label("Latvian.xml", "4.1.1140")))
+          jte._file_label("es.json", "4.1.1140") == "es.json  v4.1.1140",
+          repr(jte._file_label("es.json", "4.1.1140")))
     check(failures, "file label: without a version",
-          jte._file_label("Latvian.xml", "") == "Latvian.xml  (no version)",
-          repr(jte._file_label("Latvian.xml", "")))
+          jte._file_label("es.json", "") == "es.json  (no version)",
+          repr(jte._file_label("es.json", "")))
 
 
 def _texts(win):
@@ -549,44 +550,41 @@ def _texts(win):
 
 def check_file_messages(failures, win):
     """Saved, Autosaved, Closed, Restored and a version-less Loaded name the header's version."""
-    good = jte.format_date_for_storage(date(2025, 1, 1))
-    path = SCRATCH / "files.xml"
-    path.write_text(LEGACY_XML.format(good=good, legacy=good).replace('"foo"', f'"{good}"'),
-                    encoding="utf-8")
+    path = _write_json(SCRATCH / "files.json", PAIRS)
+    _write_sidecar(path, "4.1.1140")
     win._load(path)
     # A version changed the way File -> Properties does, then saved.
-    win.segments[0] = jte.build_header_xml(win.segments[0], None, "4.1.1141")
-    win.xml_version = "4.1.1141"
+    win.header = replace(win.header, version="4.1.1141")
     _reset(win)
     win._write(path)
     check(failures, "save: version after a Properties change",
-          _texts(win) == ["Saved: files.xml  v4.1.1141"], repr(_texts(win)))
+          _texts(win) == ["Saved: files.json  v4.1.1141"], repr(_texts(win)))
 
     _reset(win)
     win.is_modified = True
     win._autosave_tick()
     check(failures, "autosave: version before the time",
-          len(_texts(win)) == 1 and _texts(win)[0].startswith("Autosaved: files.xml  v4.1.1141  ("),
+          len(_texts(win)) == 1 and _texts(win)[0].startswith("Autosaved: files.json  v4.1.1141  ("),
           repr(_texts(win)))
 
     _reset(win)
     win._close_file()
     check(failures, "close: version of the closed file",
-          _texts(win) == ["Closed: files.xml  v4.1.1141"], repr(_texts(win)))
+          _texts(win) == ["Closed: files.json  v4.1.1141"], repr(_texts(win)))
 
-    bare = SCRATCH / "bare.xml"
-    bare.write_text(path.read_text(encoding="utf-8").replace(' Version="4.1.1141"', ""),
-                    encoding="utf-8")
+    bare = _write_json(SCRATCH / "bare.json", PAIRS)   # no sidecar: no version
     _reset(win)
     win._load(bare)
     check(failures, "load: a missing version is named",
-          _texts(win)[:1] == ["Loaded: bare.xml  (no version)  (3 strings)"], repr(_texts(win)))
+          _texts(win)[:1] == ["Loaded: bare.json  (no version)  (3 strings)"], repr(_texts(win)))
 
-    # Restored to a file that is not open, answering No to "Open the restored file now?".
+    # Restored to a file that is not open, answering No to "Open the restored file now?". The
+    # version comes from the sidecar beside the destination.
     slot = SCRATCH / "slot" / "2026-01-01_00-00-00"
     slot.mkdir(parents=True)
-    dest = SCRATCH / "restored.xml"
-    raw = path.read_bytes().replace(b'Version="4.1.1141"', b'Version="4.0.900"')
+    dest = SCRATCH / "restored.json"
+    _write_sidecar(dest, "4.0.900")
+    raw = path.read_bytes()
     real_question = jte.QMessageBox.question
     jte.QMessageBox.question = staticmethod(lambda *a, **k: jte.QMessageBox.No)
     try:
@@ -595,19 +593,20 @@ def check_file_messages(failures, win):
     finally:
         jte.QMessageBox.question = real_question
     check(failures, "restore: version of the restored content",
-          _texts(win) == ["Restored: restored.xml  v4.0.900"], repr(_texts(win)))
+          _texts(win) == ["Restored: restored.json  v4.0.900"], repr(_texts(win)))
 
     # Restored over the open file: reloaded, the Loaded message and the Restored one both name it.
-    for _ in range(100):   # let bare.xml's backup report first
+    for _ in range(100):   # let bare.json's backup report first
         if any(t.startswith("Backup") for t in _texts(win)):
             break
         QTest.qWait(50)
+    _write_sidecar(bare, "4.0.900")
     _reset(win)
     win._do_restore_after_backup(slot, {}, False, bare, raw, None, None, "", True)
     texts = _texts(win)
     check(failures, "restore and reload: Loaded and Restored name the version",
-          texts[:1] == ["Loaded: bare.xml  v4.0.900  (3 strings)"]
-          and "Restored and reloaded: bare.xml  v4.0.900" in texts, repr(texts))
+          texts[:1] == ["Loaded: bare.json  v4.0.900  (3 strings)"]
+          and "Restored and reloaded: bare.json  v4.0.900" in texts, repr(texts))
     for _ in range(100):   # the reload's backup thread must finish before the next step
         if any(t.startswith("Backup") for t in _texts(win)):
             break

@@ -59,8 +59,9 @@ def check(failures, label, ok, detail=""):
         failures.append(f"{label}{': ' + detail if detail else ''}")
 
 
-def _e(name, text, translator="x", status="Review", when=D_OLD, istablet="false"):
-    return jte.StringEntry(name, translator, status, when, istablet, text)
+def _e(name, text, translator="x", status="Review", when=D_OLD):
+    return jte.StringEntry(name=name, translator=translator, status=status, modify_date=when,
+                           text=text)
 
 
 def check_reason(failures):
