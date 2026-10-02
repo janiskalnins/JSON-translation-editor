@@ -119,6 +119,25 @@ def assert_json_intact(tc: unittest.TestCase, path: Path, expected_names: List[s
                    ([], True, list(expected_names)))
 
 
+def sidecar_doc(entries: Optional[Dict[str, Tuple[str, str, str]]] = None, language: str = "es",
+                language_name: str = "Español", version: str = "1.0.0", **extra: Any) -> bytes:
+    """A sidecar as bytes. *entries* maps a key to (status, translator, ISO date); *extra* adds or
+    overrides top-level fields (e.g. format=2)."""
+    data = {"format": 1, "language": language, "language_name": language_name,
+            "version": version,
+            "entries": {k: {"status": s, "translator": t, "modified": d}
+                        for k, (s, t, d) in (entries or {}).items()}}
+    data.update(extra)
+    return (json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
+
+
+def bare_entry(name: str, text: Optional[str] = None) -> "jte.StringEntry":
+    """An entry as a language file without a sidecar gives it: New, no translator, no date."""
+    return make_entry(name=name, text=name if text is None else text, status="New",
+                      translator="", modify_date="")
+
+
+
 # ── Qt helpers ──────────────────────────────────────────────────────────────
 
 def app() -> QApplication:

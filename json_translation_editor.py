@@ -1544,6 +1544,141 @@ def dump_json_pairs(pairs: List[Tuple[str, str]], style: JsonStyle) -> bytes:
     return _BOM + data if style.bom else data
 
 
+# ══════════════════════════════════════════════════════════════
+#  SIDECAR  (<name>.json.meta: per-string status, translator, date, plus the file's header)
+# ══════════════════════════════════════════════════════════════
+
+META_SUFFIX = ".meta"   # not ".json": a program that loads every *.json in the folder must not see it
+META_FORMAT = 1
+LANGUAGE_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})*$")
+
+
+@dataclass
+class FileHeader:
+    """What the XML header held: the language code ("" = guess it from the file name), its
+    human-readable name and the file's version."""
+    language: str = ""
+    language_name: str = ""
+    version: str = ""
+
+
+class SidecarError(ValueError):
+    """A sidecar that cannot be read as the metadata object."""
+
+
+def meta_path_for(json_path: Path) -> Path:
+    return json_path.with_name(json_path.name + META_SUFFIX)
+
+
+def guess_language(json_path: Path) -> str:
+    """'es' for es.json, 'pt-BR' for pt-BR.json, '' when the name is not a language code."""
+    stem = json_path.stem
+    return stem if LANGUAGE_CODE_RE.match(stem) else ""
+
+
+def effective_language(header: FileHeader, json_path: Optional[Path]) -> str:
+    if header.language:
+        return header.language
+    return guess_language(json_path) if json_path is not None else ""
+
+
+def parse_sidecar_bytes(raw: bytes) -> Tuple[FileHeader, Dict[str, Dict[str, str]]]:
+    """The header and the per-key metadata, as stored. Raises SidecarError for anything else."""
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise SidecarError(f"not readable as JSON ({e})") from None
+    if not isinstance(data, dict):
+        raise SidecarError("not a JSON object")
+    if data.get("format", META_FORMAT) != META_FORMAT:
+        raise SidecarError(f"format {data.get('format')!r} is not {META_FORMAT}")
+    header_values = {}
+    for key in ("language", "language_name", "version"):
+        value = data.get(key, "")
+        if not isinstance(value, str):
+            raise SidecarError(f"{key} is not text")
+        header_values[key] = value
+    entries = data.get("entries", {})
+    if not isinstance(entries, dict):
+        raise SidecarError("entries is not an object")
+    meta: Dict[str, Dict[str, str]] = {}
+    for key, fields in entries.items():
+        if not isinstance(fields, dict) or not all(isinstance(v, str) for v in fields.values()):
+            raise SidecarError(f"the entry for {key!r} is not an object of text values")
+        meta[key] = fields
+    return FileHeader(**header_values), meta
+
+
+def _date_from_sidecar(raw: str, bad_dates: List[str]) -> str:
+    """An ISO date as this machine's short date; anything else kept as stored and recorded."""
+    if not raw:
+        return ""
+    try:
+        return format_date_for_storage(date.fromisoformat(raw))
+    except ValueError:
+        bad_dates.append(raw)
+        return raw
+
+
+def _date_to_sidecar(shown: str) -> str:
+    if not shown:
+        return ""
+    parsed = parse_date(shown)
+    return parsed.isoformat() if parsed is not None else shown
+
+
+def apply_sidecar_meta(entries: List[StringEntry], meta: Dict[str, Dict[str, str]]) -> List[str]:
+    """Give each entry listed in *meta* its status, translator and date (shown format). Returns the
+    warning texts for the info bar."""
+    names = set()
+    unknown_status = 0
+    bad_dates: List[str] = []
+    for entry in entries:
+        names.add(entry.name)
+        fields = meta.get(entry.name)
+        if fields is None:
+            continue
+        status = fields.get("status", "New")
+        if status not in STATUSES:
+            unknown_status += 1
+            status = "New"
+        entry.status = status
+        entry.translator = fields.get("translator", "")
+        entry.modify_date = _date_from_sidecar(fields.get("modified", ""), bad_dates)
+    orphans = sum(1 for key in meta if key not in names)
+    warnings = []
+    if orphans:
+        warnings.append(f"Metadata: {orphans} entries for keys no longer in the file")
+    if unknown_status:
+        warnings.append(f"Metadata: {unknown_status} unknown status value(s) read as New")
+    if bad_dates:
+        warnings.append(f"Metadata: {len(bad_dates)} unrecognized date(s) (e.g. {bad_dates[0]!r})")
+    return warnings
+
+
+def build_sidecar_bytes(entries: List[StringEntry], header: FileHeader) -> bytes:
+    """The sidecar for *entries*: only entries whose metadata differs from a fresh one (New, no
+    translator, no date) are listed, in file order, so its diffs line up with the language file's."""
+    listed = {}
+    for e in entries:
+        if e.status != "New" or e.translator or e.modify_date:
+            listed[e.name] = {"status": e.status, "translator": e.translator,
+                              "modified": _date_to_sidecar(e.modify_date)}
+    data = {"format": META_FORMAT, "language": header.language,
+            "language_name": header.language_name, "version": header.version, "entries": listed}
+    return (json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
+
+
+def read_file_header(json_path: Path) -> FileHeader:
+    """The sidecar's header, best-effort: a missing, unreadable or damaged sidecar gives an empty
+    header. For backup manifests and messages about a file that may not be the open one."""
+    try:
+        header, _meta = parse_sidecar_bytes(meta_path_for(json_path).read_bytes())
+        return header
+    except (OSError, SidecarError):
+        return FileHeader()
+
+
 @dataclass
 class FileFacts:
     file_name:    str
