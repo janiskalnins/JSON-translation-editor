@@ -19,7 +19,7 @@ see the lines that say what went wrong. The last lines are the summary and the r
 PASS      0.4s  check_core_json
 FAIL      0.7s  check_scrollbar
         FAIL handle overlaps the down arrow at 14 pt
-22 passed, 1 failed (26.1 s)
+22 passed, 1 failed (35.2 s)
 Report: tests\reports\run_2026-09-27_14-05-33.md
 ```
 
@@ -33,7 +33,7 @@ name.
   gives back the file byte for byte, and a change touches only the entries you edited, so a diff
   stays clean.
 - **The features.** Editing, bulk status, delete, Close File, Save As, Merge from File,
-  Restore from Backup, autosave, backups, settings recovery, dates and filters, the glossary and
+  Sync Keys, New Language, the placeholder check, Restore from Backup, autosave, backups, settings recovery, dates and filters, the glossary and
   every translation engine (with the network faked, so no request leaves your machine).
 - **The look.** Scrollbars, check boxes, spin boxes, drop-downs, date pickers, group-box titles
   and dialog sizes are correct in both themes and at small and large UI fonts.
@@ -48,33 +48,33 @@ files.
 | Check | Tests | Time | What it covers |
 |---|---:|---:|---|
 | `check_core_json` | 55 | 0.4 s | Reading and saving language files: refused files, style detection (indent, line endings, BOM, escaped non-ASCII), byte-for-byte saves; the `.json.meta` sidecar (defaults, orphans, unknown status, bad dates, damaged or unreadable); the load/save pair, save order and a failed sidecar write |
-| `check_core_merge` | 24 | 0.6 s | Merge from File: what counts as an addition, conflict or deletion, which side wins, appending additions, and whole-file merges for every combination of choices |
-| `check_core_workflows` | 44 | 1.7 s | A real main window: Edit dialog, bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Merge from File, Restore from Backup, autosave |
-| `check_core_dates_filter` | 19 | 0.3 s | Date formats, and every filter-bar option |
-| `check_core_glossary` | 23 | 0.3 s | Glossary files in any encoding, separator and header layout; bad rows; writing; term matching incl. plurals |
-| `check_core_backup` | 26 | 0.5 s | Backup folders and their `backup_info.json`, pruning, the "skip if backed up within" interval, every backup location, the fallback to the app folder |
-| `check_core_settings` | 20 | 0.4 s | Settings file: filling in new keys, atomic save, the daily `.backups.zip`, recovery from a damaged file |
-| `check_core_translation` | 46 | 1.6 s | Language codes, glossary in the prompt, every engine (Claude, DeepL, LibreTranslate, Google, MyMemory, Microsoft) with the network faked, error messages, Google's rate-limit retry, the Claude CLI started without a console window |
+| `check_core_merge` | 35 | 1.0 s | Merge from File: what counts as an addition, conflict or deletion, which side wins, appending additions, and whole-file merges for every combination of choices; Sync Keys: the diff, where inserted keys land, deletions default to Keep, values untouched |
+| `check_core_workflows` | 68 | 4.0 s | A real main window: Edit dialog, bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Merge from File, Restore from Backup (with its sidecar), autosave, the reformat prompt, the Robo-Translate skip rule, the placeholder line, New Language, the trimmed-paste note |
+| `check_core_dates_filter` | 21 | 0.4 s | Date formats, every filter-bar option (the Check filter included) and placeholder detection |
+| `check_core_glossary` | 23 | 0.4 s | Glossary files in any encoding, separator and header layout; bad rows; writing; term matching incl. plurals |
+| `check_core_backup` | 30 | 0.6 s | Backup folders and their `backup_info.json`, pruning, the "skip if backed up within" interval, every backup location, the fallback to the app folder |
+| `check_core_settings` | 20 | 0.5 s | Settings file: filling in new keys, atomic save, the daily `.backups.zip`, recovery from a damaged file |
+| `check_core_translation` | 47 | 1.8 s | Language codes, glossary in the prompt, every engine (Claude, DeepL, LibreTranslate, Google, MyMemory, Microsoft) with the network faked, error messages, Google's rate-limit retry, the Claude CLI started without a console window |
 | `check_core_corpus` | 5 per file | 0.3 s + files | Your real-world files in `data/real/` (see below) |
-| `check_run_all_report` | 19 | 0.3 s | The runner's saved report |
+| `check_run_all_report` | 19 | 0.4 s | The runner's saved report |
 
 **UI checks**: older scripts, one program each.
 
 | Check | Time | What it covers |
 |---|---:|---|
-| `check_autosave_fit` | 1.4 s | Autosave & Backup: spin boxes and the location combo wide enough for their text at every font size |
-| `check_checkbox_mark` | 0.3 s | The tick in checked, disabled and unchecked check boxes, both themes |
-| `check_combobox` | 1.8 s | Drop-down arrows and pop-up lists on every surface: size, contrast, width, selected row |
-| `check_date_picker` | 2.0 s | The date fields and their scroll-wheel pop-up: keys, mouse, clamping, placement |
-| `check_file_properties` | 0.6 s | File → Properties: editing the sidecar header, the facts shown, the dialog, save and reopen |
-| `check_groupbox_title` | 3.1 s | Group-box borders run through the middle of their titles at every font size |
-| `check_merge_compare` | 1.3 s | The Merge row compare pop-up: highlighted differences, choices, keys, sizes |
-| `check_notifications` | 5.9 s | The info bar's message queue, colours, history pop-up and startup messages |
-| `check_read_after_exec` | 0.4 s | Merge and Restore dialogs still hand over their results after they close |
-| `check_scrollbar` | 0.7 s | Scrollbar handle stays clear of the arrows, keeps a minimum length, arrows drawn |
-| `check_shortcuts_fit` | 1.4 s | Keyboard Shortcuts: buttons fit their text and the columns line up |
-| `check_spinbox_arrows` | 0.5 s | Spin-box arrows visible and large enough, enabled and disabled |
-| `check_translation_settings_size` | 1.5 s | Translation Settings fits each engine without jumping or clipping |
+| `check_autosave_fit` | 1.7 s | Autosave & Backup: spin boxes and the location combo wide enough for their text at every font size |
+| `check_checkbox_mark` | 0.4 s | The tick in checked, disabled and unchecked check boxes, both themes |
+| `check_combobox` | 2.0 s | Drop-down arrows and pop-up lists on every surface: size, contrast, width, selected row |
+| `check_date_picker` | 2.2 s | The date fields and their scroll-wheel pop-up: keys, mouse, clamping, placement |
+| `check_file_properties` | 0.7 s | File → Properties: editing the sidecar header, the facts shown, the dialog, save and reopen |
+| `check_groupbox_title` | 3.4 s | Group-box borders run through the middle of their titles at every font size |
+| `check_merge_compare` | 1.6 s | The Merge row compare pop-up: highlighted differences, choices, keys, sizes |
+| `check_notifications` | 7.4 s | The info bar's message queue, colours, history pop-up and startup messages |
+| `check_read_after_exec` | 0.5 s | Merge and Restore dialogs still hand over their results after they close |
+| `check_scrollbar` | 0.9 s | Scrollbar handle stays clear of the arrows, keeps a minimum length, arrows drawn |
+| `check_shortcuts_fit` | 1.9 s | Keyboard Shortcuts: buttons fit their text and the columns line up |
+| `check_spinbox_arrows` | 0.7 s | Spin-box arrows visible and large enough, enabled and disabled |
+| `check_translation_settings_size` | 1.7 s | Translation Settings fits each engine without jumping or clipping |
 
 The UI checks run offscreen, where Qt has no fonts and draws text as boxes. Some of them can
 also run on real fonts, which briefly shows their windows:

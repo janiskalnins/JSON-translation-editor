@@ -1,6 +1,6 @@
 ---
 paths:
-  - "xml_translation_editor.py"
+  - "json_translation_editor.py"
   - "*.ps1"
   - "*.bat"
 ---
@@ -8,7 +8,7 @@ paths:
 # Security
 
 - Never pass user-controlled strings to `subprocess`, `os.system`, or shell expansion. Use parameterized args.
-- XML/file paths from user input must be validated before open/write operations.
+- Language file paths from user input must be validated before open/write operations.
 - API keys (translation engines) are stored in settings JSON only — never in source, never logged.
 - Launcher scripts (`.ps1`, `.bat`): wrap every native command in `try/catch`; check `$LASTEXITCODE`. No `eval` on user input.
 - Never expose internal file paths or exception details in user-visible error dialogs.

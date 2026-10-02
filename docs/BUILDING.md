@@ -1,4 +1,4 @@
-# XML Translation Editor — Installing, Running and Building
+# JSON Translation Editor — Installing, Running and Building
 
 Requirements, manual installation, the launchers, the project's files, building the standalone `.exe` and the developer checks. For what the app does, see the [README](../README.md) and [FEATURES.md](FEATURES.md).
 
@@ -36,7 +36,7 @@ The Claude, DeepL, and LibreTranslate engines use only the Python standard libra
 **You normally don't need to install anything yourself:**
 
 - **Running from source** — just double-click `run_translator.bat` or run `run_translator.ps1` (see [Running the Application](#running-the-application)). The launcher detects Python, PySide6, and every other dependency the app needs and installs whatever is missing automatically via `winget`/`pip`/`npm`.
-- **Standalone executable** — if you were given `XMLTranslationEditor.exe` (see [Building a Standalone Executable](#building-a-standalone-executable)), there is nothing to install at all. Python and every dependency are bundled inside the `.exe` — just run it.
+- **Standalone executable** — if you were given `JSONTranslationEditor.exe` (see [Building a Standalone Executable](#building-a-standalone-executable)), there is nothing to install at all. Python and every dependency are bundled inside the `.exe` — just run it.
 
 The [Manual Installation](#manual-installation) steps below are only needed as a fallback, for example if the machine has no internet access, `winget`/`npm` are blocked by policy, or the automatic install otherwise fails.
 
@@ -85,10 +85,10 @@ Double-click `run_translator.bat`. The launcher:
 powershell -ExecutionPolicy Bypass -File run_translator.ps1
 ```
 
-Pass an XML file path to open it on startup:
+Pass a JSON file path to open it on startup:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File run_translator.ps1 "C:\Translations\Latvian.xml"
+powershell -ExecutionPolicy Bypass -File run_translator.ps1 "C:\Translations\es.json"
 ```
 
 The PowerShell launcher performs the same pre-flight checks as the batch launcher and includes the same winget Python auto-install fallback.
@@ -98,8 +98,8 @@ The launcher window is automatically resized and centred on the primary screen. 
 ### Option C — Direct Python
 
 ```
-python xml_translation_editor.py
-python xml_translation_editor.py "C:\Translations\Latvian.xml"
+python json_translation_editor.py
+python json_translation_editor.py "C:\Translations\es.json"
 ```
 
 ---
@@ -108,16 +108,16 @@ python xml_translation_editor.py "C:\Translations\Latvian.xml"
 
 | File | Purpose |
 |------|---------|
-| `xml_translation_editor.py` | Main application source |
+| `json_translation_editor.py` | Main application source |
 | `run_translator.ps1` | PowerShell launcher — checks Python, installs PySide6, starts app |
 | `run_translator.bat` | Hardened batch launcher with multi-strategy fallback chain |
 | `build_exe.ps1` | Builds a standalone `.exe` using PyInstaller (full pre-flight checks) |
 | `build_exe.bat` | Hardened batch wrapper for `build_exe.ps1`, with direct-Python fallback |
-| `translation_editor_settings.json` | Auto-generated settings file (created on first run) |
-| `translation_editor_settings.backups.zip` | Auto-created daily snapshots of the settings file, so API keys survive damage (see [Settings backup](FEATURES.md#settings-backup)) |
-| `Latvian.xml` | Example translation file |
+| `json_translation_editor_settings.json` | Auto-generated settings file (created on first run) |
+| `json_translation_editor_settings.backups.zip` | Auto-created daily snapshots of the settings file, so API keys survive damage (see [Settings backup](FEATURES.md#settings-backup)) |
+| `es.json` | Example translation file |
 | `tests/` | Developer checks: `run_all.py`, the offscreen check scripts, sample data and the pre-commit hook (see [Running the Checks](#running-the-checks)) |
-| `XML_Translation_file_Backups/` | Auto-created backup folder (see [Backup](FEATURES.md#backup)) |
+| `JSON_Translation_file_Backups/` | Auto-created backup folder (see [Backup](FEATURES.md#backup)) |
 
 ---
 
@@ -146,7 +146,7 @@ The build script performs a full pre-flight check before building:
 
 The script handles non-interactive environments (scheduled tasks, CI) without throwing errors.
 
-Everything needed to hand the app to someone else ends up in `dist\`: `XMLTranslationEditor.exe` and `User_Guide.pdf`.
+Everything needed to hand the app to someone else ends up in `dist\`: `JSONTranslationEditor.exe` and `User_Guide.pdf`.
 
 Because the `.exe` bundles PySide6 and every translation engine into a single ~170 MB
 file, most of the startup delay is the file unpacking itself into a temp folder before

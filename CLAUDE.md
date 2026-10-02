@@ -1,4 +1,4 @@
-# CLAUDE.md — XML Translation Editor
+# CLAUDE.md — JSON Translation Editor
 
 Guidance for Claude Code when working with this project.
 
@@ -6,24 +6,29 @@ Guidance for Claude Code when working with this project.
 
 ## Project overview
 
-A single-file PySide6 desktop application (`xml_translation_editor.py`) for editing XML
-localization files.  The XML format uses paired `<string name="...">translation</string>`
-elements; the file is parsed into a plain Python list and written back with minimal
-structural changes so diffs stay clean.
+A single-file PySide6 desktop application (`json_translation_editor.py`) for editing flat JSON
+language files: one JSON object per file, the English source text as the key and its translation
+as the value (`"Guide point": "Punto guía"`).  A file is read in key order and written back in the
+layout it was found in (indent, line ending, BOM, escaping), so an unchanged file saves
+byte-identical and an edit changes only that entry's line.  Status, translator and modify date,
+which the JSON cannot hold, live in a sidecar next to it, `<name>.json.meta` (see
+[Sidecar format](#sidecar-format)).  The editor was forked from XML Translation Editor v39
+(commit `c7c44e2`); the UI, translation engines, glossary, backups and tests carry over. The
+design of the fork is `docs/superpowers/specs/2026-10-02-json-translation-editor-fork-design.md`.
 
 Companion files:
 
 | File | Role |
 |------|------|
-| `xml_translation_editor.py` | Entire application — ~3 324 lines, no sub-packages |
+| `json_translation_editor.py` | Entire application — ~10 400 lines, no sub-packages |
 | `run_translator.ps1 / .bat` | Hardened Windows launchers (PS 5.1-compatible, winget fallback) |
 | `build_exe.ps1 / .bat` | PyInstaller build scripts with full pre-flight checks |
-| `translation_editor_settings.json` | Runtime settings — auto-created, never committed |
-| `translation_editor_settings.backups.zip` | Daily snapshots of the settings file (holds API keys) — auto-created, never committed. See [Settings](#settings) → "Settings backup & recovery" |
-| `XML_Translation_file_Backups/` | Auto-created backup tree — never committed |
-| `Latvian.xml` | Primary test/demo file |
+| `json_translation_editor_settings.json` | Runtime settings — auto-created, never committed |
+| `json_translation_editor_settings.backups.zip` | Daily snapshots of the settings file (holds API keys) — auto-created, never committed. See [Settings](#settings) → "Settings backup & recovery" |
+| `JSON_Translation_file_Backups/` | Auto-created backup tree — never committed |
+| `es.json`, `id.json`, `it.json`, `pt-BR.json` | The user's own language files at the repo root — never committed by tooling, never edited by hand here; a `.json.meta` beside them is an untracked local sidecar. The frozen test copies are `tests/data/es.json` + `es.json.meta` + `es.glossary.csv` |
 | `Tools/` | Screenshot capture, User Guide build, README image and doc-link scripts — gitignored, never committed. See [Tools folder](#tools-folder) |
-| `docs/FEATURES.md`, `docs/BUILDING.md`, `docs/images/` | User reference (features, settings, XML format, troubleshooting), install and build details, and the README's generated mockup images |
+| `docs/FEATURES.md`, `docs/BUILDING.md`, `docs/images/` | User reference (features, settings, file formats, troubleshooting), install and build details, and the README's generated mockup images |
 | `tests/` | Offscreen checks, `run_all.py`, the pre-commit hook and frozen sample data — tracked. See [Tests folder](#tests-folder) and `tests/README.md` |
 
 ---
@@ -41,8 +46,8 @@ scratchpad.
 Current contents (the offscreen checks moved to [tests/](#tests-folder)):
 
 - **`take_screenshots.py`** — renders the app's main window and every dialog to
-  PNGs (`Tools/screenshots/*_dark.png`) using `Latvian.xml` as sample data,
-  never real user data. Runs on Qt's **native** platform, not `offscreen` —
+  PNGs (`Tools/screenshots/*_dark.png`) using a scratch copy of `tests/data/es.json` and its
+  `.meta` as sample data, never real user data and never the root `es.json`. Runs on Qt's **native** platform, not `offscreen` —
   verified directly that `QT_QPA_PLATFORM=offscreen` has zero font families
   registered on this machine (`QFontDatabase.families()` returns `[]`), so
   every screenshot rendered as tofu boxes under it; the native Windows
@@ -68,7 +73,7 @@ Current contents (the offscreen checks moved to [tests/](#tests-folder)):
      silently regressed.
 
   Requires `pip install pypdf reportlab pillow` — doc-tooling only, never a
-  runtime dependency of `xml_translation_editor.py` itself, and exempt from
+  runtime dependency of `json_translation_editor.py` itself, and exempt from
   the "no new dependencies" rule below for exactly that reason. `pikepdf` is
   not a pipeline dependency (the script never imports it) but is the
   recommended verification tool after any change to the link/footer/page
@@ -135,7 +140,7 @@ and confirm every link's `/Dest` is a self-contained array, not a name string
 requiring a catalog lookup.
 
 To refresh the User Guide after a UI change: bump `APP_VERSION` in
-`xml_translation_editor.py` *first* (the Welcome screen, title bar, and the
+`json_translation_editor.py` *first* (the Welcome screen, title bar, and the
 guide's own cover all read it), then run `python Tools/take_screenshots.py
 dark` and `… light`, then `python Tools/make_readme_images.py` (README mockups) and
 `python Tools/build_user_guide.py`, then verify per the two paragraphs above and look at the
@@ -156,9 +161,8 @@ tests/
   run_all.py        run every check (or the ones named), each in its own process
   check_*.py        the checks, one program each
   core_support.py   shared helpers for the check_core_*.py suites (not a check: no check_ prefix)
-  data/             frozen sample files: Latvian.xml (the committed version) and copies of the
-                    manual-test files (merge test, glossary, restored copies)
-  data/real/        your real-world XML files for check_core_corpus.py (gitignored except README)
+  data/             frozen sample files: es.json, its es.json.meta sidecar and es.glossary.csv
+  data/real/        your real-world *.json files for check_core_corpus.py (gitignored except README)
   hooks/pre-commit  runs run_all.py before a commit that touches the app or tests/
   reports/          Markdown report of every run (gitignored, local history)
 ```
@@ -184,12 +188,12 @@ tests/
   `QT_QPA_PLATFORM=windows` left in the shell never flashes windows. A check is stopped after
   300 s (`TIMEOUT`, a failure). To run one natively on purpose, run the script itself:
   `QT_QPA_PLATFORM=windows python tests/check_groupbox_title.py`.
-- **Sample data:** the checks read `tests/data/Latvian.xml`, never the root `Latvian.xml`, which
+- **Sample data:** the checks read `tests/data/es.json`, never the root `es.json`, which
   manual testing edits. Update the frozen copy only on purpose (and re-run the checks).
 - **Pre-commit hook:** enabled once per clone with `git config core.hooksPath tests/hooks` (all
   worktrees share the setting, but only a worktree whose branch contains `tests/` has the hook —
   on an older branch, commits run no hook until that branch has `tests/`). It runs the checks
-  (~27 s) when the staged files include `xml_translation_editor.py` or anything under `tests/`, and
+  (~35 s) when the staged files include `json_translation_editor.py` or anything under `tests/`, and
   blocks the commit if one fails; docs-only commits skip it. It tests the working tree, so unstaged
   edits count too. `tests/hooks/*` is checked out with LF (`.gitattributes`): a CRLF hook fails with
   "not found". Never commit with `--no-verify` on your own; that is the user's call.
@@ -199,20 +203,20 @@ tests/
   and hook pick it up automatically. Don't start child processes that can outlive the check: the
   runner's timeout stops the check itself, but it keeps waiting while a grandchild holds the output
   pipe open.
-- **Core suites (`check_core_*.py`):** stdlib `unittest`, one area per file (`xml`, `dates_filter`,
+- **Core suites (`check_core_*.py`):** stdlib `unittest`, one area per file (`json`, `dates_filter`,
   `merge`, `glossary`, `backup`, `settings`, `translation`, `workflows`), one assertion per test,
   input tables through `subTest`. Each imports `core_support as cs` first: that sets the offscreen
   platform, a scratch working folder, `sys.argv[0]` (the backup root) and the glyph cache.
   `cs.run_suite(module)` prints `FAIL <Class.test>: <first line>` per failure (plus the traceback,
   indented, for an error) and the `PASSED`/`FAILED` line last, which is the runner's contract. Every
-  test that saves an XML file ends with `cs.assert_xml_intact(tc, path, names)`, the **oracle**, or
-  has a sibling test on the same steps that does (a byte-for-byte comparison needs none):
-  `xml.etree` (an independent parser; the no-etree rule is for the app) must find a well-formed
-  file holding exactly those `<string name>` values, in order, none twice.
+  test that saves a language file ends with `cs.assert_json_intact(tc, path, names)`, the **oracle**,
+  or has a sibling test on the same steps that does (a byte-for-byte comparison needs none): the
+  standard `json` module (an independent reader; the app's own is `parse_json_bytes`) must read
+  exactly those keys, in order, none twice.
   `cs.open_window(path, backup=False, **answers)` builds a real `MainWindow` inside
   `cs.patched_modals()`, which answers every `QMessageBox`, both file dialogs and the translator
   prompt from `answers` and records what was shown (`modals.shown`). Optional coverage, dev-only
-  like `pypdf`: `pip install coverage`, then `python -m coverage run tests/check_core_xml.py`.
+  like `pypdf`: `pip install coverage`, then `python -m coverage run tests/check_core_json.py`.
 
 The checks:
 
@@ -255,17 +259,15 @@ The checks:
   `bg4` fill, wide enough for the widest date, and that an entry dated 1998 survives opening and
   cancelling the pop-up plus a status-only Save. Runs from a throwaway folder with the startup
   modals patched, like `check_combobox.py`.
-- **`check_file_properties.py`** — offscreen check for File → Properties: `build_header_xml()`
-  (replace in place, insert a missing attribute, escaping, backslashes literal, `xsi:Version` not
-  matched, the `<?xml` line untouched, `ValueError` with no root tag), a `save_file()` →
-  `parse_file()` round trip, `parse_version_parts()`/`format_version()`, `describe_culture()`,
-  `compute_file_facts()` (including a file gone from disk), the dialog itself (spin-box limits,
-  unpadded values, blank name and invalid stored version block OK, `.` jumps to the next box),
-  and then a real `MainWindow` on a copy of `Latvian.xml`: OK with changes, OK with none, Cancel,
-  no file open, and Save + reopen. The Save comparison is against a plain load + save of the same
-  file, not the raw file: `_load()` rewrites every date into this machine's short-date format, and
-  those rows are rebuilt. Runs from
-  a throwaway folder with the startup modals patched, like `check_combobox.py`.
+- **`check_file_properties.py`** — offscreen check for File → Properties: a
+  `save_translation_file()` → `read_file_header()` round trip (a name with `&` and `"`, the
+  language file left unchanged), `parse_version_parts()`/`format_version()`, `describe_culture()`,
+  `compute_file_facts()` (including a file gone from disk), the dialog itself (language-code
+  validation, spin-box limits, unpadded values, blank name and invalid stored version block OK,
+  `.` jumps to the next box), and then a real `MainWindow` on a copy of `es.json` and its sidecar:
+  OK with changes (header, info bar, title bullet; Save + reopen persists them in the sidecar and
+  leaves the language file byte for byte as it was), OK with none, Cancel, and no file open. Runs
+  from a throwaway folder with the startup modals patched, like `check_combobox.py`.
 - **`check_merge_compare.py`** — offscreen check for the Merge row compare pop-up:
   `merge_row_reason()` (every phrase, an unparseable date, a tie) and `merge_diff_html()` (no tint
   on equal texts, changed word tinted on both sides, insertion on one, `<`/`>`/`&` escaped, `<br>`,
@@ -373,31 +375,35 @@ The checks:
   folder of its own, `SETTINGS_FILE` patched), and their startup order after the recovery
   dialog and before the translator message. 1920 × 1080 offscreen screen from a
   `configfile`, throwaway folder, startup modals patched, like `check_merge_compare.py`.
-- **`check_core_xml.py`**: parsing (every attribute, defaults, header, entities, Latvian text),
-  escaping, the header round trip, corruption guards (self-closing rows, a raw `>` in an attribute,
-  `<strings>`/`<stringTable>`, `data-name`, empty rows, edits to missing attributes), line endings
-  (LF, CRLF, BOM, comments, merge additions), unchanged rows (the frozen sample byte-identical, one
-  edited line, CDATA), the atomic save and `_remove_entry_segment()`.
-- **`check_core_merge.py`**: `compute_merge_diff`, `_pick_newer_entry`, `insert_additions`, and
-  whole-file merges for every choice combination through `MainWindow._apply_merge_diff()`.
-- **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, legacy dates, bulk
-  status, delete, Close File (Save/Discard/Cancel, failed save), Save As, Merge from File, Restore
-  (overwrite with its safety backup, copy, glossary, MD5 mismatch), autosave.
+- **`check_core_json.py`**: parsing and every refusal (invalid JSON, not an object, a non-text
+  value, a duplicate key, not UTF-8), style detection (indent, compact, CRLF, BOM, trailing
+  newline, escaped non-ASCII), writing (the frozen sample byte-identical, one edited line, values
+  holding `\n`, `"` and `\\`), the sidecar (parse, defaults, orphans, unknown status, bad date, damaged
+  file moved aside, path and language guess), and `load_translation_file()` /
+  `save_translation_file()` including the split failure (JSON written, sidecar not).
+- **`check_core_merge.py`**: `compute_merge_diff`, `_pick_newer_entry`, whole-file merges for every
+  choice combination through `MainWindow._apply_merge_diff()`, and Sync Keys (`compute_sync_diff`,
+  `insert_synced`, the dialog flow through `MainWindow._apply_sync()`).
+- **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, bulk status,
+  delete, Close File (Save/Discard/Cancel, failed save), Save, Save As, Merge from File, Restore
+  (overwrite with its safety backup, copy, glossary, sidecar, MD5 mismatch), autosave, the reformat
+  prompt, the Robo-Translate skip rule, the placeholder label, New Language and the trimmed-paste
+  note.
 - **`check_core_dates_filter.py`**, **`check_core_glossary.py`**, **`check_core_backup.py`**
   (`BackupThread.run()` in every location mode, the throttle, the fallback),
   **`check_core_settings.py`** (backfill, atomic save, daily archive, recovery),
   **`check_core_translation.py`** (every engine with the network patched, labels, the Claude CLI
   started with `CREATE_NO_WINDOW`).
-- **`check_core_corpus.py`**: every `*.xml` you put in `tests/data/real/` (local only: the folder
-  is gitignored apart from its README, since real files may be private) goes through six tests,
-  each a subTest named after the file and always on a copy in a temporary folder: the app and
-  `xml.etree` find the same rows in the same order; an unchanged save is byte-identical; editing
-  the middle row changes only that segment; deleting it leaves exactly the other rows and no new
-  blank line; merging the file into itself changes nothing (skipped for a file with duplicates,
-  which Merge refuses). One `NOTE` per file gives strings, duplicate groups and load/save time
-  for the report. An empty folder passes with a "skipped" note, so a fresh clone runs as usual.
-  Each file adds its own load/save time several times over to every run, the hook's included:
-  three files, one of 11 000 strings, took about 5 s.
+- **`check_core_corpus.py`**: every `*.json` you put in `tests/data/real/` (local only: the folder
+  is gitignored apart from its README, since real files may be private), with its `.json.meta`
+  when one sits beside it, goes through five tests, each a subTest named after the file and always
+  on a copy in a temporary folder: the app and the `json` module find the same keys in the same
+  order; an unchanged save is byte-identical (skipped, with a note, for a file that does not
+  round-trip in its own style); editing the middle entry changes only that line; deleting it leaves
+  exactly the other keys; merging the file into itself changes nothing. One `NOTE` per file gives
+  strings and load/save time for the report. An empty folder passes with a "skipped" note, so a
+  fresh clone runs as usual. Each file adds its own load/save time several times over to every
+  run, the hook's included.
 - **`check_run_all_report.py`**: `run_all.py`'s report from made-up results (header, summary,
   table row and test count, CRLF output, the Notes and Failures sections), `write_report()` (the file name,
   `latest.md`, pruning), and `main()` with the checks faked (report written, a failed write keeps
@@ -409,9 +415,9 @@ The checks:
 
 ```bash
 pip install PySide6
-python xml_translation_editor.py
+python json_translation_editor.py
 # optional: open a specific file directly
-python xml_translation_editor.py "C:\Translations\Latvian.xml"
+python json_translation_editor.py "C:\Translations\es.json"
 ```
 
 ---
@@ -420,29 +426,52 @@ python xml_translation_editor.py "C:\Translations\Latvian.xml"
 
 ### Data model
 
+The language file is a flat JSON object; the sidecar holds what the JSON cannot. Both are read and
+written by the module-level functions in the "JSON LANGUAGE FILE" and "SIDECAR" blocks of
+`json_translation_editor.py`, so they need no Qt and are tested directly by `check_core_json.py`.
+
 ```
-parse_file(path) → (segments, entries, culture, display_language, version)
+parse_json_bytes(raw)          → (pairs, JsonStyle)       # [(key, value), …] in file order
+dump_json_pairs(pairs, style)  → bytes                    # the file in that style
+load_translation_file(path)    → LoadedFile               # JSON + sidecar, ready for the window
+save_translation_file(path, entries, style, header, write_meta=True)   # JSON, then sidecar
 ```
 
-- **`segments`** — `list[str]`, alternating: even indices are non-`<string>` XML
-  fragments, odd indices are raw `<string …>…</string>` snippets.
-- **`entries`** — `list[StringEntry]`, one per `<string>` element.  Each entry
-  carries `seg_idx` pointing to its odd slot in `segments`.
-- **`culture`** — BCP-47 string read from the root element's `Culture` attribute
-  (e.g. `"lv-LV"`), used as the auto-translation target language.
-- **`display_language`** — human-readable language name from the `DisplayLanguage`
-  attribute (e.g. `"Latviešu"`), or `""` if absent.
-- **`version`** — `Version` attribute string (e.g. `"4.1.1140"`), or `""` if absent.
+- **`JsonStyle`** (frozen dataclass) — how the file was laid out: `indent` (one indent level, or
+  `None` for a compact one-line object), `newline` (`"\n"` / `"\r\n"`), `bom`, `trailing_newline`,
+  `ensure_ascii` (non-ASCII written as `\uXXXX`). `detect_json_style()` reads it from the text;
+  `DEFAULT_JSON_STYLE` (1-space indent, LF, no BOM, trailing newline, literal non-ASCII) is used
+  when no file is open.
+- **`LoadedFile`** — `entries`, `style`, `round_trips` (writing the entries back in `style`
+  reproduces the file's bytes), `header`, `notices` (`(text, level)` for the info bar) and
+  `meta_blocked` (the sidecar exists but could not be read, so it must never be overwritten).
+- **`StringEntry`** — `name` (the key, the English source), `text` (the value), `translator`,
+  `status`, `modify_date` (shown in the system short-date format; ISO in the sidecar) and
+  `position` (1-based place in the file when it was loaded). There are no raw segments: a save
+  writes every entry in `self.entries` order.
+- **`FileHeader`** (dataclass) — the sidecar's `language` code (`""` = guess it from the file
+  name), `language_name` and `version`. `MainWindow.header` holds the open file's; the properties
+  `target_culture` (`effective_language(header, current_file)`: the sidecar's code, else
+  `guess_language()` of the file name), `display_language` (`header.language_name`) and
+  `file_version` (`header.version`) read it, and everything that used the XML header's
+  `Culture`/`DisplayLanguage`/`Version` goes through them.
+- **`MetadataWriteError`** — the language file was saved but its sidecar was not.
+- **Sidecar API** — `meta_path_for()`, `parse_sidecar_bytes()` (raises `SidecarError`),
+  `apply_sidecar_meta()` (returns the warning texts), `build_sidecar_bytes()`, `read_file_header()`
+  (best effort: a missing or damaged sidecar gives an empty header, for backup manifests) and
+  `_keep_damaged_sidecar()`.
 
-On save, `build_string_xml(entry, original_seg)` rebuilds each `<string>` snippet
-in place; only attribute values and inner text change — tag structure and attribute
-order are preserved so diffs are minimal.
+On save, `dump_json()` writes `(entry.name, entry.text)` for every entry through
+`dump_json_pairs()`, which raises `ValueError` rather than drop an entry when two share a key.
 
 ### Key classes
 
 | Class | Responsibility |
 |-------|---------------|
-| `StringEntry` (dataclass) | One translation string — all attributes + `seg_idx` |
+| `StringEntry` (dataclass) | One translation string — key, value, status, translator, date, `position` |
+| `JsonStyle` (frozen dataclass) | How a language file is laid out; saves write it back the same way |
+| `LoadedFile` (dataclass) | What `load_translation_file()` returns: entries, style, `round_trips`, header, notices, `meta_blocked` |
+| `FileHeader` (dataclass) | The sidecar's language code, language name and version |
 | `Settings` | JSON settings file: load, save, `get(key, default)` |
 | `TranslationModel` | `QAbstractTableModel` wrapping `_all` / `_vis` entry lists |
 | `FilterEngine` | Pure-Python filter predicate; `apply(entries)→List[StringEntry]` |
@@ -459,15 +488,15 @@ order are preserved so diffs are minimal.
 | `MainWindow` | Top-level window; owns all state |
 | `Notice` (dataclass) | One info-bar message — `text`, `ms`, `level`, `time`; queued and kept in `MainWindow._notice_history` (see [UI labels / info bar](#ui-labels--info-bar)) |
 | `MessageHistoryPopup` | The history button's `Qt.Popup`: one read-only `QTextBrowser` with the session's messages newest first (time in `fg_dim`, text in its level's colour, `_history_html()`), 60 % of the window wide within 420–720 px, at most ~12 lines tall, above the button inside its screen. Created per open (`WA_DeleteOnClose`), no live update; Escape, a click outside or a second press on the button (`WA_NoMouseReplay`) closes it |
-| `PlainPasteTextEdit` | `QTextEdit` subclass — strips formatting and trims whitespace on paste |
+| `PlainPasteTextEdit` | `QTextEdit` subclass — strips formatting and trims whitespace on paste (the Edit window says so in its status line when a source with outer spaces would lose them) |
 | `StatusDelegate` | `QStyledItemDelegate` — draws the Status column as a pill and highlights the hovered row |
-| `ToggleSwitch` | Custom `QWidget` toggle switch — used for the tablet toggle in `EditDialog` (`tablet_toggle`) |
 | `FlowLayout` | Wrapping `QLayout` — used by `MergeConflictDialog`'s toolbar so its four captioned columns wrap onto new rows instead of truncating |
 | `MergeCompareDialog` | Merge dialog's row compare pop-up (double-click a row): source / open / incoming text side by side with changed words tinted, both sides' metadata, the row's two resolution buttons, Back/Forward. Keeps no state — writes into the row's Resolution combo (see [Merge from File](#merge-from-file)) |
+| `SyncDiff` (dataclass) | Result of `compute_sync_diff()`: `additions` (untranslated new entries) and `deletions` (entries the reference lacks); reviewed in `MergeConflictDialog(sync_mode=True)` (see [Sync Keys from File](#sync-keys-from-file)) |
 | `MergeRowInfo` (dataclass) | One Merge row as `MergeConflictDialog.row_info()` returns it: `kind`, `open_entry`, `incoming_entry` (either may be `None`), `combo` |
 | `TranslatorNameDialog` | Startup dialog — collects session translator name → `MainWindow.session_translator` |
 | `FontSettingsDialog` | View → Choose UI Font… — family + size + live preview, replaces `QFontDialog.getFont()` |
-| `FilePropertiesDialog` | File → Properties… — edits the root tag's `DisplayLanguage`/`Version`, shows Culture and read-only file facts (see [File Properties](#file-properties)) |
+| `FilePropertiesDialog` | File → Properties… — edits the sidecar header's language code, language name and version, and shows read-only file facts (see [File Properties](#file-properties)) |
 | `FileFacts` (dataclass) | Read-only facts for File Properties, built by `compute_file_facts()` |
 | `_WidePopupComboBox` | `QComboBox` whose popup is at least as wide as its widest item — every combo in the app is one (see "Combo box drop-downs and popups") |
 | `_DatePickerField` | Every date field (filter bar From/To, Edit's Date): a read-only `QDateEdit` that opens `_DateDrumPopup`; the wheel, other keys and typing do nothing (see "Date pickers") |
@@ -499,7 +528,7 @@ depends on `requests` internally, but no other part of the codebase may import o
 `ValueError` for missing required config or `RuntimeError` (message truncated to ~300
 chars) on API/network failure.
 
-Language codes are converted from the XML's BCP-47 `Culture` attribute (e.g. `de-DE`)
+Language codes are converted from the file's BCP-47 code (`MainWindow.target_culture`: the sidecar's `language`, else the file name's, e.g. `de-DE`)
 to the form each engine expects via `_culture_to_deepl()` (DeepL-specific mapping) or
 `_culture_to_bcp47()` (used by LibreTranslate and all three `deep-translator` engines).
 
@@ -543,8 +572,8 @@ and accepted; the window never clips and snaps to a correct size. When adding an
 `addRow(QLabel(), hint)`, not `addRow("", hint)` (see the `QFormLayout` pitfall).
 `python tests/check_translation_settings_size.py` is the regression check.
 
-**Per-file glossary.** Each XML file may have a paired glossary CSV,
-`<stem>.glossary.csv` (e.g. `Latvian.xml` → `Latvian.glossary.csv`), in the
+**Per-file glossary.** Each language file may have a paired glossary CSV,
+`<stem>.glossary.csv` (e.g. `es.json` → `es.glossary.csv`), in the
 same directory, computed by `glossary_path_for()`. It is parsed by
 `parse_glossary()` into `MainWindow.glossary` (a `List[GlossaryEntry]`)
 whenever a file is opened via `_load()`. Only the `claude` and
@@ -651,7 +680,7 @@ exist early, because `_recolor_row()` runs while rows are still being built
 in `_load_values()`, before `_apply_style()`; `_pt` just follows them.
 
 **Glossary in backup/restore.** `_create_backup()` also backs up
-`glossary_path_for(source_path)` into the same slot as the XML, using the
+`glossary_path_for(source_path)` into the same slot as the language file, using the
 same `backup.compress` setting, if the glossary file exists; the resulting
 `backup_info.json` gets `glossary_backed_up` (always present) plus
 `glossary_file`/`glossary_compressed`/`glossary_md5_checksum` (only when
@@ -678,16 +707,17 @@ otherwise delete `slot_dir` — and its glossary — before it's read.
 `_do_restore_after_backup()` then calls
 `_write_restored_glossary(dest_path, raw_bytes)`, which writes the
 already-read bytes to
-`glossary_path_for(dest_path)` — i.e. it always follows wherever the XML
+`glossary_path_for(dest_path)` — i.e. it always follows wherever the language file
 itself ended up, original location or `_restored_<timestamp>` copy — but only
-runs *after* the main XML write, so the safety backup in between still
+runs *after* the main language-file write, so the safety backup in between still
 captures `dest_path`'s true pre-restore glossary rather than the one this
 restore is about to write. The glossary result is its own message after
 "Restored…" — "Glossary restored" (info) or "Glossary restore failed"
 (error) — and a failure never blocks or rolls back the already-completed
-XML restore. `_write_restore_log()` adds
+language-file restore. `_write_restore_log()` adds
 `restored_glossary_to`/`glossary_md5_verified` to the log record only when
-a glossary restore was actually performed.
+a glossary restore was actually performed (and `restored_meta_to`/`meta_md5_verified`
+likewise for the sidecar).
 
 **`claude_subscription` — persistent-session model.** Unlike the other six engines,
 `claude_subscription` does not make a one-shot HTTP call per string. `MainWindow` owns
@@ -759,24 +789,26 @@ reach `translate()` while `self._queue` is still `None`. Both
 `MainWindow` (never to the dialog that creates them) and tracked in
 `MainWindow._translation_threads`, waited on the same way `_backup_threads` is in
 `closeEvent()` — a dialog closing can never risk destroying a still-running
-`TranslationThread`. See
-docs/superpowers/specs/2026-09-03-translation-thread-lifecycle-design.md — and, for the
-`cancel_current()` mechanism that spec introduced and this one replaced,
-docs/superpowers/specs/2026-09-04-claude-subscription-stream-desync-design.md.
+`TranslationThread`. The XML editor's design specs for this (translation-thread lifecycle, 2026-09-03, and the
+stream-desync spec of 2026-09-04 that replaced its `cancel_current()` mechanism) were not copied
+into this repository; this section is the reference.
 
 ### State ownership (MainWindow)
 
 ```python
-self.segments:      List[str]          # raw XML fragments
-self.entries:       List[StringEntry]  # all parsed entries
 self.model:         TranslationModel   # visible slice (filtered)
 self.filter_eng:    FilterEngine
 self.current_file:  Optional[Path]
 self.is_modified:   bool
 self.session_translator: str           # in-memory only, never persisted
-self.target_culture:   str             # from XML header — BCP-47 code, e.g. "lv-LV"
-self.display_language: str             # from XML header — human-readable name, e.g. "Latviešu"
-self.xml_version:      str             # from XML header — version string, e.g. "4.1.1140"
+self.header:        FileHeader         # the sidecar's language code / name / version
+self.json_style:    JsonStyle          # layout the file is written back in
+self.round_trips:   bool               # False: the first save asks "Reformat File" (_confirm_reformat)
+self._meta_blocked: bool               # the sidecar could not be read: never overwrite it
+# properties over self.header:
+self.target_culture    # BCP-47 code — the sidecar's, else guessed from the file name ("es", "pt-BR")
+self.display_language  # human-readable name, e.g. "Español (Argentina)"
+self.file_version      # version string, e.g. "1.0.0"
 ```
 
 ### Surfaces, bands and shared QSS helpers
@@ -802,7 +834,7 @@ The window canvas is `bg` (`#1e1e1e` dark, `#f0f0f0` light); data sits on lifted
 
 **Tokens.** `bar_border` (band lines and dividers), `hover_row` (main-grid row hover) and the AA-safe text colours `text_ok`, `text_warn`, `text_bad` (info-bar save status and message levels, the history button's dot, Merge column captions, danger-button text) exist in both themes; every text pair is at least 4.5:1. `fg_dim`/`dlg_info_fg` are `#9a9a9a` in the dark theme (`#888888` was 4.3:1 on the dialog surface). Hint text is sized from the configured UI font, never a fixed `8pt`/`9pt`: `max(8, pt - 1)` in the dialogs, `pt_small = max(7, pt - 1)` in `MainWindow._apply_theme()`. Scrollbar thickness follows the same convention — `scrollbar_px = max(12, pt + 5)`, not a fixed px — since a flat `10px` (the original value) read as too thin once actually compared against a chosen UI font, let alone a deliberately enlarged one; there is exactly one `QScrollBar` QSS rule, built by `_scrollbar_qss()` and interpolated only in `MainWindow._apply_theme()`, and every dialog inherits it the same way it inherits every other rule there (see "A widget's own stylesheet beats an inherited one" above — no dialog sets its own `QScrollBar` rule, so this one location governs the main table, Glossary, Merge, and Restore at once). No explicit HighDPI handling exists anywhere in this app (grep confirms it), because none is needed: Qt6 always scales logical-pixel QSS values, `scrollbar_px` included, by the OS display-scaling factor, so this stays visually consistent across different monitor resolutions without extra code.
 
-**Scrollbar handle and arrows.** The rule used to style only `::handle`, which had two visible defects on a long table (11 000+ rows): the handle sat *on top of* the up/down arrow buttons whenever the view was scrolled to the top or bottom, and it was a 24 px pill (the horizontal one had no minimum at all). Cause, verified by rendering offscreen under `windows11`, `windowsvista` and `Fusion` alike: with no `::add-line`/`::sub-line` rules the style sheet lays the handle out over the *whole* bar while the base style still draws its buttons underneath. `_scrollbar_qss()` therefore (1) reserves `px` of margin at both ends of the bar and positions `::add-line`/`::sub-line` explicitly (`subcontrol-origin: margin`), so the handle can only travel between the buttons; (2) sets a minimum handle length that scales with the UI font like the thickness does: `2 × px` for every bar, `4 × px` (60 px at the default 10 pt) inside a `QAbstractItemView` (tables, trees), where thousands of rows shrink the handle to a sliver — a single `4 × px` minimum was tried first and froze the handle in the Edit dialog's 100 px-tall source box at UI fonts of 12 pt and up (groove no longer than the handle, so it looked full-length and could not be dragged; the old `24 px` never did this), which is why the larger minimum is scoped to item views rather than global; (3) supplies the arrow glyphs. Styling the buttons makes Qt stop drawing its own glyph, and QSS cannot draw one by itself — each alternative was tried and verified to fail: an inline `data:` URI in `image: url(...)` renders nothing (the prominent checkbox's SVG tick had exactly this defect — a checked box painted a plain accent square — and now uses the same file mechanism, see "Prominent checkbox style" under Qt patterns), a border-triangle renders as a solid square, and margin-only (no button rules) puts the down button inside the track with the handle still covering it. So `_write_scrollbar_arrows()` renders four small PNGs with `QPainter` in the `fg_dim` colour and, through the shared `_write_glyph_pngs()` (also used for the checkbox tick), writes them to `%LOCALAPPDATA%\cache\XMLTranslationEditor\glyphs\` (`QStandardPaths.GenericCacheLocation`), referenced as `image: url("…")`. The folder is deliberately **not** under `%TEMP%`: `TEMP`/`TMP` can point at a shared, writable folder, and these files are handed to Qt's image decoder — anyone who could pre-create the deterministic file name there could feed it arbitrary image data. The file name carries a hash of the PNG bytes, so a changed colour, size or drawing gets a new file; an existing file is rewritten only when its bytes differ (`_file_holds()`), so a corrupt or planted one is repaired while a healthy one another running instance may be reading is never touched, and losing the `os.replace()` race to such an instance (both start with the file missing) is not a failure since its file is identical. The cost is that superseded files linger in the cache folder, a few hundred bytes each. Any exception on this path — an unusable folder, a full disk, a PySide API change — is recorded by `_log_error()` and `_scrollbar_qss()` then omits the `image:` rules: the buttons stay correctly placed but blank, never a broken layout, and the app still starts. The glyph is rendered at 4× the button size (`_GLYPH_SUPERSAMPLE`) and scaled down by the style sheet: at 1× the result is identical to a 1× image, but at 200 % display scaling (verified offscreen with `QT_SCALE_FACTOR=2`) it stays crisp where a 1× image is visibly bilinear-soft. `python tests/check_scrollbar.py` is the regression check (see the Tools folder section): both themes, four UI font sizes, a 11 000-row table, a 2 000-column table and a 100 px text box; handle position at min/mid/max, handle travel, minimum length, glyphs painted; plus the unwritable-folder fallback, contained failures, repair of a corrupt file, the lost write race, and the cache folder not being under the shared temp root.
+**Scrollbar handle and arrows.** The rule used to style only `::handle`, which had two visible defects on a long table (11 000+ rows): the handle sat *on top of* the up/down arrow buttons whenever the view was scrolled to the top or bottom, and it was a 24 px pill (the horizontal one had no minimum at all). Cause, verified by rendering offscreen under `windows11`, `windowsvista` and `Fusion` alike: with no `::add-line`/`::sub-line` rules the style sheet lays the handle out over the *whole* bar while the base style still draws its buttons underneath. `_scrollbar_qss()` therefore (1) reserves `px` of margin at both ends of the bar and positions `::add-line`/`::sub-line` explicitly (`subcontrol-origin: margin`), so the handle can only travel between the buttons; (2) sets a minimum handle length that scales with the UI font like the thickness does: `2 × px` for every bar, `4 × px` (60 px at the default 10 pt) inside a `QAbstractItemView` (tables, trees), where thousands of rows shrink the handle to a sliver — a single `4 × px` minimum was tried first and froze the handle in the Edit dialog's 100 px-tall source box at UI fonts of 12 pt and up (groove no longer than the handle, so it looked full-length and could not be dragged; the old `24 px` never did this), which is why the larger minimum is scoped to item views rather than global; (3) supplies the arrow glyphs. Styling the buttons makes Qt stop drawing its own glyph, and QSS cannot draw one by itself — each alternative was tried and verified to fail: an inline `data:` URI in `image: url(...)` renders nothing (the prominent checkbox's SVG tick had exactly this defect — a checked box painted a plain accent square — and now uses the same file mechanism, see "Prominent checkbox style" under Qt patterns), a border-triangle renders as a solid square, and margin-only (no button rules) puts the down button inside the track with the handle still covering it. So `_write_scrollbar_arrows()` renders four small PNGs with `QPainter` in the `fg_dim` colour and, through the shared `_write_glyph_pngs()` (also used for the checkbox tick), writes them to `%LOCALAPPDATA%\cache\JSONTranslationEditor\glyphs\` (`QStandardPaths.GenericCacheLocation`), referenced as `image: url("…")`. The folder is deliberately **not** under `%TEMP%`: `TEMP`/`TMP` can point at a shared, writable folder, and these files are handed to Qt's image decoder — anyone who could pre-create the deterministic file name there could feed it arbitrary image data. The file name carries a hash of the PNG bytes, so a changed colour, size or drawing gets a new file; an existing file is rewritten only when its bytes differ (`_file_holds()`), so a corrupt or planted one is repaired while a healthy one another running instance may be reading is never touched, and losing the `os.replace()` race to such an instance (both start with the file missing) is not a failure since its file is identical. The cost is that superseded files linger in the cache folder, a few hundred bytes each. Any exception on this path — an unusable folder, a full disk, a PySide API change — is recorded by `_log_error()` and `_scrollbar_qss()` then omits the `image:` rules: the buttons stay correctly placed but blank, never a broken layout, and the app still starts. The glyph is rendered at 4× the button size (`_GLYPH_SUPERSAMPLE`) and scaled down by the style sheet: at 1× the result is identical to a 1× image, but at 200 % display scaling (verified offscreen with `QT_SCALE_FACTOR=2`) it stays crisp where a 1× image is visibly bilinear-soft. `python tests/check_scrollbar.py` is the regression check (see the Tools folder section): both themes, four UI font sizes, a 11 000-row table, a 2 000-column table and a 100 px text box; handle position at min/mid/max, handle travel, minimum length, glyphs painted; plus the unwritable-folder fallback, contained failures, repair of a corrupt file, the lost write race, and the cache folder not being under the shared temp root.
 
 **Spin-box buttons and arrows.** A `QSpinBox { background; border; padding }` rule moves the whole widget to style-sheet rendering, and with no `::up-button`/`::down-button`/arrow rules the buttons collapse to a 14 px strip holding a 3-4 px speck of an arrow in a colour that barely differs from the field — reported as "the arrows in the Choose UI Font dialog are barely visible" (the Autosave & Backup dialog has the identical rule and the identical defect). Verified by rendering under Fusion with the app's theme palette on the native platform: a bare, unstyled spin box draws proper ~8 × 4 px triangles, so the base rule is the cause, not Fusion. Only the dialogs whose `QSpinBox` has a base rule (Choose UI Font, Autosave & Backup, File Properties) interpolate `_spinbox_qss()`; Shortcuts' delay box has none, is drawn natively and needs nothing. Like the scrollbar, QSS cannot draw the arrow, so `_write_spin_arrows()` renders four PNGs through `_write_glyph_pngs()` (same cache folder and failure handling; unwritable folder → blank but correctly placed buttons, no image rule): up/down in `fg`, plus `dlg_btn_dis_fg` variants for `:disabled`, which matters because Autosave & Backup enables and disables its spin boxes at runtime. The triangle is `_SPIN_ARROW_FILL` = 80 % of its `max(10, pt + 2)` px box (scrollbar arrows use 54 %), the button is `px + 2` wide (14 px at the default 10 pt, exactly the old strip), both scale with the UI font, and the strip is `bg3` (the scrollbar's own button surface; hover `border2`). **Token pitfall:** `dlg_btn_bg` is the *blue primary-button* fill, not a neutral one — an arrow in `fg` on it measured 4.3:1 dark / 3.7:1 light, which is what the regression check caught. **Text room:** Autosave & Backup's spin boxes used to be a fixed 130 px, so the strip's width came straight out of the text area and "Always back up" (the widest value) was cut from 12 pt ("ays back up" at 14 pt). They are now as wide as the widest one's size hint, which covers the minimum, the maximum with its suffix, the special text and the button strip, and is recomputed from the font on every open (`AutosaveBackupDialog._align_columns()`); `python tests/check_autosave_fit.py` checks the fit. `python tests/check_spinbox_arrows.py` is the regression check (see the Tools folder section).
 
@@ -867,36 +899,53 @@ consistent with the nav button style.  Do not use `"Shortcut: {key}"` format.
 
 ```
 _open()  →  QFileDialog  →  _load(path)
-_load()  →  parse_file() →  model.load() → _apply_filters()
-                          → _reconfigure_autosave()
-                          → _create_backup(path)
+_load()  →  load_translation_file() → model.load() → _apply_filters()
+                                    → _reconfigure_autosave()
+                                    → _create_backup(path)
 
 _save()  →  _write(current_file)
-_write() →  save_file(path, segments, entries)
+_write() →  _confirm_reformat(path) → _write_files(path) → save_translation_file(...)
+                                    → _after_write(path)
 
 _close_file() → _confirm_close_file() → resets state → model.load([])
                                        → _apply_filters()
                                        → _reconfigure_autosave()
 ```
 
-`parse_file()` reads bytes, so the segments keep the file's own line endings and BOM; each row is
-read by `_entry_from_segment()`, and `name`/`text` read `\r\n` as `\n`, so the Edit dialog, merge
-matching and glossary matching see the same text in a CRLF and an LF file. `save_file()` writes a
-row back **byte for byte** when its values equal what its original segment holds (legacy `&#x27;`
-escapes and CDATA included), so a Save diff shows only the rows really edited. A changed row goes
-through `build_string_xml()` with the file's own line ending (`_file_newline()`: CRLF when the
-text between rows holds one). The file is written through `_atomic_write_bytes()`: a failed write
-leaves the original as it was and `_write()` shows the error. The trade-offs are the settings
-file's: the file takes the folder's inherited ACL, a symlink or hardlink is replaced by a plain
-file, and a lock without delete-sharing fails the save instead of writing half a file. A deleted
-row (Delete Selected, merge deletions) goes through `_remove_entry_segment()`, which also drops the
-line break and indentation it sat on, so no blank line is left.
+`load_translation_file()` reads bytes, so the file's BOM and line endings are detected, not lost;
+the text inside the JSON is decoded by `json`, so a CRLF file and an LF file give the same keys
+and values to the Edit dialog, merge and glossary matching. A file the app cannot read as one flat
+object of text (see [JSON file format](#json-file-format)) raises `JsonFormatError`, which `_load()`
+shows in an "Open Error" dialog; nothing opens. Dates need no normalisation on load: the sidecar
+stores ISO dates and `apply_sidecar_meta()` converts each into the system short-date format once.
+
+`save_translation_file()` writes the language file and then the sidecar, each through
+`_atomic_write_bytes()`: a failed write leaves the original as it was and `_write()` shows the
+error. If the language file's write fails, the sidecar is not touched. If it succeeds and the
+sidecar's fails (`MetadataWriteError`), `_write()` marks the file saved on disk (`_after_write()`)
+but keeps `is_modified` True and says translations were saved and metadata was not; Save again
+retries. The sidecar is skipped (`write_meta=False`) only for the open file's own sidecar when it
+could not be read on open (`_meta_blocked`), so an unreadable file is never replaced by defaults.
+A deleted entry (Delete Selected, merge or sync deletions) simply leaves `self.entries`. The
+trade-offs are the settings file's: the file takes the folder's inherited ACL, a symlink or
+hardlink is replaced by a plain file, and a lock without delete-sharing fails the save instead of
+writing half a file.
+
+**Reformat prompt.** `load_translation_file()` computes `round_trips` by dumping the entries in the
+detected style and comparing with the file's bytes. A file that does not come back byte for byte
+(irregular indent, spaces after colons, escapes the style detector does not model) asks once,
+before its first save: "Reformat File — Saving will reformat es.json (indent, spacing). The
+translations themselves do not change. Continue?" (`_confirm_reformat()`; No cancels the save and
+the file stays modified). `_after_write()` sets `round_trips = True`, since the file is in the
+app's own style afterwards. Autosave never asks: `_autosave_tick()` skips a file that does not
+round-trip and says once per open "Autosave paused: save es.json once with Ctrl+S to confirm
+reformatting it".
 
 **`File → Close File` (`Ctrl+W`)** returns the app to the empty no-file state
 without quitting, so unsaved changes can be discarded mid-session.
-`_close_file()` resets exactly the state `__init__` sets (`segments`, `entries`,
-`current_file`, `is_modified`, `target_culture`, `display_language`,
-`xml_version`, `glossary`, `glossary_path`, `glossary_load_warnings`), then
+`_close_file()` resets exactly the state `__init__` sets (`entries`, `current_file`,
+`is_modified`, `header`, `json_style`, `round_trips`, `_meta_blocked`, `glossary`,
+`glossary_path`, `glossary_load_warnings`), then
 refreshes in `_load()`'s own order — `model.load()` → `_apply_filters()` →
 `_reconfigure_autosave()` (the timer stops on its own, being gated on
 `current_file`) → `_update_title()` → `_update_count()` →
@@ -945,10 +994,10 @@ see the "`QLabel`'s rich-text `<a href>` link colour ignores..." pitfall below
 for why this needs its own dedicated method rather than a QSS rule.
 
 Drag-and-drop: `MainWindow.setAcceptDrops(True)` plus `dragEnterEvent`/
-`dropEvent` accept exactly one local `.xml` file dropped anywhere in the
+`dropEvent` accept exactly one local `.json` file dropped anywhere in the
 main window area (not just on the Welcome screen) and route it through the same
 `_confirm_discard()` → `_load()` path `_open()` uses. Anything else dropped
-(wrong extension, multiple files, a folder) is silently rejected in
+(wrong extension — `.json.meta` included —, multiple files, a folder) is silently rejected in
 `dragEnterEvent` — no dialog.
 
 ### Filter engine & panel
@@ -994,13 +1043,13 @@ precedent as `EditDialog`'s `char_count` config) whose `timeout` fires `_on_filt
 The date pickers go through the same timer too (`_on_from_date_changed()` saves
 `filter_from_date` first, about 1 ms); since a date now changes only on a confirmed pick,
 this just delays that one pass by `debounce_ms`. Every other filter control
-(mode/field/status/tablet combos, date checkboxes) still calls `_on_filter` immediately. The "✕ Clear search" button (`_clear_search`) and "⟳ Reset All"
+(mode/field/status/check combos, date checkboxes) still calls `_on_filter` immediately. The "✕ Clear search" button (`_clear_search`) and "⟳ Reset All"
 (`_reset_all`) both call `self._filter_debounce.stop()` first, so a debounce timer
 already running from an in-progress keystroke can't fire a redundant, delayed
 `_on_filter` after the button's own synchronous reset. Both then `blockSignals`
 around their `.clear()`/`setCurrentIndex(0)`/`setChecked(False)` calls — Reset All
 blocks every widget it resets, including `status_combo`, `date_from_chk`,
-`date_to_chk`, and `tablet_combo`, not just the free-text/combo fields debounced
+`date_to_chk`, and `check_combo`, not just the free-text/combo fields debounced
 above — and invoke `_on_filter` (and, for Reset All, `_save_search_prefs`)
 explicitly at the end, so both stay instant and emit `filters_changed` exactly
 once regardless of `debounce_ms`.
@@ -1017,12 +1066,12 @@ since there's no active filter to blame in either case. Restyled alongside
 **Filter panel sizing** — in the outer `QGridLayout` of `FilterPanel._build`, the Search
 and Translator columns are added through `_add_column(..., stretch=3)` / `stretch=1`,
 which call `outer.setColumnStretch()`, so spare horizontal space is split 3:1 between
-them when the window is widened. All other columns (Status, Date range, Is tablet,
+them when the window is widened. All other columns (Status, Date range, Check,
 Filters) keep their natural width (stretch `0`). Minimum widths: `search_edit` 220 px,
 `user_edit` 140 px.
 
 **Filter bar widths follow the font — `FilterPanel.fit_to_font()`.** The four combos (Mode,
-In, Status, Is tablet) get a fixed width and the two date pickers a minimum width equal to
+In, Status, Check) get a fixed width and the two date pickers a minimum width equal to
 their widest text plus the style's own chrome (`_width_for_text()`: widget width minus the
 style's `SC_ComboBoxEditField`/`SC_SpinBoxEditField` rectangle, plus `_TEXT_FIT_SLACK_PX` for
 the line edit's inner margins and cursor). `MainWindow._apply_theme()` calls it right after
@@ -1040,49 +1089,28 @@ symbol font that drew it smaller and lower than the label. The label's leading s
 icon gap (Fusion leaves ~1 px). The info bar's refresh hint uses the same drawing (see the
 `_refresh_hint` row of the info-bar table).
 
-### Date normalization
+### Dates
 
-`parse_date()` is locale-aware and punctuation-tolerant, not just a fixed
-format list: `_LOCALE_DAY_FIRST` (derived once from `_WIN_DATE_FMT`, the
-same signal that produces `DATE_FMT`) decides which of the ambiguous
-slash-separated formats (`%d/%m/%Y` vs `%m/%d/%Y`, and their 2-digit-year
-equivalents) is tried first, so a date like `"06/05/2016"` resolves
-consistently with *this machine's own* detected day-first/month-first
-convention instead of a hardcoded US-first guess. Dot-separated formats
-never need this tiebreak — a 4-digit year can't occupy a 2-digit day/month
-slot, so `%d.%m.%Y` and `%Y.%m.%d` are already unambiguous. `parse_date()`
-also strips a trailing run of periods/spaces before matching, so the
-traditional Latvian/Baltic short-date picture (`yyyy.MM.dd.`, producing
-values like `"2016.05.06."`) parses the same as its undotted equivalent —
-previously this returned `None`, and `FilterEngine.matches()` treats an
-unparseable date as "don't filter it out," so those entries silently
-bypassed the date-range filter regardless of the configured range.
+The sidecar stores `modified` as ISO `YYYY-MM-DD`; the table, the Edit window and the filter bar
+show and edit it in this machine's short-date format (`DATE_FMT`). `apply_sidecar_meta()` converts
+each stored date once on load (`_date_from_sidecar()`), and `build_sidecar_bytes()` converts it back
+on save (`_date_to_sidecar()`). A date that is not ISO is kept exactly as stored and counted in one
+warning, `"Metadata: N unrecognized date(s) (e.g. 'foo')"`; it is written back unchanged unless that
+entry's date is edited. There is no date normalization on load any more (the XML editor rewrote
+legacy formats and marked the file modified), so opening a file never leaves "Unsaved changes".
 
-`normalize_entry_dates(entries)` rewrites every entry's `modify_date` to
-the canonical `DATE_FMT` string in place, using the parser above; entries
-with an empty `modify_date` are skipped (nothing
-was ever recorded, not an error), and genuinely unparseable dates are left
-as raw text and reported back. `MainWindow._load()` calls it right after
-`parse_file()`, before `self.model.load(self.entries)`, so the table shows
-already-normalized dates from the first paint. Reformatting an
-already-canonical date round-trips to the same string, so reopening a file
-that was just saved normalizes zero entries.
+`parse_date()` is still locale-aware and punctuation-tolerant: `_LOCALE_DAY_FIRST` (derived once
+from `_WIN_DATE_FMT`, the same signal that produces `DATE_FMT`) decides which of the ambiguous
+slash-separated formats (`%d/%m/%Y` vs `%m/%d/%Y`, and their 2-digit-year equivalents) is tried
+first, so `"06/05/2016"` resolves consistently with *this machine's own* day-first/month-first
+convention. Dot-separated formats never need this tiebreak. `parse_date()` also strips a trailing
+run of periods/spaces before matching, so the Baltic short-date picture (`yyyy.MM.dd.`, values like
+`"2016.05.06."`) parses like its undotted equivalent. It is used by the date-range filter
+(`FilterEngine.matches()` treats an unparseable date as "don't filter it out"), the merge
+newest-date rule and `_date_to_sidecar()`.
 
-If any entry's date was actually rewritten, `_load()` sets
-`self.is_modified = True` (after the initial `self.is_modified = False`) —
-the in-memory state genuinely differs from what's on disk at that point,
-which is what `is_modified` is documented to mean everywhere else in this
-file (see "Common pitfalls" below). The next Save then writes the
-now-canonical `modifyDate` on every normalized entry, not just ones the
-user actually edited — a larger one-time diff for that file, and the
-accepted trade-off of normalizing on load rather than only re-parsing at
-filter time. The counts follow "Loaded: …" as their own messages, both
-warnings: `"Dates: 3 normalized"` (the file was changed without the user
-asking, and now shows "Unsaved changes") and `"Dates: 1 unrecognized (e.g.
-'foo')"`. Merge's `"Dates: N normalized in incoming file"` is a warning for
-the same reason. Rule of thumb for levels: `error` when an action failed,
-`warning` when it worked but changed the file on its own or found a data
-problem, `info` for everything else.
+Rule of thumb for message levels: `error` when an action failed, `warning` when it worked but found
+a data problem, `info` for everything else.
 
 ### Character-count length indicator (EditDialog)
 
@@ -1132,9 +1160,10 @@ entry, wait `robo_translate.delay_seconds` (default 10), advance to the next ent
 repeat. A plain click / plain `Alt+A` while a chain is running stops it and falls
 back to a normal one-off translate instead of starting a second chain.
 
-While auto-advancing, entries already translated (status Review or Complete) are
-skipped without being touched — only entries with status New are translated
-automatically. The entry the chain was explicitly started on is always translated
+While auto-advancing, an entry is skipped without being touched unless its status is
+New **and** its text still equals its key (the untranslated state a New Language file and Sync
+Keys give it) — so an unattended run only fills in entries nobody has translated, and never
+replaces a translation that was typed in while its status stayed New. The entry the chain was explicitly started on is always translated
 regardless of its status, since starting there was a direct user action.
 
 The chain stops on: toggling again, Escape / dialog close, a plain click / plain
@@ -1146,8 +1175,7 @@ State lives on `EditDialog`: `self._robo_active`, `self._robo_timer` (`QTimer`),
 `self._robo_remaining`, and a cached `self._robo_cfg` read once at construction
 (same pattern as `self._char_cfg`). `_navigate` distinguishes chain-driven advances
 from user-driven ones via an internal flag, so auto-advancing doesn't get treated as
-"manual navigation" (which would otherwise cancel the chain). Full behavioral spec:
-`docs/superpowers/specs/2026-08-10-robo-translate-design.md`.
+"manual navigation" (which would otherwise cancel the chain).
 
 ### Delete entries (main table + EditDialog)
 
@@ -1155,9 +1183,8 @@ from user-driven ones via an internal flag, so auto-advancing doesn't get treate
 rows in the main table, or the entry currently open in the Edit dialog.
 Both paths go through the single shared `MainWindow._delete_entries()`,
 which always confirms first (source text for a single entry, a count for
-multiple), then blanks the removed entries' `segments[seg_idx]` and drops
-them from `self.entries` — the same mechanism the Merge dialog's deletion
-resolution already uses. It's an in-memory edit like any other; nothing is
+multiple), then drops them from `self.entries` — the same mechanism the Merge and
+Sync Keys dialogs' deletion resolutions use; the next save simply omits them. It's an in-memory edit like any other; nothing is
 written to disk until Save.
 
 Unlike the mark_* shortcuts, `Ctrl+Delete` collides with Qt's native
@@ -1169,7 +1196,7 @@ Edit dialog it's intercepted only in `keyPressEvent` — deliberately absent
 from `eventFilter()`'s `trans_edit`-focused block — so normal word-deletion
 keeps working while typing in the translation or translator-name fields;
 the shortcut only deletes the entry when focus is elsewhere in the dialog
-(status combo, tablet toggle, buttons). Deleting the entry currently open
+(status combo, buttons). Deleting the entry currently open
 for editing auto-advances to whichever entry now occupies that position, or
 closes the dialog if it was the last one.
 
@@ -1179,7 +1206,7 @@ closes the dialog if it was the last one.
 
 ### General
 
-- **Single-file rule.** Everything lives in `xml_translation_editor.py`.  Do not
+- **Single-file rule.** Everything lives in `json_translation_editor.py`.  Do not
   create additional `.py` files or packages. Dev-only scripts in `tests/` and `Tools/` are
   exempt: they are never shipped.
 - **Python 3.9+.**  No walrus operator (`:=`) in hot paths — keep it readable.
@@ -1330,7 +1357,7 @@ wiped every key. Three cooperating pieces close that:
 - **Daily archive.** `MainWindow.__init__` calls `backup_settings_daily(SETTINGS_FILE)`
   right after `Settings()` — after, so a damaged file has already been recovered
   and what gets archived is what is actually in use. It appends one snapshot to
-  `translation_editor_settings.backups.zip` beside the settings file (the path
+  `json_translation_editor_settings.backups.zip` beside the settings file (the path
   is derived from `SETTINGS_FILE` by `_settings_archive_path()`, so the two
   always travel together) unless **any** entry already carries today's date —
   not just the newest: a future-dated entry left by a briefly wrong clock would
@@ -1343,7 +1370,7 @@ wiped every key. Three cooperating pieces close that:
   future-dated entry can neither win a recovery nor outlive its turn to be
   pruned. Deliberate omissions: no content de-duplication
   (an unchanged file still takes its daily slot — harmless), no timer or
-  on-close trigger (startup only), no thread (the file is ~2 KB, unlike the XML
+  on-close trigger (startup only), no thread (the file is ~2 KB, unlike the language-file
   backups that motivated `BackupThread`), and no `Settings` key for the count
   (the settings file is what is being protected — a constant is simpler).
   A file that fails `_parse_settings_bytes()` is **never archived**, so damage
@@ -1359,7 +1386,7 @@ wiped every key. Three cooperating pieces close that:
   `OSError` (locked file, permissions) does not, because the content may be
   fine and replacing it with an older snapshot would lose real settings.
   Recovery moves the damaged file aside as
-  `translation_editor_settings.json.corrupt-<time>` **first** — so the next
+  `json_translation_editor_settings.json.corrupt-<time>` **first** — so the next
   `save()` can't overwrite it — then restores the newest snapshot that still
   parses and sets `Settings.recovery_notice`, which
   `MainWindow._run_startup_prompts()` shows once as a `QMessageBox.warning`.
@@ -1371,7 +1398,7 @@ wiped every key. Three cooperating pieces close that:
   content on disk, so a locked file can no longer end in "defaults, and the
   damaged content destroyed". With no usable snapshot the damaged file is still
   kept aside and the notice says defaults are in use. **A missing file is never recovered**: `docs/FEATURES.md`
-  documents "delete `translation_editor_settings.json` to reset to defaults",
+  documents "delete `json_translation_editor_settings.json` to reset to defaults",
   so absence must stay a legitimate reset. The notice is a modal, because lost
   API keys must not go unnoticed and it has to come before the translator-name
   prompt. **Info-bar messages as well:** `load()` also fills
@@ -1397,12 +1424,12 @@ on every build, so an exe run from `dist\` loses settings and archive together.
 This was a conscious choice over a `%APPDATA%` copy (which would be shared by
 separate installs with different settings); `docs/FEATURES.md` (Settings backup) tells users to run the
 exe from a copy outside `dist\`. `.gitignore` covers the archive, its
-`.corrupt` copy, `translation_editor_settings.json.corrupt-*` and the
-`.translation_editor_settings.*.tmp` atomic-write leftovers — all hold keys in
+`.corrupt` copy, `json_translation_editor_settings.json.corrupt-*` and the
+`.json_translation_editor_settings.*.tmp` atomic-write leftovers — all hold keys in
 plain text, so any new file that copies settings data needs an entry too.
 
 Two related caveats, both accepted. **`SETTINGS_FILE` is CWD-relative** (a
-pre-existing quirk — the XML backup root, by contrast, is anchored to
+pre-existing quirk — the backup root, by contrast, is anchored to
 `sys.argv[0]`), so the archive and its `.corrupt-*`/`.tmp` siblings land wherever
 the process was started, and `.gitignore` only protects this repo's folder.
 Anchoring the settings file to the script/exe directory would fix that, but it
@@ -1454,8 +1481,8 @@ There is a single info bar (`QHBoxLayout`) at the bottom of the window — the Q
 | *(stretch)* | — |
 | `_dynamic_label` | Unified dynamic zone — transient notifications take priority over save status; has a font-metric minimum width so the static labels never shift |
 | `_history_btn` | Message history: a flat `QToolButton` with a `_render_history_icon()` glyph in `fg_dim` (redrawn by `_refresh_history_icon()` from `_apply_theme()`), opening `MessageHistoryPopup`. A dot in its corner — `text_warn`, or `text_bad` once an error is among them — marks an unseen warning or error (`_history_unseen_level`, raised by `_raise_unseen()`); opening the pop-up clears it. Info messages never set it |
-| `_sb_lang_label` | `DisplayLanguage` (or `Culture` fallback) from loaded XML — anchored at far right |
-| `_sb_ver_label` | `Version` from loaded XML, prefixed `v` — anchored at far right |
+| `_sb_lang_label` | The sidecar's language name (or the language code, from the sidecar or the file name, as fallback) — anchored at far right |
+| `_sb_ver_label` | The sidecar's `version`, prefixed `v` — anchored at far right |
 
 **`_show_message(text, ms=4000, level="info")`** — use this everywhere instead of
 `statusBar().showMessage()`. It records a `Notice` (text, ms, level, time) in
@@ -1463,7 +1490,7 @@ There is a single info bar (`QHBoxLayout`) at the bottom of the window — the Q
 shows it at once or queues it in `_notice_queue`: a message never replaces another. The one on
 screen (`_notice_current`) stays up at least `NOTIFY_MIN_TURN_MS` (3000) before a waiting one
 takes over; a waiting message's turn is at most that long, and the last one in the queue gets its
-full `ms`. So Loaded, Dates and Backup arriving together show for 3 s, 3 s and 5 s. A message whose
+full `ms`. So Loaded, Metadata and Backup arriving together show for 3 s, 3 s and 5 s. A message whose
 text and level equal the current or the last waiting one is not queued again (it is still in the
 history); past `NOTIFY_QUEUE_MAX` (5) waiting, the oldest waiting one is dropped from the queue.
 `ms <= 0` means 4000 and an unknown level means `"info"`. `_notify_timer` ends a turn;
@@ -1472,12 +1499,12 @@ history); past `NOTIFY_QUEUE_MAX` (5) waiting, the oldest waiting one is dropped
 message reports a failure (`error`) or a problem in the data (`warning`).
 
 **File messages name the header version.** Loaded, Saved, Autosaved, Closed, Restored and
-Restored and reloaded go through `_file_label(name, version)`: `Latvian.xml  v4.1.1140`, or
-`Latvian.xml  (no version)` when the header has none (its backups then use the plain `<stem>` key).
+Restored and reloaded go through `_file_label(name, version)`: `es.json  v1.0.0`, or
+`es.json  (no version)` when the header has none (its backups then use the plain `<stem>` key).
 So the history shows which version was opened, saved or closed even after the far-right version
 label has changed or gone blank. Closed reads the version before `_close_file()` clears it; Saved
-and Autosaved use `self.xml_version` at save time, so a File Properties change shows; Restored reads
-the written file with `parse_xml_header()`, not the slot's manifest, which older slots lack.
+and Autosaved use `self.file_version` at save time, so a File Properties change shows; Restored reads
+the written file's sidecar with `read_file_header()`, not the slot's manifest.
 
 **`_update_dynamic_label()`** — the single source of truth for `_dynamic_label` content.
 Priority: `_notice_current` (its level's colour, a dim `+N` after it while N messages wait, the
@@ -1495,84 +1522,91 @@ setting `_dynamic_label` text/style directly.
 
 ---
 
-## XML file format
+## JSON file format
 
-```xml
-<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu">
-  <resources>
-    <string name="Source text"
-            translator="Jane"
-            status="Complete"
-            modifyDate="21.05.2016"
-            istablet="false">Translated text</string>
-  </resources>
-</TRNExportImportModel>
+A language file is one flat JSON object, the English source text as the key and the translation as
+the value:
+
+```json
+{
+ "Guide point": "Punto guía",
+ "Delete {name}?": "¿Eliminar {name}?"
+}
 ```
 
-- `status` must be one of: `New`, `Review`, `Complete` (see `STATUSES` constant).
-- `modifyDate` format follows the Windows regional short-date setting; use
-  `format_date_for_storage(d)` to produce the correct string.
-- `istablet` is stored as the string `"true"` or `"false"` (not a Python bool).
-- The parser uses a regex split (`_SPLIT_RE`) — not an XML DOM — to preserve
-  whitespace and non-standard content outside `<string>` elements exactly.
-  **Do not replace the parser with `xml.etree` or `lxml`.**
-- A row's start tag is matched quote-aware (`_START_TAG_PATTERN`), so a raw `>` inside an
-  attribute value does not end it. A self-closing `<string …/>` is a row with empty text; it stays
-  self-closing until it gets text, then becomes `<string …>text</string>`. Attributes are read
-  from the start tag only and must follow whitespace, so `data-name="…"` is not `name`. An edit to
-  an attribute the row lacks appends it, unless the value equals what `parse_file()` reads for a
-  missing one (`_ATTR_PARSE_DEFAULTS`). CDATA text is read literally; an edited CDATA row is written
-  as ordinary escaped text.
-- Every row segment (odd index) starts with `<string`: `_start_tag()` matches at position 0. That
-  is why `insert_additions()` puts a new row's line break and indentation in the filler segment
-  before it, not in the row.
-
+- **Read** by `parse_json_bytes()`: `json.loads(..., object_pairs_hook=...)` keeps the key order and
+  sees duplicates. The file is **refused** (an "Open Error" dialog, nothing opens) when it is not
+  UTF-8, is not valid JSON (the message gives line and column), is not one object, has a value that
+  is not text (`The value of 'x' is not text.`) or repeats a key (`Duplicate key: 'x'`). All are
+  `JsonFormatError`; its message is shown to the user as is. Merge and Sync Keys refuse the same
+  way for their second file.
+- **Style** is detected, not assumed (`detect_json_style()`): the indent is the leading whitespace
+  of the first key line (none = a compact one-line object), the newline is `\r\n` if the text holds
+  one, plus BOM, trailing newline, and whether non-ASCII is written literally or as `\uXXXX`.
+- **Write** is `json.dumps(dict(pairs), ensure_ascii=…, indent=…)` plus the trailing newline,
+  with the detected newline and BOM. An unchanged file that round-trips saves byte-identical; an
+  edit changes only that entry's line; a deleted entry drops its line. `\n` inside a value stays
+  the two characters `\n` in the file.
+- **Round trip.** `LoadedFile.round_trips` says whether that write reproduces the file's bytes. If
+  not, the first save asks "Reformat File" (see [Save / load flow](#save--load-flow)).
+- Open, Save As, Merge, Sync Keys and drag-and-drop take `*.json` only; `.json.meta` is not
+  `.json` and is refused by the drop filter.
+- The consuming program reads the file, so the editor changes nothing but the values: no key is
+  ever renamed, reordered (apart from Sync Keys insertions and New Language, which follow the
+  open file's own order) or normalised.
 
 ---
 
-## XML character escaping
+## Sidecar format
 
-`build_string_xml` handles two escaping contexts with different rules.
+`<name>.json.meta` holds what the JSON cannot: per-string status, translator and modify date, plus
+the file's language code, language name and version. It is JSON in a file whose extension is
+`.meta`, not `.json` (see "The sidecar extension is `.meta`" under Common pitfalls).
 
-### Element text content (`entry.text`)
-
-```python
-html.escape(entry.text, quote=False)
+```json
+{
+ "format": 1,
+ "language": "es-AR",
+ "language_name": "Español (Argentina)",
+ "version": "1.0.0",
+ "entries": {
+  "Guide point": {"status": "Complete", "translator": "Jānis", "modified": "2026-10-02"}
+ }
+}
 ```
 
-Only three characters need escaping inside element text:
+- **Only entries with non-default metadata are listed** (status other than `New`, or a translator,
+  or a date), in the language file's key order, so the sidecar's diffs line up with the JSON's. An
+  unlisted key is `New` with no translator and no date: a file with no sidecar opens entirely
+  `New`. A sidecar is written on every successful save, even when it holds only the header.
+- Written with `indent=1`, `ensure_ascii=False`, LF and a trailing newline (`build_sidecar_bytes()`).
+  Dates are ISO `YYYY-MM-DD` (see [Dates](#dates)).
+- `language` is the auto-translate target and the Merge guard's code. When it is empty,
+  `guess_language()` takes the file-name stem (`pt-BR.json` → `pt-BR`, `es.json` → `es`) if it
+  matches a stricter private pattern than `LANGUAGE_CODE_RE` (so `es_restored_2026-…` is not read
+  as a language). `LANGUAGE_CODE_RE` (`^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$`) validates what the
+  user types in File Properties and New Language.
+- `version` keeps the XML editor's rules (`major.minor.build`, maxima 99, 99, 99999) and the
+  backup key `<stem>__v<version>`; empty means no version and the plain `<stem>` key.
+- **Problems on load** (`parse_sidecar_bytes()` raises `SidecarError`; `apply_sidecar_meta()`
+  returns warnings):
 
-| Character | Escaped as |
-|-----------|-----------|
-| `&` | `&amp;` |
-| `<` | `&lt;` |
-| `>` | `&gt;` |
+  | Situation | Behaviour |
+  |-----------|-----------|
+  | Unreadable as JSON, wrong shape, `format` other than 1 | Moved aside as `<name>.json.meta.corrupt-<time>` (copied when another process holds it); error message "Metadata: … was damaged (kept as …)"; the file opens all `New` |
+  | Cannot be read at all (`OSError`, a lock) | Error message; the file opens all `New` and `meta_blocked` is set: **the sidecar is never overwritten** this session, saves write only the JSON |
+  | Damaged and could not be moved or copied aside | Same as unreadable: `meta_blocked` |
+  | Entry whose key is not in the file | Warning "Metadata: N entries for keys no longer in the file"; dropped on the next save |
+  | Unknown status | Read as `New`; warning "Metadata: N unknown status value(s) read as New" |
+  | Date that is not ISO | Shown as stored, written back unchanged unless edited; warning "Metadata: N unrecognized date(s) (e.g. '…')" |
 
-`"` and `'` are written as-is — quoting them in element text is unnecessary and produces ugly `&quot;` / `&#x27;` sequences.  **Never** use `html.escape(text)` or `html.escape(text, quote=True)` for element text.
-
-### Attribute values (`entry.translator`, `entry.status`, etc.)
-
-```python
-escaped_val = (value
-               .replace("&",  "&amp;")
-               .replace("<",  "&lt;")
-               .replace(">",  "&gt;")
-               .replace('"', "&quot;"))
-```
-
-All attributes use `"..."` delimiters, so only `"` needs escaping in addition to `& < >`.  `'` is left unescaped — `html.escape(quote=True)` would incorrectly escape it as `&#x27;`, turning `O'Brien` into `O&#x27;Brien`.
-
-**Do not use `html.escape()` for attribute values** — use the four explicit `.replace()` calls already in `_escape_attr_value()` (called from `replace_attr()`).
-
-### Summary table
-
-| Character | Element text | `"…"` attribute |
-|-----------|-------------|-----------------|
-| `&` | `&amp;` | `&amp;` |
-| `<` | `&lt;` | `&lt;` |
-| `>` | `&gt;` | `&gt;` |
-| `"` | `"` (literal) | `&quot;` |
-| `'` | `'` (literal) | `'` (literal) |
+  A file read only to be merged from or synced against (`keep_damaged=False`) never has its sidecar
+  moved: the error is reported as "Incoming file: Metadata: … is damaged".
+- **Save order.** JSON first, then sidecar, each atomic. A failed JSON write leaves the sidecar
+  alone; a failed sidecar write after a good JSON write raises `MetadataWriteError` (see
+  [Save / load flow](#save--load-flow)).
+- `.gitignore` covers `*.json.meta.corrupt-*`. A `.json.meta` beside the user's root language files
+  is local and untracked.
 
 ---
 
@@ -1645,10 +1679,10 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   <reason>"`).
 - **Locations** — `Settings.data["backup"]["location_mode"]` (`"next_to_file"` |
   `"root"` | `"both"`, default `"both"`) controls where backups are written:
-  - Root: `Path(sys.argv[0]).resolve().parent / "XML_Translation_file_Backups"` (today's original location).
-  - Next to file: `source_path.parent / "XML_Translation_file_Backups"`.
+  - Root: `Path(sys.argv[0]).resolve().parent / "JSON_Translation_file_Backups"` (today's original location).
+  - Next to file: `source_path.parent / "JSON_Translation_file_Backups"`.
   - `"both"` writes a fully independent, self-contained slot at **each**
-    enabled location — own copy of the XML/glossary and own `backup_info.json`
+    enabled location — own copy of the language file, sidecar and glossary and own `backup_info.json`
     — never a shared manifest. `"next_to_file"` mode automatically falls back
     to writing at root (tagged `is_fallback: true`) if the next-to-file write
     fails (e.g. permissions, disconnected drive).
@@ -1657,13 +1691,12 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
     `MainWindow._remember_next_to_file_backup_dir()`, so
     `RestoreFromBackupDialog` can discover it later even with no file open
     from that folder.
-- **Backup key** (the folder directly under `XML_Translation_file_Backups/`):
-  `<stem>__v<sanitized_version>` when the XML has a non-empty `Version`
-  attribute, else plain `<stem>` (matches pre-change behavior, so old backup
-  folders stay exactly where they are). `_sanitize_path_component()` strips
+- **Backup key** (the folder directly under `JSON_Translation_file_Backups/`):
+  `<stem>__v<sanitized_version>` when the sidecar has a non-empty `version`,
+  else plain `<stem>`. `_sanitize_path_component()` strips
   Windows-illegal characters, guards reserved device names, and never returns
   `""` (a garbage-but-present Version becomes `"_"`, not the unversioned key).
-- Compression: `gzip` (level 6), producing `.xml.gz`; compressed into an
+- Compression: `gzip` (level 6), producing `.json.gz`; compressed into an
   in-memory buffer first so the write can go through `_atomic_write_bytes()`.
 - All backup/restore-destination writes go through `_atomic_write_bytes()`
   (temp file in the same directory, fsync, `os.replace()`) — a crash mid-write
@@ -1694,18 +1727,21 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   `Optional[BackupThread]` (was `bool`); `_load()`'s call site already
   discarded the return value, so it stays unchanged and fully fire-and-forget;
   `_do_restore()`'s call site is different — see the Restore from Backup
-  section below. See
-  docs/superpowers/specs/2026-09-02-backup-threading-design.md.
+  section below.
 - Manifest: `backup_info.json`, written by the module function
   `_write_backup_slot()`, with `original_path`, `backup_created` (ISO 8601),
   `original_size_bytes`, `backup_file`, `compressed`, `md5_checksum`,
   `glossary_backed_up` (+ `glossary_file`/`glossary_compressed`/
-  `glossary_md5_checksum` when true), plus `version`, `culture`,
-  `display_language` (from `parse_xml_header(source_path)` — always freshly
-  re-parsed from the file being backed up, **not** from
-  `self.xml_version`/`self.target_culture`/`self.display_language`, since the
+  `glossary_md5_checksum` when true), `meta_backed_up` (+ `meta_file`/`meta_compressed`/
+  `meta_md5_checksum` when true: the `.json.meta` sidecar, backed up into the same slot with the
+  same `backup.compress` setting when it exists; a sidecar that cannot be read is skipped,
+  best effort), plus `version`, `culture`,
+  `display_language` (from `read_file_header(source_path)` — always freshly
+  read from the sidecar of the file being backed up, **not** from
+  `self.file_version`/`self.target_culture`/`self.display_language`, since the
   pre-restore-safety case backs up `dest_path`, which is not necessarily the
-  file currently open in the UI), `location` (`"root"` | `"next_to_file"`),
+  file currently open in the UI; `culture` falls back to `guess_language()` of the file name),
+  `location` (`"root"` | `"next_to_file"`),
   `backup_key`, `trigger` (`"file_open"` | `"pre_restore_safety"`), and
   `is_fallback`.
 - Pruning: oldest slots deleted when a given key's slot count (per location)
@@ -1753,6 +1789,14 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   snapshot), `_do_restore()` calls `_do_restore_after_backup()` directly,
   synchronously, with no thread involved — identical to pre-threading
   behavior in that case.
+- **The sidecar restores with the language file, no checkbox.** `_do_restore()` reads the slot's
+  sidecar (`_read_companion_backup()`, MD5-verified like the main file) at the same point as the
+  glossary, before the safety backup, and `_do_restore_after_backup()` writes it to
+  `meta_path_for(dest_path)` right after the language file — so the pair stays consistent, and a
+  Save-as-copy restore gets its own `<stem>_restored_<time>.json.meta`. A slot without a sidecar
+  (`meta_backed_up` false or absent) restores the language file only. A failed sidecar write shows
+  "Metadata restore failed" (error) after the "Restored…" message and never rolls back the
+  language file. The info-bar line for a backup says `, +metadata` when the slot holds one.
 - `_write_restore_log()`: appends a JSON record to `restore_log.json` in the
   language backup folder (`restore_time`, `restored_from_slot`, `restored_to`,
   `md5_verified`).
@@ -1787,13 +1831,15 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
 
 - Entry point: **File → Properties…** → `MainWindow._open_file_properties()` →
   `FilePropertiesDialog`. With no file open it shows a warning, like Merge.
-- **Header group (editable):** *Culture* is shown, never edited — `describe_culture()` turns the
-  code into "Latvian (Latvia)" through `QLocale` (so `lv-LV` and `lv_LV` both work), with the code
-  beside it in dim text; a code with no region shows only the language, because `QLocale` would
-  guess a territory; an unknown code (`QLocale` answers `Language.C`) shows the raw code plus
-  "(unknown language)", an empty one "—". *Language name* is a `QLineEdit`, trimmed, not blank,
-  at most `DISPLAY_LANGUAGE_MAX_LEN` (64) characters: `parse_xml_header()` reads only the first
-  512 characters, so a very long name would push `Version` out of reach on the next open.
+- **Header group (editable):** *Language code* is a `QLineEdit` (max 35 characters), validated
+  against `LANGUAGE_CODE_RE`; `describe_culture()` turns the code into "Spanish (Argentina)" through
+  `QLocale` (so `es-AR` and `es_AR` both work) and shows it beside the field in dim text; a code
+  with no region shows only the language, because `QLocale` would guess a territory; an unknown
+  code (`QLocale` answers `Language.C`) shows the raw code plus "(unknown language)", an empty one
+  "—". An invalid code shows a `text_warn` line and blocks OK. The field opens with
+  `MainWindow.target_culture`, so a code guessed from the file name is shown, and is only written
+  to the sidecar when the user changes it. *Language name* is a `QLineEdit`, trimmed, not blank, at
+  most `DISPLAY_LANGUAGE_MAX_LEN` (64) characters, which keeps the info bar and title readable.
   *Version* is three `QSpinBox`es limited to `VERSION_PART_MAXIMA` (99, 99, 99999), matching
   `_VERSION_PARTS_RE`; a spin box shows a plain integer, so nothing is ever zero-padded, and
   `format_version()` writes `4.1.1220` exactly. `.` or `,` (a Latvian numeric keypad types `,`)
@@ -1807,23 +1853,15 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   space after each `\` and `/` lets it wrap onto more lines; that row is not selectable, since a
   copy would carry the U+200B characters into Explorer or a shell), size and modified time from disk (`None` → "—" if
   the file is gone), and from the in-memory entries the string total, New/Review/Complete,
-  untranslated (`text == name`, the same rule as `_pick_newer_entry()`) and tablet strings, each
+  and untranslated (`text == name`, the same rule as `_pick_newer_entry()`) strings, each
   with a share. Numbers, size, percentages and the date use `QLocale.system()`. A dim note says
   the counts include unsaved changes when there are any.
-- **Applying OK** is an in-memory edit like any other. The version is compared as numbers
-  (`parse_version_parts()`), so a stored `04.1.1140` is not rewritten when nothing changed; the
-  language as trimmed text. Only a changed attribute goes to `build_header_xml(segments[0],
-  language_or_None, version_or_None)`, which edits just the root `<TRNExportImportModel …>` tag:
-  replace in place (attribute order and spacing kept), or append a missing attribute at the end
-  of the tag (before the `/` of a self-closing one). `_ROOT_TAG_RE` is quote-aware
-  (`(?:[^>"]|"[^"]*")*`), because a raw `>` is legal inside an attribute value and a hand-edited
-  file may hold one; the app's own writer always escapes it. The lookbehind `(?<=\s)` keeps a prefixed `xsi:Version` from matching, the
-  replacement is a lambda so a backslash in the value stays literal, and `<?xml version=…?>` is
-  outside the tag. A missing root tag raises `ValueError` → error dialog, nothing changed. Then
-  `is_modified`, `_update_title()`, `_update_file_meta_labels()` and a 4 s notification.
-- `parse_xml_header()` unescapes `DisplayLanguage`/`Version` with `html.unescape()`, because
-  `build_header_xml()` escapes through `_escape_attr_value()`: without it "R&D" would read back as
-  "R&amp;D".
+- **Applying OK** is an in-memory edit of `MainWindow.header` like any other, nothing is written
+  until Save. The version is compared as numbers (`parse_version_parts()`), so a stored `04.1.1140`
+  is not rewritten when nothing changed; the language name as trimmed text; the code against
+  `target_culture`. Only a changed field is replaced (`dataclasses.replace()` on the header), then
+  `is_modified`, `_update_title()`, `_update_file_meta_labels()` and a 4 s "File properties updated"
+  notification.
 - **Backup key side effect:** the backup key is `<stem>__v<version>`, so after a version change
   the next backup starts a new key folder (and the min-interval throttle, being per key, does not
   skip it). Older backups stay under the old version in Restore from Backup.
@@ -1833,15 +1871,18 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
 - Entry point: **File → Merge from File…** → `MainWindow._merge_from_file()`.
 - Before computing the diff, `_merge_from_file()` warns via `QMessageBox.warning` if
   `incoming_culture` and `self.target_culture` are both non-empty and differ — Cancel
-  aborts with no changes made. If either side's `Culture` attribute is empty/missing,
-  the guard is silently skipped (no warning), since there's nothing to compare.
+  aborts with no changes made. Each side's code is `effective_language()`: the sidecar's
+  `language`, else the code guessed from the file name (`es.json` → `es`). If neither gives a
+  code the guard is silently skipped (no warning), since there's nothing to compare. The incoming
+  file is read with `keep_damaged=False`, so merging never moves its sidecar aside; its metadata
+  problems are shown as "Incoming file: …" messages.
 - Pure diff engine: `compute_merge_diff(open_entries, incoming_entries) -> MergeDiff`
   classifies every source text (matched by exact, literal `StringEntry.name`) into
   `additions` / `conflicts` / `deletions` / `auto_updated`. Raises `ValueError` if the
   incoming file has duplicate source text — the open file's own uniqueness invariant
   is assumed, not re-checked.
 - Metadata-only differences (same `text`, different `translator`/`status`/
-  `modify_date`/`istablet`) are auto-resolved via `_pick_newer_entry()`: the side with
+  `modify_date`) are auto-resolved via `_pick_newer_entry()`: the side with
   the strictly newer `modify_date` (via `parse_date()`) wins; ties, unparseable, or
   missing dates default to the open file's version and are **not** recorded in
   `auto_updated` (nothing to change).
@@ -1873,7 +1914,7 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   overwrites/removes existing data ("Keep incoming" / "Delete") — the tint tracks the
   *current* choice, not whether the row is still on its initial preset, so a conflict
   whose own default already resolved to "Keep incoming" (e.g. the incoming side has a
-  strictly newer `modifyDate`) renders full-strength on load, not faint
+  strictly newer `modify_date`) renders full-strength on load, not faint
   (`_TINT_ALPHA_DARK_FAINT` / `_TINT_ALPHA_LIGHT_FAINT`). Addition rows use the same
   two-item combo (Accept/Reject) as conflicts and deletions use for their own choice;
   Reject is the one resolution that leaves the row untinted, since nothing happens to
@@ -1968,7 +2009,7 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   open, incoming) — a conflict's changed words tinted by `merge_diff_html()` (difflib over word /
   whitespace / punctuation tokens; the tint is `_blend_hex()`'d to an opaque hex because
   `QTextDocument` CSS doesn't reliably take `rgba()`), a missing side as a dim "Not in the … file"
-  — and under them Translator, Status, Modified, "Tablet · Length" per side, differing values in
+  — and under them Translator, Status, Modified, "Length" per side, differing values in
   `text_warn`. Footer: ◀ ▶, the kind's two choices (labels are the combo's own items; the current
   one marked `✓` and `current="true"`; minimum width fits the `✓` form so the footer never
   shifts), Close (the default). A choice advances to the next row (stays on the last). Focus
@@ -1980,29 +2021,79 @@ All attributes use `"..."` delimiters, so only `"` needs escaping in addition to
   Enter are `QDialog`'s own; Enter in a read-only pane reaches Close.
   Each move selects that row in the table (`show_row()`). `WA_DeleteOnClose`.
   `python tests/check_merge_compare.py` is the regression check.
-- `insert_additions(segments, entries, additions)` builds new `<string>` XML snippets
-  for additions via `build_string_xml()` fed a template snippet (`_NEW_STRING_TEMPLATE`)
-  with a pre-escaped `name` attribute — `build_string_xml()` never rewrites `name`,
-  only `translator`/`status`/`modifyDate`/`istablet`/text — and splices them into the
-  final segment just before `</resources>` so the file stays valid XML, each preceded by a filler
-  segment holding the file's own line break plus `_NEW_STRING_INDENT`. New strings are
-  always appended at the end; existing entries' `seg_idx` values are untouched.
-  `insert_additions()` itself is unaware of per-row acceptance — `MainWindow._merge_from_file()`
-  calls `MergeConflictDialog.accepted_additions()` to get just the Accept subset of
-  `diff.additions` and passes *that* filtered list through as `additions_to_add`, both
-  to the `</resources>` guard and to `insert_additions()`. Unaccepted additions are
-  simply never inserted; there's no persisted record of the rejection, so they reappear
-  as addition candidates if the same incoming file is merged again later.
-  `MainWindow._apply_merge_diff()` checks for a literal `</resources>` in the file's
-  final segment *before* applying any part of the merge (additions, auto-updates,
-  conflict resolutions, or deletions), so a malformed/hand-edited open file fails fast
-  with a `QMessageBox.critical` and zero partial mutation, rather than leaving the
-  in-memory entries half-applied.
-- Deletions the user confirms are removed by blanking `self.segments[entry.seg_idx] = ""`
-  rather than re-indexing every later entry's `seg_idx` — the same trade-off pattern the
-  restore/backup code avoids needing.
+- `MainWindow._apply_merge_diff()` appends the accepted additions to `self.entries`, in the
+  incoming file's order, with `position` numbers following the open file's last (a new key goes at
+  the end of the JSON file). `MainWindow._merge_from_file()` calls
+  `MergeConflictDialog.accepted_additions()` to get just the Accept subset of `diff.additions`.
+  Unaccepted additions are simply never added; there's no persisted record of the rejection, so
+  they reappear as addition candidates if the same incoming file is merged again later. The
+  "newest date wins" rule reads the ISO dates the sidecars hold (shown in the system format
+  in memory, parsed by `parse_date()`).
+- Deletions the user confirms are dropped from `self.entries`.
 - No auto-save after a merge — same as any other in-memory edit, the user reviews and
   saves explicitly (Ctrl+S).
+
+### New Language
+
+- Entry point: **File → New Language…** → `MainWindow._new_language()`. With no file open it shows a
+  warning: the open file's keys are what gets copied.
+- With unsaved changes it first asks Save/Discard/Cancel (`_confirm_close_file()`, the Close File
+  prompt). It then asks for a language code (`QInputDialog`, validated against `LANGUAGE_CODE_RE`,
+  asked again on a bad code) and offers `<code>.json` in the open file's folder through a Save
+  dialog (its own overwrite prompt applies; the open file itself is refused).
+- It writes the open file's keys in the same order, every value equal to its key
+  (`new_language_entries()`: status `New`, no translator, no date), in the open file's style, plus
+  a sidecar holding the code and an empty `entries`, through `save_translation_file()`; then it
+  opens the new file with `_load()` and shows "Created: <name>  (N strings)". A failed sidecar write
+  after a good JSON write is reported as an error message, the new file still opens.
+- **Discard uses the keys on disk.** If the open file had unsaved changes and the user chose
+  Discard, the new file takes its keys (and style) from a fresh `load_translation_file()` of the
+  open file, not from the in-memory entries that are about to be thrown away — an unsaved delete
+  or Sync Keys would otherwise leak into the new language. Save writes first, so memory and disk
+  agree.
+- A value equal to its key is how "not translated yet" looks everywhere: it is what Robo-Translate
+  fills in, what Merge's untranslated rule recognises and what File Properties counts.
+
+### Sync Keys from File
+
+- Entry point: **File → Sync Keys from File…** → `MainWindow._sync_keys_from_file()`. Pick a
+  reference file of any language (read with `keep_damaged=False`); there is no language guard,
+  cross-language is the point. With no file open it shows a warning.
+- `compute_sync_diff(open_entries, reference_entries) -> SyncDiff`: **additions** are the keys the
+  reference has and the open file lacks, as fresh entries (value = key, status `New`, no date);
+  **deletions** are the open file's keys the reference lacks. Values are never compared or copied.
+- `insert_synced(open_entries, reference_entries, additions)` returns a new list with each
+  addition placed right after the nearest preceding reference key that the open file already has
+  (at the start when there is none), then renumbers `position` 1..n, so the two files keep the same
+  order and their diffs line up.
+- Review reuses `MergeConflictDialog(additions, [], deletions, parent, sync_mode=True)`: window
+  title "Sync Keys", no Conflicts column and no auto-resolve checkbox, the third column headed
+  "New value", the compare pop-up's second side named "reference" (`other_side_name()`). Additions
+  default to Accept and deletions to Keep, as in Merge; a deletion row shows its current value, so a
+  translation of a renamed key can be copied by hand.
+- Nothing to do (`Keys already match <name>`, info) shows no dialog. `_apply_sync()` drops the
+  deletions, inserts the additions, marks the file modified (no auto-save) and shows
+  "Synced keys: N added, M deleted". If every row was rejected or kept it changes nothing.
+- **Known limitation: a renamed key is an addition plus a deletion.** Nothing pairs them, so the
+  old key's translation has to be copied across by hand from the deletion row's value.
+
+### Placeholder check
+
+- A placeholder is a `{…}` token (`_PLACEHOLDER_RE = \{[^{}]*\}`: `{name}`, `{n}`, `{}`).
+  `placeholder_mismatch(source, translation)` returns the tokens only in the source and only in the
+  translation, as sorted lists; sets are compared, so order and repeats do not matter.
+  `placeholder_warning()` joins them as `Missing: {name} · Extra: {nme}`, or `""` when they agree.
+  `<path>`-style text is translated on purpose and does not count.
+- **Edit window:** an amber (`text_warn`) wrapped line under the translation box
+  (`_placeholder_label`), hidden while the sets agree, refreshed on every keystroke, on loading an
+  entry and on a theme switch. It never blocks Save.
+- **Filter bar:** the column that held "Is tablet" is **Check**, a `_WidePopupComboBox`
+  (`check_combo`) with *All* / *Placeholder mismatch*. `FilterEngine.check` is `"All"` or
+  `"placeholders"`; `matches()` rejects an entry whose `placeholder_warning()` is empty in that
+  mode. It takes part in the active dot and border (`_refresh_active_indicators()`), is reset by
+  Reset All with its signals blocked, and, like Status, is not persisted.
+- **Claude engines:** `_PLACEHOLDER_PROMPT` ("Keep every {placeholder} (text in curly braces) and
+  every line break exactly as in the source…") is part of both the API and the subscription prompt.
 
 ---
 
@@ -2026,14 +2117,14 @@ while the application is running.
 different problem:
 
 - **`build_exe.ps1`** passes it to PyInstaller as `--icon $IconPath`, which sets the
-  produced `XMLTranslationEditor.exe`'s own file icon (Explorer, taskbar, Alt-Tab).  This
+  produced `JSONTranslationEditor.exe`'s own file icon (Explorer, taskbar, Alt-Tab).  This
   check is non-fatal — a missing icon file only logs a `[WARN]` and the build proceeds
   without a custom icon, since it isn't required for a working exe.
-- **`xml_translation_editor.py`** calls `app.setWindowIcon(QIcon(str(APP_ICON_PATH)))` in
+- **`json_translation_editor.py`** calls `app.setWindowIcon(QIcon(str(APP_ICON_PATH)))` in
   `main()`, which sets the title-bar/taskbar icon of the *running* window — this matters
   because PyInstaller's `--icon` only affects the exe's file metadata, not anything
   readable by `QIcon()` at runtime, and it does nothing at all when running the raw
-  script directly (`python xml_translation_editor.py`, or via the `.ps1`/`.bat`
+  script directly (`python json_translation_editor.py`, or via the `.ps1`/`.bat`
   launchers) rather than the compiled exe.
 
 `APP_ICON_PATH` is resolved by the module-level `_resource_path()` helper, which checks
@@ -2065,7 +2156,7 @@ Windows *taskbar button* still showed the generic Python icon in testing — con
 screenshot, not assumed. Windows keys the taskbar button's icon/grouping to the
 **process's own executable** (`python.exe`) unless the process has set an explicit
 [AppUserModelID](https://learn.microsoft.com/windows/win32/shell/appids). `main()` calls
-`ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("XMLTranslationEditor")`
+`ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JSONTranslationEditor")`
 on Windows, best-effort or `pass`, before creating `QApplication` — this makes Windows
 treat the running process as its own distinct taskbar entity so the taskbar button picks
 up `setWindowIcon()`'s icon instead of falling back to `python.exe`'s. This is
@@ -2211,13 +2302,13 @@ can neither execute nor crash the batch parser, it is simply rejected.
 `python tests/run_all.py` runs every offscreen check (see [Tests folder](#tests-folder)); the
 pre-commit hook runs it automatically for code changes. Manual testing checklist for any change:
 
-- [ ] `python -c "import ast; ast.parse(open('xml_translation_editor.py').read()); print('OK')"` — syntax check
+- [ ] `python -c "import ast; ast.parse(open('json_translation_editor.py').read()); print('OK')"` — syntax check
 - [ ] Run `python tests/run_all.py` — verify `N passed, 0 failed` and exit code 0 (the hook runs this before a code commit)
-- [ ] Launch app and open `Latvian.xml`
-- [ ] Verify info bar shows language name and version (e.g. `Latviešu  v4.1.1140`) anchored at far right — they must not shift when notifications appear or disappear
-- [ ] Verify "Loaded: Latvian.xml  v4.1.1140  (N strings)" appears briefly in the dynamic zone then clears; language/version labels stay fixed
+- [ ] Launch app and open `es.json`
+- [ ] Verify info bar shows language name and version (e.g. `Español (Argentina)  v1.0.0`, from the sidecar) anchored at far right — they must not shift when notifications appear or disappear
+- [ ] Verify "Loaded: es.json  v1.0.0  (N strings)" appears briefly in the dynamic zone then clears; language/version labels stay fixed
 - [ ] Edit an entry, verify `is_modified` / title bullet / amber label
-- [ ] Save (Ctrl+S), verify title clears, label empties, and "Saved: Latvian.xml  v4.1.1140" appears; Close File (`Ctrl+W`) — verify "Closed: Latvian.xml  v4.1.1140"; open a copy with the `Version` attribute removed — verify "Loaded: … (no version)  (N strings)"
+- [ ] Save (Ctrl+S), verify title clears, label empties, and "Saved: es.json  v1.0.0" appears; Close File (`Ctrl+W`) — verify "Closed: es.json  v1.0.0"; open a copy whose sidecar has `"version": ""` — verify "Loaded: … (no version)  (N strings)"
 - [ ] Reopen file, verify backup folder and `backup_info.json` created
 - [ ] Open a file, note the new backup slot, then **Close File** (`Ctrl+W`) and immediately reopen it — verify no second slot is created and the info bar reads "Backup next to file: skipped — backed up less than a minute ago  (min interval 5 min)", then the same for "Backup in root"
 - [ ] Wait past the configured interval and reopen the same file — verify a new slot is written and the normal "Backup: …" message appears
@@ -2228,21 +2319,21 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] With `location_mode: "both"`, a recent slot at root only, and the next-to-file folder made unwritable, open the file — verify the info bar shows "Backup next to file: failed — could not write the backup folder" in red, then "Backup in root: skipped — …" in grey; separately, with both locations writable but only the next-to-file one blocked and no recent slots, verify the red failure is followed by "Backup in root: saved at …" (the failure is no longer dropped)
 - [ ] Open a file so a slot exists, then immediately **File → Restore from Backup…** with "Overwrite original" — verify a `pre_restore_safety` slot IS written despite being well inside the interval, and its `backup_info.json` reports `"trigger": "pre_restore_safety"`
 - [ ] Open **View → Autosave & Backup…** — verify the new **Skip if backed up within** row sits between *Keep last* and *Compress*, shows "Always back up" at 0, greys out when "Create backup when a file is opened" is unchecked, and persists across Save + restart
-- [ ] Delete `min_interval_minutes` from `translation_editor_settings.json` and relaunch — verify it is backfilled with `5` and the file is rewritten once
-- [ ] Launch with an existing valid settings file — verify `translation_editor_settings.backups.zip` appears beside it holding one `translation_editor_settings_<date>_<time>.json` that is byte-identical to the settings file; relaunch the same day — verify it still holds exactly one entry
+- [ ] Delete `min_interval_minutes` from `json_translation_editor_settings.json` and relaunch — verify it is backfilled with `5` and the file is rewritten once
+- [ ] Launch with an existing valid settings file — verify `json_translation_editor_settings.backups.zip` appears beside it holding one `json_translation_editor_settings_<date>_<time>.json` that is byte-identical to the settings file; relaunch the same day — verify it still holds exactly one entry
 - [ ] Rename the archive's newest entry to yesterday's date (any zip tool) and relaunch — verify a second entry is added; repeat with successively older dates until there are 11 distinct days — verify the archive holds exactly 10 and the oldest is gone
-- [ ] With the app closed, open the archive in File Explorer, extract one entry, rename it to `translation_editor_settings.json` over the live file, and launch — verify the app loads with that snapshot's values (the manual-restore steps in `docs/FEATURES.md`)
-- [ ] Truncate the settings file mid-JSON and launch — verify a "Settings file recovered" warning appears *before* the translator-name prompt, the API keys are back in Translation Settings, `translation_editor_settings.json.corrupt-<time>` holds the truncated text, and the settings file parses again; after the dialogs, verify the info bar shows "Settings file was damaged…" in red, then "Settings restored from the backup of <date>" in amber, and the history button has a red dot
+- [ ] With the app closed, open the archive in File Explorer, extract one entry, rename it to `json_translation_editor_settings.json` over the live file, and launch — verify the app loads with that snapshot's values (the manual-restore steps in `docs/FEATURES.md`)
+- [ ] Truncate the settings file mid-JSON and launch — verify a "Settings file recovered" warning appears *before* the translator-name prompt, the API keys are back in Translation Settings, `json_translation_editor_settings.json.corrupt-<time>` holds the truncated text, and the settings file parses again; after the dialogs, verify the info bar shows "Settings file was damaged…" in red, then "Settings restored from the backup of <date>" in amber, and the history button has a red dot
 - [ ] Truncate the settings file, then hold it open from PowerShell (`$fs = [IO.File]::Open($path,'Open','Read','Read')`) and launch — verify the recovery warning still appears and names a `.corrupt-<time>` **copy** (the file couldn't be moved), the API keys are back in Translation Settings, and after releasing the lock and closing the app the settings file on disk is valid
 - [ ] Same truncation with the archive deleted — verify the warning says no backup was available and defaults are in use, and the damaged file is still kept aside; the info bar shows the red "damaged" message, then the amber "Default settings in use — API keys and preferences need to be set again"
-- [ ] Delete `translation_editor_settings.json` while the archive exists, then launch — verify **no** recovery dialog and defaults are used (deleting is the documented reset), and that the info bar shows the amber "Settings file not found — default settings in use"
-- [ ] Replace the archive with a non-zip file and launch — verify `translation_editor_settings.backups.zip.corrupt` appears, a fresh archive holding today's entry is written, and startup is not blocked
+- [ ] Delete `json_translation_editor_settings.json` while the archive exists, then launch — verify **no** recovery dialog and defaults are used (deleting is the documented reset), and that the info bar shows the amber "Settings file not found — default settings in use"
+- [ ] Replace the archive with a non-zip file and launch — verify `json_translation_editor_settings.backups.zip.corrupt` appears, a fresh archive holding today's entry is written, and startup is not blocked
 - [ ] Save the settings file from an editor that writes a UTF-8 BOM — verify it loads with no recovery dialog
-- [ ] Launch with a truncated settings file *and* a file argument (`python xml_translation_editor.py Latvian.xml`) — verify the recovery dialog still appears rather than being overwritten by the "Loaded: …" info-bar message
+- [ ] Launch with a truncated settings file *and* a file argument (`python json_translation_editor.py es.json`) — verify the recovery dialog still appears rather than being overwritten by the "Loaded: …" info-bar message
 - [ ] After any of the above, run `git status` — verify none of the archive, `.corrupt`, `.corrupt-*` or `.tmp` files show up as untracked
 - [ ] Hand-edit `min_interval_minutes` to `"abc"` and to `-3`, relaunching for each — verify no crash, `"abc"` behaves as 5, `-3` behaves as 0
 - [ ] Create a junk directory (e.g. `notes`) inside a backup key folder alongside real slots, then reopen the file inside the interval — verify it is still correctly skipped (the unparseable name is ignored, not treated as "no slots")
-- [ ] Open a large XML file inside the interval — verify the skip message arrives essentially instantly, confirming the pre-read early exit
+- [ ] Open a large JSON file inside the interval — verify the skip message arrives essentially instantly, confirming the pre-read early exit
 - [ ] Edit an entry, then **File → Close File** (`Ctrl+W`) — verify the Save/Discard/Cancel prompt appears; Cancel leaves the file open with the edit intact; Discard clears the table, sets the title to "No file", and blanks the language/version labels in the info bar
 - [ ] Choose **Save** at that prompt — verify the file is written, then closed
 - [ ] Make the file read-only (or lock it in another app), edit an entry, Close File → **Save** — verify the save-error dialog appears and the file stays OPEN with its changes, rather than being closed and the edit lost
@@ -2256,18 +2347,18 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Open **View → Keyboard Shortcuts…** — verify `edit_save` and `auto_translate` rows appear and rebinding persists after restart
 - [ ] Apply a status filter, edit an entry to a different status, press `F5` — verify the entry disappears from the filtered list
 - [ ] With filter active, verify the **F5 — Refresh Filter** hint appears in the info bar, preceded by a thin divider with even space on both sides and the same circular-arrow icon as Reset All, and that the divider disappears with the hint when the filter is cleared; repeat at a 14 pt UI font and in the light theme
-- [ ] Search `tab` in **Starts with** mode — verify `Tablet` matches and `database` does NOT; switch Mode → **Contains** and verify both match
+- [ ] Search `tab` in **Starts with** mode — verify an entry starting a word with "tab" (e.g. "Table of contents", "data-tablet") matches and `database` does NOT; switch Mode → **Contains** and verify both match
 - [ ] Pick Mode = **Contains** + In: = **Source**, restart app, verify both selections are restored from `settings.search`
 - [ ] Maximise the window — verify the Search field grows (most space) and Translator field grows (less space); other filter groups keep their natural width
-- [ ] Craft a test XML file with `modifyDate="2016.05.06."` (trailing period) — open it, set a date-range filter that excludes that date, and verify the entry disappears (previously it stayed visible regardless of the range)
-- [ ] Craft a test XML file with `modifyDate="06/05/2016"` — open it, and verify it filters as May 6, 2016 on a day-first-locale machine (appears within a May 1–10 range, disappears outside it) rather than being silently misparsed as June 5
+- [ ] Craft a sidecar with `"modified": "2016-05-06"` for one entry and open it — verify the Date column shows it in this machine's short-date format, a date-range filter that excludes May 6, 2016 hides the entry, and the file opens with no "Unsaved changes"
+- [ ] Craft a sidecar with `"modified": "06/05/2016"` (not ISO) — verify the warning "Metadata: 1 unrecognized date(s) (e.g. '06/05/2016')", the date shows as stored, and it is written back unchanged after an unrelated Save
 - [ ] Open a file with a mix of legacy date formats (trailing-period dot, slash, dash, 2-digit year) — verify the "Loaded: …" message reports the correct normalized/unrecognized counts, and the file shows "Unsaved changes" immediately after open; Save, reopen it, and verify the message no longer mentions "normalized" and the file does *not* show "Unsaved changes"
 - [ ] Open **File → Restore from Backup…** — verify backup slots appear; restore a slot as copy and confirm the restored file opens
 - [ ] Open **View → Autosave & Backup…** — verify the Backup location dropdown appears (default "Next to file + Root"), persists after restart, and is disabled when backup itself is disabled
-- [ ] Set location mode to "Both", open a versioned XML file — verify independent backup slots exist at both the file's own folder and the editor root, each with its own complete `backup_info.json` (open one and confirm `version`/`culture`/`display_language`/`location`/`backup_key`/`trigger` are all populated)
-- [ ] Open two XML files sharing a filename but with different `Version` attributes — verify distinct backup keys (`<stem>__v<version1>` vs `<stem>__v<version2>`) and no interleaving
+- [ ] Set location mode to "Both", open a versioned JSON file (sidecar with a `version`) — verify independent backup slots exist at both the file's own folder and the editor root, each with its own complete `backup_info.json` (open one and confirm `version`/`culture`/`display_language`/`location`/`backup_key`/`trigger` are all populated)
+- [ ] Open two JSON files sharing a filename but with different sidecar `version` values — verify distinct backup keys (`<stem>__v<version1>` vs `<stem>__v<version2>`) and no interleaving
 - [ ] Open a file with no `Version` attribute — verify it still uses the plain `<stem>` key
-- [ ] Set location mode to "Next to file only", point at a folder where writing fails (e.g. simulate by pre-creating a file at the `XML_Translation_file_Backups` path) — verify the backup falls back to the root location with `is_fallback: true` recorded, and the info bar shows "Backup next to file: failed …" in red, then "Backup in root (fallback): saved at …" in amber
+- [ ] Set location mode to "Next to file only", point at a folder where writing fails (e.g. simulate by pre-creating a file at the `JSON_Translation_file_Backups` path) — verify the backup falls back to the root location with `is_fallback: true` recorded, and the info bar shows "Backup next to file: failed …" in red, then "Backup in root (fallback): saved at …" in amber
 - [ ] Open **File → Restore from Backup…** — verify the tree nests Filename → Version → timestamped slots with a working Location column, and the dialog renders in the active theme (not default Qt styling)
 - [ ] In **File → Restore from Backup…**, select a filename or version group header — verify **Delete Selected** stays disabled; select a leaf slot — verify it enables. Click it, decline the confirmation — verify nothing is deleted. Click it again, confirm — verify the slot's folder is gone from disk, the dialog stays open, and the tree refreshes without it (showing the "only backup remaining" warning first if it was the last slot for that file+location)
 - [ ] Restore a backup choosing "Overwrite original" over a file that currently exists — verify a new `pre_restore_safety`-triggered backup of the pre-overwrite state appears first
@@ -2279,8 +2370,8 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Click the `Select` button in the Additions, Conflicts and Deletions columns in turn — verify each replaces the current selection with only that row type, and is disabled when the table has zero rows of that type
 - [ ] Open **View → Keyboard Shortcuts…** — verify there is no "Merge Dialog" group (the merge dialog has no keyboard shortcuts)
 - [ ] Click the merge dialog's title-bar maximize button — verify it maximizes and the table columns reflow to fill the space; restore returns it to its prior size
-- [ ] Merge a file with only metadata differences (same text, different `modifyDate`) — verify silent auto-resolve and a correct summary count
-- [ ] Merge a file with a genuine text conflict — verify `MergeConflictDialog` appears, the default selection matches the newer `modifyDate`, and both Keep-open/Keep-incoming choices apply correctly
+- [ ] Merge a file with only metadata differences (same text, different modified date) — verify silent auto-resolve and a correct summary count
+- [ ] Merge a file with a genuine text conflict — verify `MergeConflictDialog` appears, the default selection matches the newer modified date, and both Keep-open/Keep-incoming choices apply correctly
 - [ ] Merge a file missing a string that exists locally — verify it appears as a deletion row defaulted to Keep, and choosing Delete removes it from the visible list with a clean save (no stray `<string>` element)
 - [ ] Merge a file with a different `Culture` — verify the warning dialog appears and Cancel truly aborts (open file completely unchanged)
 - [ ] Merge a file containing duplicate source strings — verify the error dialog names the correct duplicated text and no changes are made
@@ -2288,11 +2379,11 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Click the **Select** button of a column (Additions, Conflicts or Deletions) on a merge with 2+ rows of that type — verify ALL matching rows become selected (not just the last one), both via the button and by checking the table highlight
 - [ ] With 2+ addition rows selected, click **Reject** — verify every selected row's combo switches to Reject and re-tints; repeat for **Accept** / **Keep open** / **Keep incoming** / **Delete** / **Keep** against rows of the matching type
 - [ ] On a merge with zero conflicts, verify **Keep open** / **Keep incoming** are disabled and show the ordinary disabled look instead of the amber tint; with zero additions, verify **Accept** / **Reject** are disabled; with zero deletions, verify **Delete** / **Keep** are disabled
-- [ ] Merge a conflict where the open file's translation is untranslated (equals its own source text) and the incoming file has a real, different translation with an OLDER `modifyDate` — verify the incoming (translated) side is still the default selection, not the open (untranslated) side
-- [ ] Merge the reverse — incoming untranslated with a NEWER `modifyDate`, open genuinely translated — verify the open (translated) side remains the default despite the older date
+- [ ] Merge a conflict where the open file's translation is untranslated (equals its own source text) and the incoming file has a real, different translation with an OLDER modified date — verify the incoming (translated) side is still the default selection, not the open (untranslated) side
+- [ ] Merge the reverse — incoming untranslated with a NEWER modified date, open genuinely translated — verify the open (translated) side remains the default despite the older date
 - [ ] Check **Auto-resolve all conflicts using newest modify date** on a merge containing one of the above untranslated-vs-translated conflicts — verify it still resolves to the translated side, not just the newest date
 - [ ] Open a merge with all three row types present — verify the toolbar shows four captioned columns (Selection, Additions, Conflicts, Deletions) separated by thin dividers, the three category captions coloured green/amber/red and each of their buttons tinted to match
-- [ ] Build that merge so every conflict defaults to "Keep open" and every deletion defaults to "Keep" (no `modifyDate` differences) — verify every conflict row shows a faint amber tint and every deletion row shows a faint red tint even before touching anything (not just rows you've changed); switch one conflict to **Keep incoming** and one deletion to **Delete** and verify those two rows visibly brighten to full-strength amber/red while the untouched rows stay faint. Separately, merge a conflict where the incoming side has a strictly newer `modifyDate` (so it defaults to "Keep incoming") — verify that row renders full-strength amber immediately on load, not faint, since the tint tracks the current choice, not the row's initial preset
+- [ ] Build that merge so every conflict defaults to "Keep open" and every deletion defaults to "Keep" (no modified-date differences) — verify every conflict row shows a faint amber tint and every deletion row shows a faint red tint even before touching anything (not just rows you've changed); switch one conflict to **Keep incoming** and one deletion to **Delete** and verify those two rows visibly brighten to full-strength amber/red while the untouched rows stay faint. Separately, merge a conflict where the incoming side has a strictly newer modified date (so it defaults to "Keep incoming") — verify that row renders full-strength amber immediately on load, not faint, since the tint tracks the current choice, not the row's initial preset
 - [ ] Toggle dark ↔ light theme, reopen the merge dialog — verify both the toolbar button tints and captions and the faint/full row tints render correctly in both themes
 - [ ] Widen and narrow the dialog (or resize a column) so a long source/translation string gets truncated with `…` — hover over the truncated cell and verify a tooltip shows the complete, untruncated text; verify the Type column never shows a tooltip
 - [ ] Open the merge dialog at the default UI font on an ordinary (non-ultrawide) monitor — verify the toolbar fits on one row with every label visible and the dialog opens pre-sized to fit the toolbar or the table's content, whichever is wider, without needing to be resized; then narrow the dialog and verify the columns wrap without clipping any button
@@ -2307,7 +2398,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Merge a file, change one choice in each category, click **Apply & Close** — verify no traceback in the console and the changes are applied; restore a backup slot that has a glossary with "Also restore glossary" ticked — verify no traceback and the glossary is restored
 - [ ] Run `python tests/check_merge_compare.py` — verify `PASSED: 0 failure(s)` and exit code 0
 - [ ] Run `python tests/check_notifications.py` — verify `PASSED: 0 failure(s)` and exit code 0
-- [ ] In both themes, open a file with a legacy date (e.g. `modifyDate="2016-05-06"`) and an unparseable one (`modifyDate="foo"`) — verify "Loaded: …", then "Dates: 1 normalized" and "Dates: 1 unrecognized (e.g. 'foo')" (both amber) play in turn, then "Backup: …"; a dim `+N` shows while messages wait; the history button shows an amber dot, and clicking it lists all four newest first with times and clears the dot
+- [ ] In both themes, open a file whose sidecar has one entry with an unknown status (`"status": "Done"`), one with a non-ISO date (`"modified": "foo"`) and one key that is not in the language file — verify "Loaded: …", then the three amber "Metadata: …" warnings play in turn, then "Backup: …"; a dim `+N` shows while messages wait; the history button shows an amber dot, and clicking it lists all of them newest first with times and clears the dot
 - [ ] At a 14 pt UI font, open the message history — verify the text is legible, long lines wrap, and a selection can be copied with Ctrl+C; press Escape and click the button a second time while it is open — verify both close it and the second click does not reopen it
 - [ ] Narrow the window until a long message is cut off — verify its tooltip shows it in full, and that the language and version labels never move while messages change
 - [ ] Restore a backup slot that has a glossary with "Also restore glossary" ticked — verify "Restored…" is followed by its own "Glossary restored" message
@@ -2316,7 +2407,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Press `Alt+Left`/`Alt+Right`, `Alt+1`/`Alt+2` and Escape in the pop-up, also with the cursor in a text pane — verify each works; select text in a pane and copy it with `Ctrl+C` — verify it can be copied but not edited
 - [ ] Double-click an addition and a deletion — verify the missing side reads "Not in the open file" / "Not in the incoming file", its metadata shows "—", and the buttons read Accept/Reject and Keep/Delete; tick auto-resolve and open a conflict — verify both choice buttons are disabled and the header ends with "· auto-resolved"
 - [ ] Open the pop-up in both themes at 10 and 14 pt — verify every label and button shows in full, the text panes are at least 4 lines tall, and the window can be resized and maximized with the panes taking the space
-- [ ] Look at the filter bar in both themes — verify a 2 px accent line above it, a caption above each of the six columns (Search, Status, Translator, Date range, Is tablet, Filters), 1 px dividers between columns and a 1 px line below it separating it from the table
+- [ ] Look at the filter bar in both themes — verify a 2 px accent line above it, a caption above each of the six columns (Search, Status, Translator, Date range, Check, Filters), 1 px dividers between columns and a 1 px line below it separating it from the table
 - [ ] Type in Search, pick a Status and tick From — verify each active filter gets an accent border on its field and a ● after its caption, the caption text does not move, **Reset All** clears every mark, and changing only Mode or In marks nothing
 - [ ] Look at the Status column in both themes — verify rounded pills (New / Review / Complete) that stay readable on a normal, a hovered and a selected row
 - [ ] Move the mouse over the table — verify only the row under the pointer is highlighted, the highlight disappears when the pointer leaves the table, and a selected row keeps its selection colour while hovered
@@ -2333,7 +2424,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Open Edit window on a 65+ char source: type a translation 7 chars longer → amber; 17+ chars longer → red. Confirms long-zone (10% / 25%) thresholds.
 - [ ] Open Edit windows on a 30-char source vs. a 31-char source — verify the formula correctly switches zones (30 uses short percentages, 31 uses long).
 - [ ] Toggle theme dark↔light while the Edit window is open — character-count label re-colors without restart.
-- [ ] Set `"char_count": {"enabled": false}` in `translation_editor_settings.json`, restart — character-count label is hidden in Edit window, no errors.
+- [ ] Set `"char_count": {"enabled": false}` in `json_translation_editor_settings.json`, restart — character-count label is hidden in Edit window, no errors.
 - [ ] Open **View → Glossary…**, select a row with Term/Translation/Note filled in, click **Duplicate Row** — verify a new row appears directly below with identical values and becomes selected; click **Duplicate Row** again with nothing selected — verify nothing happens
 - [ ] Add 100+ rows to a file's glossary CSV externally, then open **View → Glossary…** — verify the dialog stops growing at roughly 3/4 of the screen height (not near-full-screen) and the table's own scrollbar reaches the remaining rows; with just 1-2 terms, verify the dialog still sizes normally to content, not forced up to that cap
 - [ ] Compare scrollbar thickness in the main table, Glossary, Merge, and Restore dialogs before/after a UI font size change (**View → Choose UI Font…**) — verify all four grow a visible scrollbar thickness together (same single QSS rule governs all of them), not just the main window
@@ -2341,7 +2432,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Narrow the window or widen the columns so the horizontal scrollbar appears — verify left/right arrows show, the handle stays clear of them at both ends, and it too keeps a minimum length
 - [ ] Check the scrollbars of Glossary, Merge, Restore and the Edit dialog's text boxes — verify each shows both arrows; switch theme and change the UI font — verify the arrows recolour and resize with the bar
 - [ ] Open the Edit dialog on an entry whose source text is long enough to need a scrollbar (dozens of lines), at a 14 pt UI font — verify the source box's handle can be dragged (it moves, not full-length and frozen) and its arrows show
-- [ ] Create a *file* (not a folder) named `XMLTranslationEditor` in `%LOCALAPPDATA%\cache` (deleting any existing `XMLTranslationEditor` folder there first), then launch — verify the app starts normally, scrollbars still work with the handle clear of the (blank) buttons, checked prominent checkboxes show a plain accent square instead of a tick, and `error_log.txt` gains a "glyph images" line; delete the file afterwards
+- [ ] Create a *file* (not a folder) named `JSONTranslationEditor` in `%LOCALAPPDATA%\cache` (deleting any existing `JSONTranslationEditor` folder there first), then launch — verify the app starts normally, scrollbars still work with the handle clear of the (blank) buttons, checked prominent checkboxes show a plain accent square instead of a tick, and `error_log.txt` gains a "glyph images" line; delete the file afterwards
 - [ ] Look at every prominent checkbox that is checked (the filter bar's From/To dates, Translation Settings, Autosave & Backup, Restore, Edit's Override, Merge's auto-resolve) in both themes — verify a fine, crisp white tick on the accent fill (about as light a stroke as the ✕ in the filter bar's clear button, not a heavy check) and no tick when unchecked; then make one checked box disabled (in Autosave & Backup, untick "Create backup when a file is opened" so the still-checked "Compress backups" greys out) — verify a dimmed tick on the grey fill, not a white one
 - [ ] Run `python tests/check_checkbox_mark.py` — verify `PASSED: 0 failure(s)`
 - [ ] Run `python tests/check_scrollbar.py` — verify `PASSED: 0 failure(s)`
@@ -2351,7 +2442,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Open **View → Autosave & Backup…** at 12, 14 and 24 pt UI fonts — verify "5 minutes", "5 backups", "Always back up" (Skip set to 0) and "1440 minutes" (Skip at its maximum) show in full, the three spin boxes are one width and start at one x across both sections, and the Backup location combo shows "Next to file + Root (recommended)" in full without stretching wider than its text
 - [ ] Run `python tests/check_spinbox_arrows.py` — verify `PASSED: 0 failure(s)`
 - [ ] Run `python tests/check_file_properties.py` — verify `PASSED: 0 failure(s)` and exit code 0
-- [ ] Open `Latvian.xml`, **File → Properties…** — verify Culture reads "Latvian (Latvia)  lv-LV", Language name "Latviešu", Version boxes 4 . 1 . 1140, and the facts (file, folder, size, modified, strings, status shares, untranslated, tablet) are filled in; hover the folder for the full path
+- [ ] Open `es.json`, **File → Properties…** — verify Language code reads "es" with "Spanish" beside it (guessed from the file name when the sidecar has none), Language name and Version boxes show the sidecar's values, and the facts (file, folder, size, modified, strings, status shares, untranslated) are filled in; hover the folder for the full path
 - [ ] In the Version boxes: click the arrows, scroll the wheel, and type — verify the first two stop at 99 and the last at 99999 (a sixth digit is refused), no value is ever shown as `04` or padded, and typing `7.2.15` from the first box moves on at each `.` (also the numeric keypad's decimal key)
 - [ ] Change the language and version, click OK — verify the info bar shows the new language and `v…` at once, the title shows ●, and "File properties updated" appears; Ctrl+S, reopen — verify the root tag holds the new values and nothing else in it moved
 - [ ] Open File → Properties and click OK without changing anything, and separately Cancel after changing things — verify no ● and no change
@@ -2367,7 +2458,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] In the pop-up, scroll a column with the wheel and with a touchpad, drag it (a quick flick coasts on), click a row above/below the middle (it scrolls there), press Up/Down/PageUp/PageDown/Home/End and Left/Right/Tab between columns — verify every movement ends on a whole row, day and month wrap, the year stops at 2000 and 2100, and 31 January → April shows 30
 - [ ] Confirm with Enter, and separately by clicking the middle row — verify the field takes the date (and the table re-filters with From ticked); cancel with Escape and by clicking outside — verify the field keeps its old date
 - [ ] Right-click a date field — verify no Step up/Step down menu appears
-- [ ] Open the Edit dialog on an entry whose date is before 2000 (hand-edit one in a copy of `Latvian.xml`), open and cancel the date pop-up, change only the status, Save — verify the stored date is unchanged; on a second monitor, verify the pop-up opens next to the field there
+- [ ] Open the Edit dialog on an entry whose date is before 2000 (hand-edit one in a copy of `es.json`), open and cancel the date pop-up, change only the status, Save — verify the stored date is unchanged; on a second monitor, verify the pop-up opens next to the field there
 - [ ] At the 1280 × 760 startup size, choose 12 pt and then 14 pt UI fonts — verify both date pickers show the full date ("01.01.2025"), every filter-bar combo shows its longest item unclipped (pick "Translated" in In, "Complete" in Status), and Mode is no wider than "Starts with" plus its arrow
 - [ ] Look at the Reset All button in both themes at 10 and 14 pt — verify the circular-arrow icon is as tall as the label's capitals, sits on the text line, is separated from "Reset" by about a space, and recolours on a theme switch
 - [ ] Run `python -c` against `_translate_google_dt` with `GoogleTranslator.translate` patched to raise `deep_translator.exceptions.TooManyRequests` — verify one 429 is retried and succeeds, two give the "rate-limiting this network" message, and a cancelled pause returns at once without a second request
@@ -2386,7 +2477,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Start a Robo-Translate chain on a New entry followed by a Review/Complete entry — verify the already-translated entry is skipped untouched while chain continues to the next New entry.
 - [ ] Check **"Skip translator name prompt on startup"** in Translation Settings, restart the app — verify the startup dialog no longer appears and the info bar shows no translator name.
 - [ ] Sign in via "Sign in with Claude subscription" (real OAuth flow) — verify token stored, status turns green.
-- [ ] In the built `dist\XMLTranslationEditor.exe`, Auto-translate with the Subscription engine and sign in with "Sign in with Claude subscription" — verify no console or Windows Terminal window opens for either, and sign-in still completes (from source the launcher's console hides this; `pythonw.exe xml_translation_editor.py` reproduces the exe)
+- [ ] In the built `dist\JSONTranslationEditor.exe`, Auto-translate with the Subscription engine and sign in with "Sign in with Claude subscription" — verify no console or Windows Terminal window opens for either, and sign-in still completes (from source the launcher's console hides this; `pythonw.exe json_translation_editor.py` reproduces the exe)
 - [ ] With `claude` CLI *not* installed, click Sign In — verify the clear "install Node.js / claude-code" error, no crash.
 - [ ] Select Claude (Subscription) engine, Auto-translate one entry — verify first call succeeds (paying the warm-up cost) and the credit label reads "Claude Subscription (AI)".
 - [ ] Immediately Auto-translate several more entries — verify no repeated subprocess-startup delay (session reused).
@@ -2407,23 +2498,23 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Edit `bat_launcher_cache.txt` to contain something other than `powershell.exe`/`pwsh.exe` — verify the launcher rejects it and runs a full check instead of attempting to execute the file's contents
 - [ ] Run launcher inside Windows Terminal — verify no console resize errors and window opens normally
 - [ ] Build: `build_exe.bat` (or `build_exe.ps1`)
-- [ ] Launch the app via `python xml_translation_editor.py` (and via `run_translator.ps1`) — verify the custom icon appears in **both** the window title bar and the Windows taskbar button, not the generic Python icon (the taskbar button specifically depends on the `SetCurrentProcessExplicitAppUserModelID` call in `main()` — title bar alone working is not sufficient confirmation)
-- [ ] After `build_exe.ps1` completes, verify `dist\XMLTranslationEditor.exe` shows the custom icon in Explorer, and that running it shows the same icon in the taskbar/title bar while it's running (confirms the `--add-data` bundling reaches `QIcon()` at runtime, not just the exe's own file icon)
-- [ ] Run the built `dist\XMLTranslationEditor.exe` and close any open file so the Welcome screen shows — verify the centered logo renders (not a blank space), confirming the `.png`'s own `--add-data` bundling also reaches `_MEIPASS` in the frozen exe
+- [ ] Launch the app via `python json_translation_editor.py` (and via `run_translator.ps1`) — verify the custom icon appears in **both** the window title bar and the Windows taskbar button, not the generic Python icon (the taskbar button specifically depends on the `SetCurrentProcessExplicitAppUserModelID` call in `main()` — title bar alone working is not sufficient confirmation)
+- [ ] After `build_exe.ps1` completes, verify `dist\JSONTranslationEditor.exe` shows the custom icon in Explorer, and that running it shows the same icon in the taskbar/title bar while it's running (confirms the `--add-data` bundling reaches `QIcon()` at runtime, not just the exe's own file icon)
+- [ ] Run the built `dist\JSONTranslationEditor.exe` and close any open file so the Welcome screen shows — verify the centered logo renders (not a blank space), confirming the `.png`'s own `--add-data` bundling also reaches `_MEIPASS` in the frozen exe
 - [ ] After `build_exe.ps1` completes, verify `dist\User_Guide.pdf` exists alongside the `.exe`
-- [ ] After `build_exe.ps1` completes, verify `dist\XMLTranslationEditor.exe` is ~170 MB (not ~360 MB) and that `python -m PyInstaller.utils.cliutils.archive_viewer -l dist\XMLTranslationEditor.exe` lists no `WebEngine` entries — confirms `--collect-all PySide6` hasn't crept back into the build command
+- [ ] After `build_exe.ps1` completes, verify `dist\JSONTranslationEditor.exe` is ~170 MB (not ~360 MB) and that `python -m PyInstaller.utils.cliutils.archive_viewer -l dist\JSONTranslationEditor.exe` lists no `WebEngine` entries — confirms `--collect-all PySide6` hasn't crept back into the build command
 - [ ] Temporarily rename `Resources\xml_translation_editor.ico`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built app still runs (just without a custom icon); restore the file afterward
 - [ ] Temporarily rename `Resources\xml_translation_editor.png`, run `build_exe.ps1` — verify it completes with a `[WARN]`, the exe still builds, and the Welcome screen just shows no logo; restore the file afterward
 - [ ] Temporarily rename `Resources\User_Guide.pdf`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and `dist\` simply has no `User_Guide.pdf`; restore the file afterward
-- [ ] Run the built `dist\XMLTranslationEditor.exe` — verify the splash screen (logo, app name, "Starting…") appears promptly and stays visible through the onefile unpacking delay, then closes cleanly with no blank gap right as the main window (or Welcome screen) appears
+- [ ] Run the built `dist\JSONTranslationEditor.exe` — verify the splash screen (logo, app name, "Starting…") appears promptly and stays visible through the onefile unpacking delay, then closes cleanly with no blank gap right as the main window (or Welcome screen) appears
 - [ ] Temporarily rename `Resources\xml_translation_editor_splash.png`, run `build_exe.ps1` — verify it completes with a `[WARN]` instead of failing, and the built exe still launches normally with no splash screen; restore the file afterward
-- [ ] Launch `python xml_translation_editor.py` directly from source — verify no error or delay from the splash-close code (`pyi_splash` isn't present when unfrozen, so it's a silent no-op)
-- [ ] Open a large XML file — verify the window is interactive immediately (scroll/click the table with no freeze) and the "Backup: …" message arrives a moment later rather than before the table paints
+- [ ] Launch `python json_translation_editor.py` directly from source — verify no error or delay from the splash-close code (`pyi_splash` isn't present when unfrozen, so it's a silent no-op)
+- [ ] Open a large JSON file — verify the window is interactive immediately (scroll/click the table with no freeze) and the "Backup: …" message arrives a moment later rather than before the table paints
 - [ ] Restore a backup choosing "Overwrite original" — verify the restore still completes correctly and a `pre_restore_safety`-triggered slot capturing the pre-overwrite state still appears
 - [ ] Restore with "Overwrite original", then immediately close the app while the safety backup is still compressing — verify the restored file is actually written to disk, and the app exits cleanly (exit code 0, no crash/abort dialog) rather than hanging or aborting
-- [ ] Set `"backup": {"enabled": false}` in `translation_editor_settings.json`, restart — verify both file-open and restore-with-overwrite behave exactly as before this change: no delay, no "Backup: …" messages, no new backup slots
+- [ ] Set `"backup": {"enabled": false}` in `json_translation_editor_settings.json`, restart — verify both file-open and restore-with-overwrite behave exactly as before this change: no delay, no "Backup: …" messages, no new backup slots
 - [ ] Set `backup.location_mode` to `"both"`, open a file from a folder never backed up before — verify both locations produce complete slots and `known_next_to_file_dirs` still gains that folder (it is now written from the background thread's completion signal, not inline)
-- [ ] Open a large XML file so its `file_open` backup is still running/compressing, then — before it finishes — use **File → Restore from Backup…** to restore a backup slot for that SAME file choosing "Overwrite original" (this starts a `pre_restore_safety` backup for the same key_dir while the `file_open` backup may still be in flight, producing real same-key contention) — verify both complete with distinct, uncorrupted backup slots, each with its own valid `backup_info.json` and the correct, non-clobbered `trigger` (`file_open` vs `pre_restore_safety`) — confirms the per-key_dir lock serializes same-file backups without one corrupting the other
+- [ ] Open a large JSON file so its `file_open` backup is still running/compressing, then — before it finishes — use **File → Restore from Backup…** to restore a backup slot for that SAME file choosing "Overwrite original" (this starts a `pre_restore_safety` backup for the same key_dir while the `file_open` backup may still be in flight, producing real same-key contention) — verify both complete with distinct, uncorrupted backup slots, each with its own valid `backup_info.json` and the correct, non-clobbered `trigger` (`file_open` vs `pre_restore_safety`) — confirms the per-key_dir lock serializes same-file backups without one corrupting the other
 - [ ] Open two DIFFERENT files back-to-back (before either one's backup can finish) — verify both backups complete promptly and independently, with no visible delay from one waiting on the other — confirms unrelated files' backups still run in true parallel, not globally serialized
 - [ ] In an Edit window, start a translation, then click Next/Previous before it completes — verify the entry you navigated to is never overwritten by the now-stale result when it eventually arrives, and the entry you left is also untouched
 - [ ] Same scenario with the Claude (Subscription) engine — start a translation, navigate away immediately, then start a new translation on the next entry — verify the new translation begins promptly rather than waiting out the full ~60s timeout for the abandoned call's lock
@@ -2446,21 +2537,34 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Delete the last remaining entry from within the Edit dialog — verify the dialog closes instead of trying to load a nonexistent row
 - [ ] Delete an entry from within the Edit dialog while a Robo-Translate chain is running on it — verify the chain stops cleanly
 - [ ] Delete an entry from within the Edit dialog while a translation is in flight for it — verify no crash and the stale result is discarded
-- [ ] Save after deleting entries — verify the saved XML no longer contains the deleted `<string>` elements and the file reloads cleanly
+- [ ] Save after deleting entries — verify the saved JSON no longer contains the deleted keys, every other line is unchanged, and the file reloads cleanly
 - [ ] Open View → Keyboard Shortcuts…, verify "Delete Selected" appears in "Selected Rows Actions", rebind it, restart, and verify the new binding persists and the old `Ctrl+Del` no longer triggers deletion
 - [ ] Apply an active filter, delete a currently-visible entry — verify the table shows one fewer visible row and the total count also drops by one
-- [ ] Launch the app with no file argument — verify the Welcome screen shows (logo, "XML Translation Editor", "v36", tagline, Open File button, drop hint), the menu bar and info bar are still visible around it, and the window title reads "XML Translation Editor v36 — No file"
-- [ ] Click **Open File…** on the Welcome screen — verify it opens the same file dialog as **File → Open XML…**, and after picking a file the editor page (filter panel + table) replaces the Welcome screen
+- [ ] Open a file whose sidecar is missing — verify every entry is `New`, no sidecar is created by opening, and Save writes `<name>.json.meta` next to it holding the header and only the entries with non-default metadata
+- [ ] Make an entry `Complete` with a translator, Save, and open the sidecar — verify only that entry is listed, with an ISO `modified` date, and the JSON file differs from before in that entry's line only (or not at all)
+- [ ] Open a file indented with 4 spaces and a space before each colon — verify "Reformat File" is asked on the first Ctrl+S, No leaves the file untouched and modified, Yes writes it in the app's own style and later saves ask nothing; with autosave on, verify "Autosave paused: save … once with Ctrl+S" appears once and nothing is written until then
+- [ ] Open a file that is invalid JSON, a JSON array, has a number as a value, or repeats a key — verify an "Open Error" dialog names the problem (line and column, or the duplicate key) and nothing opens
+- [ ] Hand-damage a sidecar (truncate it) and open its file — verify a red "Metadata: … was damaged (kept as …corrupt-<time>)" message, the truncated text kept in `<name>.json.meta.corrupt-<time>`, everything `New`, and a following Save writes a fresh sidecar; then hold the sidecar open without delete sharing and open the file — verify the red "could not be read" message and that Save writes the JSON only and leaves the sidecar alone
+- [ ] File → New Language… with a file open — verify a code prompt (a bad code such as `x` is refused), a Save dialog proposing `<code>.json` beside the open file, and afterwards the new file open with every entry `New`, every translation equal to its source, in the open file's key order and style, and a sidecar holding the code; try it with unsaved changes (Save writes them first; Discard copies the keys on disk, not the unsaved edits) and with no file open (warning)
+- [ ] File → Sync Keys from File… against a file with extra and missing keys — verify the dialog is titled "Sync Keys" with Additions and Deletions columns only and no auto-resolve checkbox, additions default to Accept and deletions to Keep, a deletion row shows its current value, Apply & Close inserts each new key after its nearest preceding reference key with value = key and status `New`, and "Synced keys: N added, M deleted" appears; against an identical-key file verify "Keys already match …" and no dialog
+- [ ] Edit an entry whose source holds `{name}`: remove it from the translation — verify an amber "Missing: {name}" line under the box that disappears when it is typed back, and that Save still works; add `{nme}` — verify "Extra: {nme}"
+- [ ] Set the filter bar's Check combo to **Placeholder mismatch** — verify only entries whose `{…}` sets differ remain, the combo gets the active border and dot, F5 behaviour matches the other filters, and Reset All clears it
+- [ ] Start Robo-Translate on a New entry followed by a New entry whose translation was typed in (text differs from the key) and one still equal to its key — verify the typed one is skipped and the untranslated one is translated
+- [ ] File → Properties: change the language code to `es-AR` — verify "Spanish (Argentina)" beside the field, an invalid code (`x`, `es--AR`) shows the amber line and disables OK, and after Save the sidecar holds `"language": "es-AR"`
+- [ ] Paste text with leading/trailing spaces into the translation of an entry whose source starts or ends with a space — verify the status line says the paste was trimmed
+- [ ] Back up a file that has a sidecar, then restore the slot over the original — verify the slot folder holds `es.json(.gz)` and `es.json.meta(.gz)`, `backup_info.json` has `meta_backed_up: true` with `meta_file`/`meta_md5_checksum`, and the restore writes both and reloads with the same statuses; restore a slot made before the sidecar existed — verify only the JSON is written
+- [ ] Launch the app with no file argument — verify the Welcome screen shows (logo, "JSON Translation Editor", "v1", tagline, Open File button, drop hint), the menu bar and info bar are still visible around it, and the window title reads "JSON Translation Editor v1 — No file"
+- [ ] Click **Open File…** on the Welcome screen — verify it opens the same file dialog as **File → Open…**, and after picking a file the editor page (filter panel + table) replaces the Welcome screen
 - [ ] With a file open, **File → Close File** — verify the Welcome screen reappears
-- [ ] Launch via `python xml_translation_editor.py "Latvian.xml"` — verify it goes straight to the editor page, skipping the Welcome screen
-- [ ] Edit an entry (unsaved changes), then drag a different `.xml` file onto the window — verify the Discard/Cancel prompt appears; Cancel leaves the current file open and unchanged
-- [ ] Confirm the discard, or start from a clean file — drag a `.xml` file onto the window — verify it opens, same as using Open File
-- [ ] Drag a non-`.xml` file, a folder, or multiple files onto the window — verify the cursor shows "not allowed" and nothing happens on drop
+- [ ] Launch via `python json_translation_editor.py "es.json"` — verify it goes straight to the editor page, skipping the Welcome screen
+- [ ] Edit an entry (unsaved changes), then drag a different `.json` file onto the window — verify the Discard/Cancel prompt appears; Cancel leaves the current file open and unchanged
+- [ ] Confirm the discard, or start from a clean file — drag a `.json` file onto the window — verify it opens, same as using Open File
+- [ ] Drag a non-`.json` file (a `.json.meta` file counts), a folder, or multiple files onto the window — verify the cursor shows "not allowed" and nothing happens on drop
 - [ ] Toggle dark ↔ light theme while the Welcome screen is showing — verify the name, version, tagline, hint, and Open File button all re-color correctly in both themes, and the logo (a static image, unaffected by theme) stays visible against both backgrounds
 - [ ] In light theme, look at the Welcome screen's "Icon by Magnific" credit line — verify "Magnific" renders as a clearly readable darker blue, not the pale/washed-out default; switch to dark theme and verify it re-colors to a light, readable blue there too
 - [ ] Resize the window narrow and wide with the Welcome screen showing — verify the content stays centered and doesn't clip or overflow
-- [ ] Check the window title while a file is open and modified — verify it reads "XML Translation Editor v36 — Latvian.xml ●"
-- [ ] After running `build_exe.ps1`, launch `dist\XMLTranslationEditor.exe` directly — verify the Welcome screen and version still show correctly in the frozen exe, not just the raw script
+- [ ] Check the window title while a file is open and modified — verify it reads "JSON Translation Editor v1 — es.json ●"
+- [ ] After running `build_exe.ps1`, launch `dist\JSONTranslationEditor.exe` directly — verify the Welcome screen and version still show correctly in the frozen exe, not just the raw script
 
 ---
 
@@ -2493,24 +2597,35 @@ automatically keep the hint in sync — do not set its visibility directly elsew
 
 **`is_modified` vs `_write()`** — `is_modified` is set `True` in `_mark_modified()`
 (called from `EditDialog` commit), in the bulk-mutation methods (`_bulk_status()`,
-`_apply_merge_diff()`, `_delete_entries()`) and in `_open_file_properties()`.  It is set `False` only
-in `_write()` and `_autosave_tick()`.  Do not set it directly elsewhere.
+`_apply_merge_diff()`, `_apply_sync()`, `_delete_entries()`) and in `_open_file_properties()`.  It is set
+`False` only when a language file reaches disk (`_after_write()`, called by `_write()`; `_autosave_tick()`)
+and when the open state is replaced (`_load()`, `_close_file()`, and `_new_language()` after its
+Save/Discard prompt).  Do not set it directly elsewhere.
 
-**Regex parser is intentional** — `parse_file` uses regex split, not a DOM parser.
-This is deliberate: it preserves the exact bytes of every non-`<string>` region
-(BOM, processing instructions, comments, whitespace).  Don't "improve" it to use
-`xml.etree`.
+**Never replace `parse_json_bytes`' duplicate check with plain `json.loads`.** `json.loads` keeps
+the last of two duplicate keys without a word, so a hand-edited language file with a repeated key
+would open, lose one translation and write the other back as if nothing was wrong. The
+`object_pairs_hook` sees every pair, refuses the file and names the key. The same hook is why a
+non-object top level is detected with the `_JsonPairs` subclass instead of `isinstance(..., dict)`.
 
-**Never go back to `read_text()`/`write_text()` or rebuild every row for the XML.** On Windows
-`write_text()` writes every `\n` as `\r\n`, so an LF file came back CRLF from any save (a
-whole-file diff), and rebuilding every row rewrote legacy `&#x27;` escapes and turned CDATA into
-escaped markup. `parse_file()` reads bytes, `save_file()` writes bytes (atomically), and unchanged
-rows are written back as they were. `check_core_xml.py`'s `LineEndingTests` and
-`UnchangedRowTests` guard this, including a byte-identical save of `tests/data/Latvian.xml`.
+**Never write the language file with anything but `dump_json_pairs()`.** It is the one place that
+applies the detected `JsonStyle` (indent, `\r\n`, BOM, trailing newline, `ensure_ascii`), which is
+what keeps an unchanged file byte-identical and an edit to one line. `json.dump()` to a text-mode
+file would write `\n` as `\r\n` on Windows, and a default `ensure_ascii=True` would turn every
+accented letter into an escape. `check_core_json.py` and `check_core_corpus.py` guard this,
+including a byte-identical save of `tests/data/es.json`.
 
-**`seg_idx` is the canonical position** — always use `entry.seg_idx` to locate an
-entry in `self.segments`.  The `entries` list index changes with filtering; `seg_idx`
-does not.
+**The sidecar extension is `.meta`, not `.json`, on purpose.** The program that consumes the
+language files loads every `*.json` it finds in the folder; `es.json.meta` is JSON content in a
+file that scan never matches. Never rename it to `.json`, and never let a file dialog, the drop
+filter or the Merge/Sync pickers treat it as a language file (they filter on `*.json`, and
+`.json.meta` does not end in `.json`).
+
+**`position` is the canonical place in the file** — it is the entry's 1-based place in the language
+file when it was loaded, shown in the `#` column. The `entries` list index changes with
+filtering; `position` does not. Code that inserts or removes entries (Merge additions, Sync Keys)
+must give the new list consistent `position`s (`insert_synced()` renumbers 1..n; Merge numbers
+additions after the last), and a save writes entries in `self.entries` order, not by `position`.
 
 **Session translator is never persisted** — `session_translator` lives only in
 `MainWindow` memory.  It is intentionally not in `Settings`.  Never add it there.
@@ -2524,11 +2639,9 @@ no timeout. Patch `QMessageBox.warning` and `TranslatorNameDialog.exec` before
 constructing the window, and pump `processEvents()` yourself (with the patches
 still active) before closing it.
 
-**Column `#` shows XML position, not filter row** — `COL_IDX` displays
-`(entry.seg_idx + 1) // 2`, which is the entry's absolute position in the XML file.
+**Column `#` shows the file position, not the filter row** — `COL_IDX` displays
+`entry.position`, which is the entry's 1-based place in the language file when it was loaded.
 This is intentional so the number stays stable under filtering.
-
-**XML escaping — never use `html.escape()` defaults** — `html.escape(text)` and `html.escape(text, quote=True)` both escape `'` as `&#x27;`, which is never needed in this XML format.  `html.escape(text, quote=True)` also escapes `"` in element text, which is also unnecessary.  Always use `html.escape(text, quote=False)` for element text, and `_escape_attr_value()` (called from `replace_attr()`) for attribute values.  See the [XML character escaping](#xml-character-escaping) section.
 
 **PS1 string literals** — when constructing PowerShell file content in Python, use
 raw strings (`r"…"`) or escape `\u` sequences carefully.  The actual `.ps1` files
@@ -2625,7 +2738,7 @@ theme menu once.
 the shipped build is `--windowed` (`build_exe.ps1`), so `print()` output has no
 console to land in and is silently lost. `_log_error(context, exc)` appends a
 timestamped line to `error_log.txt` instead (same directory as
-`translation_editor_settings.json`), for exactly the kind of best-effort,
+`json_translation_editor_settings.json`), for exactly the kind of best-effort,
 non-fatal failure (a corrupt settings file, an unreadable backup source) that
 shouldn't interrupt the user but still deserves a diagnostic trail. It never
 raises itself, so it's always safe to call from inside an `except` block.
@@ -2738,7 +2851,7 @@ those plus the plugins they need (`platforms/qwindows`, `styles/qmodernwindowsst
 `claude_agent_sdk\_bundled\claude.exe` (~94 MB compressed, over half the exe) is the
 CLI the SDK spawns for the `claude_subscription` engine, since the app never passes
 `cli_path`. To check a build, list its contents with
-`python -m PyInstaller.utils.cliutils.archive_viewer -l dist\XMLTranslationEditor.exe`
+`python -m PyInstaller.utils.cliutils.archive_viewer -l dist\JSONTranslationEditor.exe`
 and search for `WebEngine` (expect no matches). `QtWebEngineProcess.exe` entries in
 Task Manager are never this app's — it spawns no child processes — and were once
 traced to Autodesk Fusion 360.

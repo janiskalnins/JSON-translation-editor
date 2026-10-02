@@ -16,7 +16,7 @@ alwaysApply: true
 ## Naming
 
 - Files: `snake_case.py`. Classes: `PascalCase`. Functions/methods/variables: `snake_case`. Constants: `SCREAMING_SNAKE`.
-- Booleans: `is_` / `has_` / `should_` / `can_` prefix. Functions: verb-first (`get_user`, `build_xml`).
+- Booleans: `is_` / `has_` / `should_` / `can_` prefix. Functions: verb-first (`get_user`, `build_json`).
 - Factories: `create_*`. Converters: `to_*`. Predicates: `is_*` / `has_*`.
 - Abbreviations only when universally known (`id`, `url`, `api`, `db`). Acronyms as words: `user_id`, not `userID`.
 
