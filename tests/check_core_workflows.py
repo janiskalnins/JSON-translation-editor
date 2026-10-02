@@ -59,7 +59,7 @@ class WindowTestCase(unittest.TestCase):
 
 def _edit(win, row: int, **fields) -> None:
     """Open the Edit dialog on visible *row* with exec() replaced: set the given fields (text,
-    status, translator, istablet), then press Save."""
+    status, translator), then press Save."""
     def fake_exec(dlg):
         if "text" in fields:
             dlg.trans_edit.setPlainText(fields["text"])
@@ -67,8 +67,6 @@ def _edit(win, row: int, **fields) -> None:
             dlg.status_combo.setCurrentText(fields["status"])
         if "translator" in fields:
             dlg.user_edit.setText(fields["translator"])
-        if "istablet" in fields:
-            dlg.tablet_toggle.setChecked(fields["istablet"])
         dlg._save()
         return QDialog.Accepted
     with mock.patch.object(jte.EditDialog, "exec", fake_exec):
@@ -100,9 +98,9 @@ class EditTests(WindowTestCase):
 
     def test_metadata_edit_survives_save_and_reopen(self):
         path = self.load()
-        _edit(self.win, 0, status="Review", translator="Bob", istablet=True)
+        _edit(self.win, 0, status="Review", translator="Bob")
         self.win._save()
-        expected = jte.StringEntry("Save", "Bob", "Review", cs.DEFAULT_DATE, "true", "Saglabāt",
+        expected = jte.StringEntry("Save", "Bob", "Review", cs.DEFAULT_DATE, "false", "Saglabāt",
                                    seg_idx=1)
         self.assertEqual(jte.parse_file(path)[1][0], expected)
 

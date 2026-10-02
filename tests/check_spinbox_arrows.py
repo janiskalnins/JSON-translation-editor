@@ -119,7 +119,7 @@ def _dialogs(app, theme, pt):
     font_dlg = jte.FontSettingsDialog(QFont("Segoe UI", pt), stub)
     backup_dlg = jte.AutosaveBackupDialog(stub.settings, stub)
     facts = jte.FileFacts(file_name="Latvian.xml", folder="C:/x", size_bytes=1, modified=0.0,
-                          total=0, by_status={}, untranslated=0, tablet=0)
+                          total=0, by_status={}, untranslated=0)
     props_dlg = jte.FilePropertiesDialog("lv-LV", "Latviešu", "4.1.1220", facts, False, stub)
     for dlg in (font_dlg, backup_dlg, props_dlg):
         dlg.show()

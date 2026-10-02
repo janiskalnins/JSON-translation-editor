@@ -9,7 +9,7 @@ Covers, first without a MainWindow:
   * a save_file() -> parse_file() round trip, including a name with & and " in it;
   * parse_version_parts()/format_version(): N.N.N within 99.99.99999, no zero padding added;
   * describe_culture(): known, region-less, unknown and empty codes;
-  * compute_file_facts(): status/untranslated/tablet counts, and a file gone from disk;
+  * compute_file_facts(): status/untranslated counts, and a file gone from disk;
   * the dialog: spin-box limits, a stored version loads unpadded, OK disabled for a blank name,
     an invalid stored version blocks OK until a box changes, '.' jumps to the next box.
 
@@ -153,7 +153,9 @@ def check_facts(failures):
         check(failures, "facts by status",
               facts.by_status == {"New": 1, "Review": 1, "Complete": 2}, repr(facts.by_status))
         check(failures, "facts untranslated", facts.untranslated == 2, repr(facts.untranslated))
-        check(failures, "facts tablet", facts.tablet == 2, repr(facts.tablet))
+        check(failures, "FileFacts has no tablet count",
+              "tablet" not in jte.FileFacts.__dataclass_fields__,
+              repr(list(jte.FileFacts.__dataclass_fields__)))
         check(failures, "facts size", facts.size_bytes == path.stat().st_size, repr(facts.size_bytes))
         check(failures, "facts modified", facts.modified == path.stat().st_mtime, repr(facts.modified))
         check(failures, "facts name/folder", (facts.file_name, facts.folder) == (path.name, str(path.parent)))
@@ -194,7 +196,7 @@ def _facts():
                                 "Release 4.1\\Latvian\\Incoming from customer\\Reviewed",
                          size_bytes=1234, modified=0.0,
                          total=4, by_status={"New": 1, "Review": 1, "Complete": 2},
-                         untranslated=2, tablet=2)
+                         untranslated=2)
 
 
 def _dialog(stub, lang="Latviešu", version="4.1.1220", culture="lv-LV"):

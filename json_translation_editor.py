@@ -250,9 +250,8 @@ COL_TRANS = 2
 COL_STATUS = 3
 COL_USER  = 4
 COL_DATE  = 5
-COL_TAB   = 6
 
-HEADERS = ["#", "Source Text", "Translated Text", "Status", "Translator", "Date", "Tablet"]
+HEADERS = ["#", "Source Text", "Translated Text", "Status", "Translator", "Date"]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1073,7 +1072,6 @@ class Settings:
             "3":  90,    # Status
             "4": 120,    # Translator
             "5":  95,    # Date
-            "6":  60,    # Tablet
         },
         # NOTE: "autosave" and "backup" settings dicts are managed entirely
         # by AutosaveBackupDialog via inline literal defaults (e.g.
@@ -1466,7 +1464,6 @@ class FileFacts:
     total:        int
     by_status:    Dict[str, int]
     untranslated: int
-    tablet:       int
 
 
 def compute_file_facts(entries: List[StringEntry], path: Path) -> FileFacts:
@@ -1490,7 +1487,6 @@ def compute_file_facts(entries: List[StringEntry], path: Path) -> FileFacts:
         by_status    = by_status,
         # Same definition as _pick_newer_entry(): the translation is still the source text.
         untranslated = sum(1 for e in entries if e.text == e.name),
-        tablet       = sum(1 for e in entries if e.istablet == "true"),
     )
 
 
@@ -1582,8 +1578,7 @@ def compute_merge_diff(open_entries: List[StringEntry], incoming_entries: List[S
         metadata_differs = (
             current.translator  != incoming.translator or
             current.status      != incoming.status or
-            current.modify_date != incoming.modify_date or
-            current.istablet    != incoming.istablet
+            current.modify_date != incoming.modify_date
         )
         if metadata_differs:
             winner = _pick_newer_entry(current, incoming)
@@ -1873,73 +1868,6 @@ def write_glossary(path: Path, entries: List[GlossaryEntry]):
 
 
 # ══════════════════════════════════════════════════════════════
-#  TOGGLE SWITCH WIDGET
-# ══════════════════════════════════════════════════════════════
-
-class ToggleSwitch(QWidget):
-    toggled = Signal(bool)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._checked = False
-        self._anim = 0.0
-        self.setFixedSize(46, 24)
-        self.setCursor(Qt.PointingHandCursor)
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._animate)
-
-    def isChecked(self) -> bool:
-        return self._checked
-
-    def setChecked(self, val: bool, silent: bool = False):
-        if self._checked != val:
-            self._checked = val
-            self._anim = 1.0 if val else 0.0
-            self.update()
-            if not silent:
-                self.toggled.emit(self._checked)
-
-    def mousePressEvent(self, event):
-        self._checked = not self._checked
-        self._timer.start(12)
-        self.toggled.emit(self._checked)
-
-    def _animate(self):
-        target = 1.0 if self._checked else 0.0
-        diff = target - self._anim
-        if abs(diff) < 0.05:
-            self._anim = target
-            self._timer.stop()
-        else:
-            self._anim += diff * 0.35
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        # Track
-        track_on  = QColor("#4CAF50")
-        track_off = QColor("#555555")
-        r, g, b = (
-            int(track_off.red()   + (track_on.red()   - track_off.red())   * self._anim),
-            int(track_off.green() + (track_on.green() - track_off.green()) * self._anim),
-            int(track_off.blue()  + (track_on.blue()  - track_off.blue())  * self._anim),
-        )
-        p.setBrush(QColor(r, g, b))
-        p.setPen(Qt.NoPen)
-        p.drawRoundedRect(0, 3, w, h - 6, (h - 6) / 2, (h - 6) / 2)
-        # Thumb
-        thumb_r = h // 2 - 1
-        margin = 3
-        thumb_x = int(margin + (w - 2 * margin - 2 * thumb_r) * self._anim)
-        p.setBrush(QColor("#ffffff"))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(thumb_x, h // 2 - thumb_r, 2 * thumb_r, 2 * thumb_r)
-        p.end()
-
-
-# ══════════════════════════════════════════════════════════════
 #  TABLE MODEL
 # ══════════════════════════════════════════════════════════════
 
@@ -1998,16 +1926,12 @@ class TranslationModel(QAbstractTableModel):
             if col == COL_STATUS: return entry.status
             if col == COL_USER:   return entry.translator
             if col == COL_DATE:   return entry.modify_date
-            if col == COL_TAB:    return "✓" if entry.istablet == "true" else ""
 
         if role == Qt.ForegroundRole:
-            if col == COL_TAB and entry.istablet == "true":
-                theme = self._theme_fn()
-                return QColor("#4CAF50") if theme == "dark" else QColor("#1a6b2a")
             return None   # let QSS colour apply
 
         if role == Qt.TextAlignmentRole:
-            if col in (COL_IDX, COL_STATUS, COL_TAB):
+            if col in (COL_IDX, COL_STATUS):
                 return Qt.AlignCenter
             return Qt.AlignVCenter | Qt.AlignLeft
 
@@ -2034,7 +1958,6 @@ class FilterEngine:
         self.translator = ""
         self.date_from: Optional[date] = None
         self.date_to:   Optional[date] = None
-        self.istablet = "All"        # "All", "true", "false"
 
     def compiled_search_pattern(self) -> Optional[re.Pattern]:
         """Compile the 'starts with' search regex once, or return None if
@@ -2086,9 +2009,6 @@ class FilterEngine:
             except Exception:
                 pass  # malformed date — don't filter it out
 
-        # IsTablet
-        if self.istablet != "All" and entry.istablet != self.istablet:
-            return False
 
         return True
 
@@ -2295,14 +2215,6 @@ class FilterPanel(QFrame):
         date_row.addWidget(self.date_to)
         self._add_column(outer, "date", "Date range", date_row)
 
-        # ── Is tablet column ──────────────────────
-        self.tablet_combo = _WidePopupComboBox()
-        self.tablet_combo.addItems(["All", "Yes", "No"])
-        self.tablet_combo.currentIndexChanged.connect(self._on_filter)
-        tablet_row = QHBoxLayout()
-        tablet_row.addWidget(self.tablet_combo)
-        self._add_column(outer, "tablet", "Is tablet", tablet_row)
-
         # ── Reset column ──────────────────────────
         # Icon set by fit_to_font(). The leading space is the icon gap: Fusion leaves ~1 px, and a
         # space scales with the font.
@@ -2317,7 +2229,7 @@ class FilterPanel(QFrame):
         # Expanding policy makes the row's tallest natural height the height of all of them.
         for w in (self.search_edit, self.clear_btn, self.mode_combo, self.field_combo,
                   self.status_combo, self.user_edit, self.date_from, self.date_to,
-                  self.tablet_combo, self.reset_btn):
+                  self.reset_btn):
             policy = w.sizePolicy()
             policy.setVerticalPolicy(QSizePolicy.Expanding)
             w.setSizePolicy(policy)
@@ -2328,7 +2240,7 @@ class FilterPanel(QFrame):
         padding and drop-down strip already match the new font. Fixed pixel widths
         clipped the dates from 12 pt up ("01.01.20") and left Mode 40-70 px wider than its text."""
         fm = QFontMetrics(font)
-        for combo in (self.mode_combo, self.field_combo, self.status_combo, self.tablet_combo):
+        for combo in (self.mode_combo, self.field_combo, self.status_combo):
             items = [combo.itemText(i) for i in range(combo.count())]
             combo.setFixedWidth(_width_for_text(combo, fm, items))
         for picker in (self.date_from, self.date_to):
@@ -2415,9 +2327,6 @@ class FilterPanel(QFrame):
         self.date_to_chk.blockSignals(True)
         self.date_to_chk.setChecked(False)
         self.date_to_chk.blockSignals(False)
-        self.tablet_combo.blockSignals(True)
-        self.tablet_combo.setCurrentIndex(0)
-        self.tablet_combo.blockSignals(False)
         self._on_filter()
         self._save_search_prefs()
 
@@ -2430,8 +2339,6 @@ class FilterPanel(QFrame):
         e.translator   = self.user_edit.text().strip()
         e.date_from    = (self.date_from.date().toPython() if self.date_from_chk.isChecked() else None)
         e.date_to      = (self.date_to.date().toPython()   if self.date_to_chk.isChecked()   else None)
-        tablet_map     = {"All": "All", "Yes": "true", "No": "false"}
-        e.istablet     = tablet_map[self.tablet_combo.currentText()]
 
         self._refresh_active_indicators()
         self.filters_changed.emit()
@@ -2447,7 +2354,6 @@ class FilterPanel(QFrame):
             "status":     (e.status != "All", [self.status_combo]),
             "translator": (bool(e.translator), [self.user_edit]),
             "date":       (bool(date_fields), date_fields),
-            "tablet":     (e.istablet != "All", [self.tablet_combo]),
         }
         marked = set()
         for key, (active, fields) in state.items():
@@ -2455,7 +2361,7 @@ class FilterPanel(QFrame):
             if active:
                 marked.update(id(w) for w in fields)
         for w in (self.search_edit, self.status_combo, self.user_edit,
-                  self.date_from, self.date_to, self.tablet_combo):
+                  self.date_from, self.date_to):
             self._set_active(w, id(w) in marked)
 
     @staticmethod
@@ -4271,7 +4177,7 @@ class FilePropertiesDialog(QDialog):
         for key, caption in (("file", "File:"), ("folder", "Folder:"), ("size", "Size:"),
                              ("modified", "Modified:"), ("strings", "Strings:"),
                              ("New", "New:"), ("Review", "Review:"), ("Complete", "Complete:"),
-                             ("untranslated", "Untranslated:"), ("tablet", "Tablet strings:")):
+                             ("untranslated", "Untranslated:")):
             value = QLabel()
             value.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._fact_labels[key] = value
@@ -4347,7 +4253,6 @@ class FilePropertiesDialog(QDialog):
         for status in STATUSES:
             labels[status].setText(with_share(f.by_status.get(status, 0)))
         labels["untranslated"].setText(with_share(f.untranslated))
-        labels["tablet"].setText(with_share(f.tablet))
         self._unsaved_note.setVisible(self._has_unsaved)
 
     def _on_version_edited(self, _value: int):
@@ -5329,9 +5234,6 @@ class EditDialog(QDialog):
         self.date_edit.setDisplayFormat(DATE_FMT_QT)
         meta_layout.addWidget(self.date_edit,        0, 6)
 
-        meta_layout.addWidget(QLabel("Is Tablet:"),  0, 7)
-        self.tablet_toggle = ToggleSwitch()
-        meta_layout.addWidget(self.tablet_toggle,    0, 8)
 
         meta_layout.setColumnStretch(3, 1)
         main.addWidget(meta_grp)
@@ -5408,7 +5310,6 @@ class EditDialog(QDialog):
             if _parsed_orig is not None
             else src_entry.modify_date  # keep raw if unparseable
         )
-        self._original_tablet     = src_entry.istablet
 
         # Reset override checkbox for each new row so it reflects the session
         # state freshly rather than carrying over the previous row's state.
@@ -5438,7 +5339,6 @@ class EditDialog(QDialog):
         new_text       = self.trans_edit.toPlainText()
         new_status     = self.status_combo.currentText()
         new_translator = self.user_edit.text().strip()
-        new_tablet     = "true" if self.tablet_toggle.isChecked() else "false"
         d              = self.date_edit.date()
         new_date       = format_date_for_storage(d)  # uses system DATE_FMT
 
@@ -5446,7 +5346,6 @@ class EditDialog(QDialog):
         meta_changed = (
             new_status     != self._original_status
             or new_translator != self._original_translator.strip()
-            or new_tablet     != self._original_tablet
             or new_date       != self._original_date
         )
 
@@ -5456,7 +5355,6 @@ class EditDialog(QDialog):
         src_entry            = self._model.get_entry(self._row)
         src_entry.text       = new_text
         src_entry.translator = new_translator
-        src_entry.istablet   = new_tablet
 
         if text_changed:
             # Translation content modified: auto-advance status and stamp today
@@ -5512,7 +5410,6 @@ class EditDialog(QDialog):
             self.date_edit.setDate(QDate(parsed.year, parsed.month, parsed.day))
         else:
             self.date_edit.setDate(QDate.currentDate())
-        self.tablet_toggle.setChecked(self.entry.istablet == "true", silent=True)
         # Refresh the character-count indicator when navigating between entries.
         # Guarded with hasattr because _populate may run before the label exists
         # the very first time _build() is called from __init__.
@@ -5709,7 +5606,7 @@ class EditDialog(QDialog):
         # is trans_edit's/user_edit's native "delete word forward" binding,
         # so it must keep working normally while the user is typing there.
         # It only reaches here (and deletes the entry) when focus is on a
-        # non-text-consuming widget -- status combo, tablet toggle, nav
+        # non-text-consuming widget -- status combo, nav
         # buttons, etc. QLineEdit (user_edit) already consumes the key
         # itself the same way, so no separate exclusion is needed for it.
         if seq_str == self._shortcuts.get('delete_entries'):
@@ -7873,7 +7770,7 @@ class MergeCompareDialog(QDialog):
     _CHOICES = {"addition": ("Accept", "Reject"), "conflict": ("Keep open", "Keep incoming"),
                 "deletion": ("Keep", "Delete")}
     _CHOICE_KEYS = ("Alt+1", "Alt+2")
-    _META_FIELDS = ("Translator", "Status", "Modified", "Tablet · Length")
+    _META_FIELDS = ("Translator", "Status", "Modified", "Length")
     _DIFF_TINT_ALPHA = 0.35
     _PANE_LINES = 4
 
@@ -8081,9 +7978,8 @@ class MergeCompareDialog(QDialog):
     def _meta_values(entry: Optional[StringEntry]) -> Tuple[str, str, str, str]:
         if entry is None:
             return ("—", "—", "—", "—")
-        tablet = "Yes" if entry.istablet == "true" else "No"
         return (entry.translator or "—", entry.status or "—", entry.modify_date or "—",
-                f"{tablet} · {len(entry.text)}")
+                str(len(entry.text)))
 
     def _fill_metadata(self):
         info = self._info
@@ -9554,7 +9450,6 @@ class MainWindow(QMainWindow):
             target.translator  = winner.translator
             target.status      = winner.status
             target.modify_date = winner.modify_date
-            target.istablet    = winner.istablet
             updated_count += 1
 
         resolved_count = 0
@@ -9567,7 +9462,6 @@ class MainWindow(QMainWindow):
             target.translator  = chosen.translator
             target.status      = chosen.status
             target.modify_date = chosen.modify_date
-            target.istablet    = chosen.istablet
             target.text        = chosen.text
             resolved_count += 1
 

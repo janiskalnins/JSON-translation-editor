@@ -282,7 +282,6 @@ def _surfaces(win):
     yield "filter bar status combo", fp.status_combo, None
     yield "filter bar mode combo", fp.mode_combo, None
     yield "filter bar field combo", fp.field_combo, None
-    yield "filter bar tablet combo", fp.tablet_combo, None
     yield "filter bar date from", fp.date_from, None
     yield "filter bar date to", fp.date_to, None
     font = jte.FontSettingsDialog(win.settings.get_font(), parent=win)

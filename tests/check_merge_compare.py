@@ -129,7 +129,7 @@ def _fixture():
         (_e("Lane width is too small", "Joslas platums ir pārāq mazs", "Jane", "Review", D_OLD),
          _e("Lane width is too small", "Joslas platums ir nepietiekams", "Pēteris", "Complete", D_NEW)),
         (_e("Save", "Save", "Jane", "New", D_NEW),
-         _e("Save", "Saglabāt", "Jane", "New", D_OLD, istablet="true")),
+         _e("Save", "Saglabāt", "Jane", "New", D_OLD)),
     ]
     deletions = [_e("Old string", "Vecā virkne")]
     return additions, conflicts, deletions
@@ -293,10 +293,10 @@ def check_content(failures, win):
     check(failures, "differing translator marked", translator[0].property("differs") is True
           and translator[1].property("differs") is True)
     check(failures, "differing value drawn in text_warn", _has_color(translator[1], t["text_warn"]))
-    length = dlg._meta_labels["Tablet · Length"]
-    check(failures, "tablet and length",
-          length[0].text() == f"No · {len(conflicts[0][0].text)}"
-          and length[1].text() == f"No · {len(conflicts[0][1].text)}", length[0].text())
+    length = dlg._meta_labels["Length"]
+    check(failures, "length",
+          length[0].text() == str(len(conflicts[0][0].text))
+          and length[1].text() == str(len(conflicts[0][1].text)), length[0].text())
     check(failures, "conflict buttons",
           [b.text() for b in dlg._choice_btns] == ["Keep open", "✓ Keep incoming"],
           repr([b.text() for b in dlg._choice_btns]))

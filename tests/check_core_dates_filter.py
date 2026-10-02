@@ -126,9 +126,6 @@ class FilterEngineTests(unittest.TestCase):
         self.assertEqual(_visible(date_from=date(2025, 1, 1), date_to=date(2025, 1, 31)),
                          ["Tablet mode", "data-tablet (x)"])
 
-    def test_tablet_filter(self):
-        self.assertEqual(_visible(istablet="true"), ["Tablet mode"])
-
     def test_filters_combine(self):
         self.assertEqual(_visible(search_text="tab", status="Review"), ["data-tablet (x)"])
 
@@ -138,6 +135,11 @@ class FilterEngineTests(unittest.TestCase):
         pattern = engine.compiled_search_pattern()
         self.assertEqual([engine.matches(e, pattern) for e in ENTRIES],
                          [engine.matches(e) for e in ENTRIES])
+
+
+class NoTabletColumnTests(unittest.TestCase):
+    def test_table_has_no_tablet_column(self):
+        self.assertNotIn("Tablet", jte.HEADERS)
 
 
 if __name__ == "__main__":
