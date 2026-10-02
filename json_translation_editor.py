@@ -33,7 +33,7 @@ from typing import Callable, Optional, List, Tuple, Dict, Deque
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter,
     QTableView, QHeaderView, QAbstractItemView,
-    QToolBar, QStatusBar, QFileDialog, QMessageBox,
+    QToolBar, QStatusBar, QFileDialog, QMessageBox, QInputDialog,
     QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLayout, QLayoutItem,
     QLabel, QLineEdit, QPushButton, QComboBox,
@@ -1457,6 +1457,13 @@ def entries_from_pairs(pairs: List[Tuple[str, str]]) -> List[StringEntry]:
     """Fresh entries for a language file's pairs: New, no translator, no date."""
     return [StringEntry(name=key, translator="", status="New", modify_date="", text=value,
                         position=i) for i, (key, value) in enumerate(pairs, start=1)]
+
+
+def new_language_entries(entries: List[StringEntry]) -> List[StringEntry]:
+    """Every key of *entries*, in order, untranslated: the value is the English key, so the program
+    shows English until the string is translated."""
+    return [StringEntry(name=e.name, translator="", status="New", modify_date="", text=e.name,
+                        position=i) for i, e in enumerate(entries, start=1)]
 
 
 def dump_json(entries: List[StringEntry], style: JsonStyle) -> bytes:
@@ -8778,6 +8785,7 @@ class MainWindow(QMainWindow):
         # File
         fm = mb.addMenu("&File")
         self._act(fm, "Open…",               self._open,               "Ctrl+O")
+        self._act(fm, "New Language…",       self._new_language,       "")
         self._act(fm, "Save",                self._save,               "Ctrl+S")
         self._act(fm, "Save As…",            self._save_as,            "Ctrl+Shift+S")
         self._act(fm, "Close File",          self._close_file,         "Ctrl+W")
@@ -9750,6 +9758,38 @@ class MainWindow(QMainWindow):
         self._apply_theme(font)
 
     # ── File Operations ────────────────────────────────────────
+
+    def _new_language(self):
+        """File → New Language…: a new language file with the open file's keys, all untranslated."""
+        if not self.current_file:
+            QMessageBox.warning(self, "New Language", "Open a file first: its keys are copied.")
+            return
+        if self.is_modified and not self._confirm_close_file():
+            return
+        code = ""
+        while True:
+            text, ok = QInputDialog.getText(
+                self, "New Language", "Language code (e.g. lv, pt-BR):", text=code)
+            if not ok:
+                return
+            code = text.strip()
+            if LANGUAGE_CODE_RE.match(code):
+                break
+            QMessageBox.warning(self, "New Language", "Use a code like lv, pt-BR or zh-Hant-TW.")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save New Language File", str(self.current_file.parent / f"{code}.json"),
+            "JSON Files (*.json);;All Files (*)")
+        if not path:
+            return
+        entries = new_language_entries(self.entries)
+        try:
+            save_translation_file(Path(path), entries, self.json_style, FileHeader(language=code))
+        except Exception as e:
+            QMessageBox.critical(self, "New Language", f"Failed to write the new file:\n{e}")
+            return
+        self.is_modified = False   # the open file was saved or its changes discarded above
+        self._load(Path(path))
+        self._show_message(f"Created: {Path(path).name}  ({len(entries)} strings)", 5000)
 
     def _open(self):
         if not self._confirm_discard(): return

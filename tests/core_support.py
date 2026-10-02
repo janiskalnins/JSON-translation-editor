@@ -30,7 +30,7 @@ os.chdir(SCRATCH)
 sys.argv[0] = str(SCRATCH / "check_core.py")
 sys.path.insert(0, str(REPO))
 
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMessageBox  # noqa: E402
 
 import json_translation_editor as jte  # noqa: E402
 
@@ -155,7 +155,8 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
     """Answer every modal the app can open from *answers* and record it: the QMessageBox static
     helpers (question/warning/critical/information), a QMessageBox built by hand (exec() records
     its title, clickedButton() returns the button whose text is answers["button"]), both file
-    dialogs, and the startup translator-name prompt (always rejected)."""
+    dialogs, QInputDialog.getText (answers["text"], answers["text_ok"]), and the startup
+    translator-name prompt (always rejected)."""
     modals = Modals(answers=dict(answers))
 
     def static(kind: str, default: Any):
@@ -183,6 +184,8 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
          staticmethod(lambda *a, **k: (modals.answer("open_path", ""), ""))),
         (QFileDialog, "getSaveFileName",
          staticmethod(lambda *a, **k: (modals.answer("save_path", ""), ""))),
+        (QInputDialog, "getText",
+         staticmethod(lambda *a, **k: (modals.answer("text", ""), modals.answer("text_ok", True)))),
         (jte.TranslatorNameDialog, "exec", lambda dlg: QDialog.Rejected),
     ]
     with ExitStack() as stack:

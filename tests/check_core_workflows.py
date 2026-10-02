@@ -604,5 +604,58 @@ class PlaceholderLabelTests(unittest.TestCase):
         self.assertTrue(hidden)
 
 
+class NewLanguageTests(unittest.TestCase):
+    def test_new_entries_are_untranslated_and_new(self):
+        source = [cs.make_entry(name="Save", text="Guardar", position=1),
+                  cs.make_entry(name="Open", text="Abrir", position=2)]
+        self.assertEqual([(e.name, e.text, e.status, e.translator, e.modify_date)
+                          for e in jte.new_language_entries(source)],
+                         [("Save", "Save", "New", "", ""), ("Open", "Open", "New", "", "")])
+
+    def test_new_file_holds_every_key_with_its_english_text(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar", "Open": "Abrir"})
+        with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        self.assertEqual(json.loads((folder / "lv.json").read_bytes()), {"Save": "Save", "Open": "Open"})
+
+    def test_new_file_is_intact(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar", "Open": "Abrir"})
+        with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        cs.assert_json_intact(self, folder / "lv.json", ["Save", "Open"])
+
+    def test_new_file_records_its_language(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text="lv-LV", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        self.assertEqual(jte.read_file_header(folder / "lv.json").language, "lv-LV")
+
+    def test_new_file_is_opened(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text="lv", save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+            opened = win.current_file
+        self.assertEqual(opened, folder / "lv.json")
+
+    def test_cancelled_code_writes_nothing(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text_ok=False, save_path=str(folder / "lv.json")) as (win, _m):
+            win._new_language()
+        self.assertFalse((folder / "lv.json").exists())
+
+    def test_invalid_code_is_asked_again(self):
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "es", {"Save": "Guardar"})
+        with cs.open_window(path, text=["not a code!", "lv"],
+                            save_path=str(folder / "lv.json")) as (win, modals):
+            win._new_language()
+        self.assertEqual(modals.titles("warning"), ["New Language"])
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
