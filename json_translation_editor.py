@@ -8318,7 +8318,8 @@ class MainWindow(QMainWindow):
         self._is_closing = False
         self.header:     FileHeader = FileHeader()          # the open file's sidecar header
         self.json_style: JsonStyle  = DEFAULT_JSON_STYLE    # layout to write the open file back in
-        self.round_trips: bool      = True                  # Task 7 asks before reformatting when False
+        self.round_trips: bool      = True                  # False: the first save asks before reformatting (_confirm_reformat)
+        self._autosave_reformat_warned = False
         self._meta_blocked: bool    = False                 # its sidecar could not be read: leave it alone
         self.glossary:               List[GlossaryEntry] = []   # parsed rows for the open file's glossary
         self.glossary_path:          Optional[Path]      = None # <stem>.glossary.csv next to current_file
@@ -8912,6 +8913,12 @@ class MainWindow(QMainWindow):
     def _autosave_tick(self):
         """Called by autosave timer; silently saves if the file is modified."""
         if not (self.current_file and self.is_modified):
+            return
+        if not self.round_trips:
+            if not self._autosave_reformat_warned:
+                self._autosave_reformat_warned = True
+                self._show_message(f"Autosave paused: save {self.current_file.name} once with "
+                                   "Ctrl+S to confirm reformatting it", 6000, "warning")
             return
 
         try:
@@ -9625,6 +9632,7 @@ class MainWindow(QMainWindow):
             self.entries      = loaded.entries
             self.json_style   = loaded.style
             self.round_trips  = loaded.round_trips
+            self._autosave_reformat_warned = False
             self.header       = loaded.header
             self._meta_blocked = loaded.meta_blocked
             self.current_file = path
@@ -9675,7 +9683,20 @@ class MainWindow(QMainWindow):
         save_translation_file(path, self.entries, self.json_style, self.header,
                               write_meta=not (self._meta_blocked and same_file))
 
+    def _confirm_reformat(self, path: Path) -> bool:
+        """Before the first save of an open file that would not come back byte for byte: ask."""
+        if self.round_trips or path != self.current_file:
+            return True
+        r = QMessageBox.question(
+            self, "Reformat File",
+            f"Saving will reformat {path.name} (indent, spacing). The translations themselves do "
+            "not change.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return r == QMessageBox.Yes
+
     def _write(self, path: Path):
+        if not self._confirm_reformat(path):
+            return
         try:
             self._write_files(path)
         except MetadataWriteError as e:

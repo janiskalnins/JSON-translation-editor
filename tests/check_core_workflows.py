@@ -501,5 +501,45 @@ class AutosaveTests(WindowTestCase):
         cs.assert_json_intact(self, path, NAMES)
 
 
+ODD = b'{\n "Save":"Guardar",\n "Open":"Abrir"\n}\n'   # no space after the colons: does not round-trip
+
+
+class ReformatTests(unittest.TestCase):
+    def _open_odd(self, **answers):
+        path = cs.write_exact(cs.temp_dir() / "es.json", ODD)
+        return path, cs.open_window(path, **answers)
+
+    def test_declined_reformat_leaves_the_file_unchanged(self):
+        path, ctx = self._open_odd(question=QMessageBox.No)
+        with ctx as (win, _modals):
+            win.entries[0].text = "Guardar ya"
+            win.is_modified = True
+            win._save()
+        self.assertEqual(path.read_bytes(), ODD)
+
+    def test_reformat_is_asked_once(self):
+        path, ctx = self._open_odd(question=QMessageBox.Yes)
+        with ctx as (win, modals):
+            win.is_modified = True
+            win._save()
+            win.is_modified = True
+            win._save()
+        self.assertEqual(modals.titles("question"), ["Reformat File"])
+
+    def test_accepted_reformat_saves_an_intact_file(self):
+        path, ctx = self._open_odd(question=QMessageBox.Yes)
+        with ctx as (win, _modals):
+            win.is_modified = True
+            win._save()
+        cs.assert_json_intact(self, path, ["Save", "Open"])
+
+    def test_autosave_skips_a_file_that_would_be_reformatted(self):
+        path, ctx = self._open_odd()
+        with ctx as (win, _modals):
+            win.is_modified = True
+            win._autosave_tick()
+        self.assertEqual(path.read_bytes(), ODD)
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
