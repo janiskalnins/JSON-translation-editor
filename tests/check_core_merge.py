@@ -15,6 +15,9 @@ import unittest
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
+from unittest import mock
+
+from PySide6.QtWidgets import QDialog
 
 jte = cs.jte
 
@@ -193,6 +196,92 @@ class FileMergeTests(unittest.TestCase):
     def test_merge_deletion_drops_only_that_entry(self):
         path = self._merge(accept_addition=False, keep_incoming=False, delete=True)
         self.assertEqual(path.read_bytes(), cs.json_doc({"Save": "Guardar", "Cancel": "Cancelar"}))
+
+
+def _entries(*names):
+    return [cs.bare_entry(n, text=f"{n}!") for n in names]
+
+
+class SyncDiffTests(unittest.TestCase):
+    def test_additions_are_the_reference_keys_this_file_lacks(self):
+        diff = jte.compute_sync_diff(_entries("a", "c"), _entries("a", "b", "c", "d"))
+        self.assertEqual([e.name for e in diff.additions], ["b", "d"])
+
+    def test_additions_are_untranslated_and_new(self):
+        diff = jte.compute_sync_diff(_entries("a"), _entries("a", "b"))
+        self.assertEqual((diff.additions[0].text, diff.additions[0].status), ("b", "New"))
+
+    def test_deletions_are_the_keys_the_reference_lacks(self):
+        diff = jte.compute_sync_diff(_entries("a", "x", "c"), _entries("a", "c"))
+        self.assertEqual([e.name for e in diff.deletions], ["x"])
+
+    def test_values_are_never_compared(self):
+        diff = jte.compute_sync_diff([cs.bare_entry("a", "uno")], [cs.bare_entry("a", "one")])
+        self.assertEqual((diff.additions, diff.deletions), ([], []))
+
+
+class InsertSyncedTests(unittest.TestCase):
+    def test_insertion_positions(self):
+        cases = {
+            "between": (("a", "c"), ("a", "b", "c"), ["a", "b", "c"]),
+            "at the start": (("b",), ("a", "b"), ["a", "b"]),
+            "at the end": (("a",), ("a", "b"), ["a", "b"]),
+            "two in a row": (("a", "d"), ("a", "b", "c", "d"), ["a", "b", "c", "d"]),
+            "after a key the reference moved": (("c", "a"), ("a", "b", "c"), ["c", "a", "b"]),
+        }
+        for label, (open_names, ref_names, expected) in cases.items():
+            with self.subTest(label):
+                open_entries, reference = _entries(*open_names), _entries(*ref_names)
+                additions = jte.compute_sync_diff(open_entries, reference).additions
+                result = jte.insert_synced(open_entries, reference, additions)
+                self.assertEqual([e.name for e in result], expected)
+
+    def test_positions_are_renumbered(self):
+        open_entries, reference = _entries("a", "c"), _entries("a", "b", "c")
+        additions = jte.compute_sync_diff(open_entries, reference).additions
+        self.assertEqual([e.position for e in jte.insert_synced(open_entries, reference, additions)],
+                         [1, 2, 3])
+
+
+class SyncWindowTests(unittest.TestCase):
+    def _sync(self, open_pairs, ref_pairs):
+        """Sync id.json from es.json, accepting the dialog's defaults, then save. Returns the path
+        and how many times the review dialog was opened."""
+        folder = cs.temp_dir()
+        path = cs.write_pair(folder, "id", open_pairs)
+        ref = cs.write_pair(folder, "es", ref_pairs)
+        opened = []
+
+        def fake_exec(dlg):
+            opened.append(dlg.windowTitle())
+            dlg.done(QDialog.Accepted)   # stores the default choices, as a real Apply & Close does
+            return QDialog.Accepted
+
+        with cs.open_window(path, open_path=str(ref)) as (win, _modals):
+            with mock.patch.object(jte.MergeConflictDialog, "exec", fake_exec):
+                win._sync_keys_from_file()
+            win._save()
+        return path, opened
+
+    def test_synced_file_gains_the_missing_key_untranslated(self):
+        path, _o = self._sync({"a": "satu", "c": "tiga"}, {"a": "uno", "b": "dos", "c": "tres"})
+        self.assertEqual(json.loads(path.read_bytes()), {"a": "satu", "b": "b", "c": "tiga"})
+
+    def test_synced_file_is_intact(self):
+        path, _o = self._sync({"a": "satu", "c": "tiga"}, {"a": "uno", "b": "dos", "c": "tres"})
+        cs.assert_json_intact(self, path, ["a", "b", "c"])
+
+    def test_extra_keys_are_kept_by_default(self):
+        path, _o = self._sync({"a": "satu", "x": "lama"}, {"a": "uno"})
+        self.assertIn("x", json.loads(path.read_bytes()))
+
+    def test_review_dialog_is_titled_sync_keys(self):
+        _path, opened = self._sync({"a": "satu"}, {"a": "uno", "b": "dos"})
+        self.assertEqual(opened, ["Sync Keys"])
+
+    def test_matching_keys_open_no_dialog(self):
+        _path, opened = self._sync({"a": "satu"}, {"a": "uno"})
+        self.assertEqual(opened, [])
 
 
 if __name__ == "__main__":

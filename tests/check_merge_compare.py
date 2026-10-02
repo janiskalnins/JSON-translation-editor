@@ -494,9 +494,19 @@ def check_sizes(failures, win):
 
 
 PURE_STEPS = [check_reason, check_diff]
+def check_sync_mode(failures, win):
+    sync_dlg = jte.MergeConflictDialog([_e("b", "b")], [], [_e("x", "lama")], parent=win,
+                                       sync_mode=True)
+    check(failures, "sync mode has no conflicts column",
+          not hasattr(sync_dlg, "_auto_chk") or sync_dlg._auto_chk.isHidden(), "auto-resolve shown")
+    check(failures, "sync mode names the reference file", sync_dlg.other_side_name() == "reference",
+          repr(sync_dlg.other_side_name()))
+    sync_dlg.reject()
+
+
 WINDOW_STEPS = [check_row_accessors, check_show_row_single_selection,
                 check_last_row_focus_with_auto_resolve, check_content, check_keys_and_opening,
-                check_sizes]
+                check_sizes, check_sync_mode]
 
 
 def main():

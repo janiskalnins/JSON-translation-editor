@@ -1697,13 +1697,52 @@ def compute_merge_diff(open_entries: List[StringEntry], incoming_entries: List[S
     )
 
 
+@dataclass
+class SyncDiff:
+    additions: List[StringEntry]   # untranslated new entries, in the reference file's order
+    deletions: List[StringEntry]   # entries of the open file that the reference lacks
+
+
+def compute_sync_diff(open_entries: List[StringEntry],
+                      reference_entries: List[StringEntry]) -> SyncDiff:
+    """Line the open file's keys up with a reference file of any language. Values are never
+    compared or copied: a missing key comes in untranslated (value = key, New)."""
+    open_names = {e.name for e in open_entries}
+    reference_names = {e.name for e in reference_entries}
+    additions = [StringEntry(name=r.name, translator="", status="New", modify_date="", text=r.name)
+                 for r in reference_entries if r.name not in open_names]
+    deletions = [e for e in open_entries if e.name not in reference_names]
+    return SyncDiff(additions, deletions)
+
+
+def insert_synced(open_entries: List[StringEntry], reference_entries: List[StringEntry],
+                  additions: List[StringEntry]) -> List[StringEntry]:
+    """A new list with each addition right after the nearest key before it (in the reference
+    file's order) that the open file has, or at the start when there is none; positions are
+    renumbered 1..n. Keeps the files in the same order, so their diffs line up."""
+    adding = {a.name: a for a in additions}
+    present = {e.name for e in open_entries}
+    after: Dict[Optional[str], List[StringEntry]] = {}
+    anchor: Optional[str] = None
+    for r in reference_entries:
+        if r.name in adding:
+            after.setdefault(anchor, []).append(adding[r.name])
+        elif r.name in present:
+            anchor = r.name
+    result = list(after.get(None, []))
+    for e in open_entries:
+        result.append(e)
+        result.extend(after.get(e.name, []))
+    return [replace(e, position=i) for i, e in enumerate(result, start=1)]
+
+
 def merge_row_reason(kind: str, open_entry: Optional[StringEntry],
-                     incoming_entry: Optional[StringEntry]) -> str:
+                     incoming_entry: Optional[StringEntry], other: str = "incoming") -> str:
     """Short phrase saying why a Merge row exists and, for a conflict, which rule picked its
     default. Checks in _pick_newer_entry()'s order, so the phrase always names the rule that
     decided. MergeCompareDialog shows it in its header."""
     if kind == "addition":
-        return "only in the incoming file"
+        return f"only in the {other} file"
     if kind == "deletion":
         return "only in the open file"
     open_untranslated     = open_entry.text == open_entry.name
@@ -7303,9 +7342,11 @@ class MergeConflictDialog(QDialog):
         conflicts: List[Tuple[StringEntry, StringEntry]],
         deletions: List[StringEntry],
         parent=None,
+        sync_mode: bool = False,
     ):
         super().__init__(parent)
         self._mw = parent
+        self._sync_mode = sync_mode
         self._additions = additions
         self._conflicts = conflicts
         self._deletions = deletions
@@ -7337,7 +7378,7 @@ class MergeConflictDialog(QDialog):
         self._pt = (parent.settings.get_font().pointSize()
                     if parent is not None and hasattr(parent, "settings") else 0) or 10
 
-        self.setWindowTitle("Resolve Merge Conflicts")
+        self.setWindowTitle("Sync Keys" if sync_mode else "Resolve Merge Conflicts")
         self.setWindowFlags(self.windowFlags()
                              | Qt.WindowMaximizeButtonHint
                              | Qt.WindowMinimizeButtonHint)
@@ -7529,6 +7570,10 @@ class MergeConflictDialog(QDialog):
             {_merge_tint_qss(t, self._is_dark, pt_small)}
         """)
 
+    def other_side_name(self) -> str:
+        """What the second file is called in row texts: 'reference' when syncing keys."""
+        return "reference" if self._sync_mode else "incoming"
+
     def _make_button(self, attr: str, text: str, full_label: str, handler,
                      tint: Optional[str]) -> QPushButton:
         """A toolbar button: short *text* (the caption above it names the category), its previous
@@ -7584,6 +7629,13 @@ class MergeConflictDialog(QDialog):
                 self._make_button("_btn_delete_selected", "Delete", "Delete Selected",
                                   self._delete_selected, "bad")]),
         ]
+        if self._sync_mode:
+            # Syncing has no conflicts. The buttons still exist (other code enables them), owned by
+            # the dialog so they are deleted with it, never shown.
+            for btn in (self._btn_select_conflicts, self._btn_keep_open, self._btn_keep_incoming):
+                btn.setParent(self)
+                btn.hide()
+            columns = [c for c in columns if c[1] != "Conflicts"]
         for object_name, caption, kind, buttons in columns:
             column = QFrame()
             column.setObjectName(object_name)
@@ -7615,7 +7667,8 @@ class MergeConflictDialog(QDialog):
 
         self._table = QTableWidget(total, 5)
         self._table.setHorizontalHeaderLabels(
-            ["Source text", "Type", "Open file value", "Incoming file value", "Resolution"]
+            ["Source text", "Type", "Open file value",
+             "New value" if self._sync_mode else "Incoming file value", "Resolution"]
         )
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(self.COL_SOURCE, QHeaderView.Stretch)
@@ -7652,6 +7705,7 @@ class MergeConflictDialog(QDialog):
         )
         self._auto_chk.toggled.connect(self._on_auto_toggled)
         footer_lay.addWidget(self._auto_chk)
+        self._auto_chk.setVisible(not self._sync_mode)
         footer_lay.addStretch()
         # "&&" is a literal ampersand in a Qt button label; a lone "&" marks a mnemonic.
         self._btn_apply = QPushButton("Apply && Close")
@@ -7672,10 +7726,12 @@ class MergeConflictDialog(QDialog):
         status.setObjectName("dlgStatusBar")
         status_lay = QHBoxLayout(status)
         status_lay.setContentsMargins(12, 4, 12, 4)
+        counts = (f"{len(self._additions)} addition(s), {len(self._deletions)} deletion(s)"
+                  if self._sync_mode else
+                  f"{len(self._additions)} addition(s), {len(self._conflicts)} conflict(s), "
+                  f"{len(self._deletions)} deletion(s)")
         status_lay.addWidget(QLabel(
-            f"{len(self._additions)} addition(s), {len(self._conflicts)} conflict(s), "
-            f"{len(self._deletions)} deletion(s) need your review ({total} row(s) total). "
-            f"Double-click a row to compare."
+            f"{counts} need your review ({total} row(s) total). Double-click a row to compare."
         ))
         lay.addWidget(status)
 
@@ -7976,7 +8032,8 @@ class MergeCompareDialog(QDialog):
         grid.setContentsMargins(12, 10, 12, 10)
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(4)
-        for col, caption in enumerate(("Source text", "Open file", "Incoming file")):
+        for col, caption in enumerate(("Source text", "Open file",
+                                              f"{self._merge.other_side_name().capitalize()} file")):
             cap = QLabel(caption)
             cap.setProperty("compareCaption", True)
             grid.addWidget(cap, 0, col)
@@ -8088,7 +8145,8 @@ class MergeCompareDialog(QDialog):
         kind = self._info.kind
         self._kind_lbl.setText(self._KIND_LABEL[kind])
         self._set_prop(self._kind_lbl, "compareKind", self._KIND_TINT[kind])
-        reason = merge_row_reason(kind, self._info.open_entry, self._info.incoming_entry)
+        reason = merge_row_reason(kind, self._info.open_entry, self._info.incoming_entry,
+                                  other=self._merge.other_side_name())
         if kind == "conflict" and self._merge.is_auto_resolving():
             reason += " · auto-resolved"
         self._reason_lbl.setText(f"· {reason}")
@@ -8113,7 +8171,7 @@ class MergeCompareDialog(QDialog):
             self._incoming_pane.setHtml(incoming_html)
             return
         sides = ((self._open_pane, info.open_entry, "Not in the open file"),
-                 (self._incoming_pane, info.incoming_entry, "Not in the incoming file"))
+                 (self._incoming_pane, info.incoming_entry, f"Not in the {self._merge.other_side_name()} file"))
         for pane, entry, missing in sides:
             if entry is None:
                 pane.setHtml(_pane_html(f'<i style="color: {t["fg_dim"]}">{missing}</i>'))
@@ -8791,6 +8849,7 @@ class MainWindow(QMainWindow):
         self._act(fm, "Close File",          self._close_file,         "Ctrl+W")
         self._act(fm, "Restore from Backup…", self._open_restore_backup, "")
         self._act(fm, "Merge from File…",     self._merge_from_file,     "")
+        self._act(fm, "Sync Keys from File…", self._sync_keys_from_file, "")
         self._act(fm, "Properties…",          self._open_file_properties, "")
         fm.addSeparator()
         self._act(fm, "Exit",                self.close,               "Ctrl+Q")
@@ -9615,6 +9674,45 @@ class MainWindow(QMainWindow):
         self._apply_merge_diff(diff, additions_to_add, conflict_resolutions, deletions_to_remove)
         for text, level in incoming.notices:
             self._show_message(f"Incoming file: {text}", 6000, level)
+
+    def _sync_keys_from_file(self):
+        """File → Sync Keys from File…: add the keys a reference file has (untranslated) and offer
+        the ones it lacks for deletion. Values are never copied."""
+        if not self.current_file:
+            QMessageBox.warning(self, "Sync Keys", "Open a file first before syncing its keys.")
+            return
+        start = self.settings.get("last_directory") or ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Reference File", start, "JSON Files (*.json);;All Files (*)")
+        if not path:
+            return
+        try:
+            reference = load_translation_file(Path(path), keep_damaged=False)
+        except Exception as e:
+            QMessageBox.critical(self, "Sync Error", f"Failed to read file:\n{e}")
+            return
+        diff = compute_sync_diff(self.entries, reference.entries)
+        if not diff.additions and not diff.deletions:
+            self._show_message(f"Keys already match {Path(path).name}", 4000)
+            return
+        dlg = MergeConflictDialog(diff.additions, [], diff.deletions, parent=self, sync_mode=True)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._apply_sync(reference.entries, dlg.accepted_additions(), dlg.deletions_to_remove())
+
+    def _apply_sync(self, reference_entries: List[StringEntry], additions: List[StringEntry],
+                    deletions: List[StringEntry]):
+        if not additions and not deletions:
+            return   # every row rejected/kept: leave the entries (and the model's list) as they are
+        delete_names = {e.name for e in deletions}
+        kept = [e for e in self.entries if e.name not in delete_names]
+        self.entries = insert_synced(kept, reference_entries, additions)
+        self.is_modified = True
+        self.model.load(self.entries)
+        self._apply_filters()
+        self._update_title()
+        self._update_count()
+        self._show_message(f"Synced keys: {len(additions)} added, {len(deletions)} deleted", 6000)
 
     def _apply_merge_diff(
         self,
