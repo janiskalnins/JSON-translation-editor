@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider, QTableWidget, QTextEdit
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 ROWS, COLS = 11000, 2000
 FONT_PTS = (7, 10, 12, 14)
@@ -117,9 +117,9 @@ def _text_box():
 
 
 def run_theme_font(app, theme, pt, expect_glyphs=True):
-    t = xte.THEMES[theme]
+    t = jte.THEMES[theme]
     px = max(12, pt + 5)
-    qss = f"QWidget {{ background: {t['bg']}; color: {t['fg']}; }}\n" + xte._scrollbar_qss(t, px)
+    qss = f"QWidget {{ background: {t['bg']}; color: {t['fg']}; }}\n" + jte._scrollbar_qss(t, px)
     label = f"{theme}/{pt}pt"
     failures = []
     cases = (
@@ -142,7 +142,7 @@ def run_theme_font(app, theme, pt, expect_glyphs=True):
 
 def run_all(app, expect_glyphs=True):
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in FONT_PTS:
             failures += run_theme_font(app, theme, pt, expect_glyphs)
     return failures
@@ -150,12 +150,12 @@ def run_all(app, expect_glyphs=True):
 
 @contextmanager
 def _patched(name, value):
-    real = getattr(xte, name)
-    setattr(xte, name, value)
+    real = getattr(jte, name)
+    setattr(jte, name, value)
     try:
         yield
     finally:
-        setattr(xte, name, real)
+        setattr(jte, name, real)
 
 
 @contextmanager
@@ -167,7 +167,7 @@ def _isolated_arrow_dir():
 
 
 def check_cache_dir_not_under_shared_temp():
-    directory = xte._glyph_cache_dir().resolve()
+    directory = jte._glyph_cache_dir().resolve()
     shared_temp = Path(tempfile.gettempdir()).resolve()
     if directory == shared_temp or shared_temp in directory.parents:
         return [f"arrow cache {directory} is under the shared temp root {shared_temp}"]
@@ -179,7 +179,7 @@ def check_unwritable_dir_falls_back(app):
     with tempfile.NamedTemporaryFile() as blocker:
         with _patched("_glyph_cache_dir", lambda: Path(blocker.name) / "arrows"):  # parent is a file
             failures = run_all(app, expect_glyphs=False)
-            if "image:" in xte._scrollbar_qss(xte.THEMES["dark"], 15):
+            if "image:" in jte._scrollbar_qss(jte.THEMES["dark"], 15):
                 failures.append("fallback: qss still references arrow images although none could be written")
     return failures
 
@@ -193,7 +193,7 @@ def check_failures_are_contained():
             raise error
         with _patched("_glyph_cache_dir", fail):
             try:
-                result = xte._write_scrollbar_arrows("#9a9a9a", 15)
+                result = jte._write_scrollbar_arrows("#9a9a9a", 15)
             except Exception as e:
                 failures.append(f"{label}: {type(e).__name__} escaped _write_scrollbar_arrows")
                 continue
@@ -204,7 +204,7 @@ def check_failures_are_contained():
         raise ValueError("render boom")
     with _patched("_render_scrollbar_arrow_png", failing_renderer):
         try:
-            result = xte._write_scrollbar_arrows("#9a9a9a", 15)
+            result = jte._write_scrollbar_arrows("#9a9a9a", 15)
         except Exception as e:
             failures.append(f"failing renderer: {type(e).__name__} escaped _write_scrollbar_arrows")
         else:
@@ -215,23 +215,23 @@ def check_failures_are_contained():
 
 def check_corrupt_file_is_repaired():
     with _isolated_arrow_dir():
-        first = xte._write_scrollbar_arrows("#9a9a9a", 15)
+        first = jte._write_scrollbar_arrows("#9a9a9a", 15)
         target = Path(next(iter(first.values())))
         good = target.read_bytes()
         target.write_bytes(b"not a png")
-        xte._write_scrollbar_arrows("#9a9a9a", 15)
+        jte._write_scrollbar_arrows("#9a9a9a", 15)
         return [] if target.read_bytes() == good else ["a corrupt arrow file was not repaired"]
 
 
 def check_lost_write_race_is_not_a_failure():
     with _isolated_arrow_dir():
-        real_write = xte._atomic_write_bytes
+        real_write = jte._atomic_write_bytes
 
         def other_instance_wins(path, data):
             real_write(path, data)
             raise PermissionError("os.replace lost the race")
         with _patched("_atomic_write_bytes", other_instance_wins):
-            result = xte._write_scrollbar_arrows("#9a9a9a", 15)
+            result = jte._write_scrollbar_arrows("#9a9a9a", 15)
     return [] if result is not None else ["losing the write race to another instance discarded the arrows"]
 
 

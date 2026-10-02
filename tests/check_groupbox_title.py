@@ -40,7 +40,7 @@ from PySide6.QtCore import QPoint, QRect
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QApplication, QGroupBox, QStyle, QStyleOptionGroupBox)
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FONT_PTS = (10, 12, 14, 18, 24)
 LINE_TOLERANCE_PX = 2
@@ -65,7 +65,7 @@ def _title_rect(box):
 
 
 def _box_failures(dialog, box, theme, where):
-    t = xte.THEMES[theme]
+    t = jte.THEMES[theme]
     surface, border = QColor(t["dlg_bg"]), QColor(t["border"])
     origin = box.mapTo(dialog, QPoint(0, 0))
     img = dialog.grab(QRect(origin, box.size())).toImage()
@@ -106,7 +106,7 @@ def _box_failures(dialog, box, theme, where):
 
 
 def _window(app, theme, pt):
-    win = xte.MainWindow()
+    win = jte.MainWindow()
     win.settings.data["font_size"] = pt
     win.settings.set("theme", theme)
     win._apply_palette()
@@ -124,23 +124,23 @@ def _window(app, theme, pt):
 
 def _dialogs(win):
     """(name, dialog) for every dialog with group boxes; the caller closes each."""
-    yield "Keyboard Shortcuts", xte.ShortcutsDialog(win.settings, parent=win)
-    transl = xte.TranslationSettingsDialog(win.settings, parent=win)
+    yield "Keyboard Shortcuts", jte.ShortcutsDialog(win.settings, parent=win)
+    transl = jte.TranslationSettingsDialog(win.settings, parent=win)
     transl._engine_combo.setCurrentIndex(transl._engine_combo.findData("deepl"))
     yield "Translation Settings", transl
-    yield "File Properties", xte.FilePropertiesDialog(
+    yield "File Properties", jte.FilePropertiesDialog(
         win.target_culture, win.display_language, win.xml_version,
-        xte.compute_file_facts(win.entries, win.current_file), win.is_modified, parent=win)
-    yield "Edit", xte.EditDialog(win.model, 0, win.settings.get_font(),
+        jte.compute_file_facts(win.entries, win.current_file), win.is_modified, parent=win)
+    yield "Edit", jte.EditDialog(win.model, 0, win.settings.get_font(),
                                  shortcuts=win.settings.get("shortcuts", {}),
                                  target_culture=win.target_culture,
                                  transl_cfg=win.settings.get("translation", {}), parent=win)
-    yield "Autosave & Backup", xte.AutosaveBackupDialog(win.settings, parent=win)
+    yield "Autosave & Backup", jte.AutosaveBackupDialog(win.settings, parent=win)
 
 
 def check_real_dialogs(app):
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in FONT_PTS:
             win = _window(app, theme, pt)
             try:
@@ -167,8 +167,8 @@ def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")     # what main() does
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     failures = []
     try:
         failures += check_real_dialogs(app)

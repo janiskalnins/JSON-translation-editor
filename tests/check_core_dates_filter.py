@@ -14,14 +14,14 @@ from typing import List
 
 from PySide6.QtCore import QDate
 
-xte = cs.xte
+jte = cs.jte
 
 MAY_6 = date(2016, 5, 6)
-SLASH_DATE = MAY_6 if xte._LOCALE_DAY_FIRST else date(2016, 6, 5)
+SLASH_DATE = MAY_6 if jte._LOCALE_DAY_FIRST else date(2016, 6, 5)
 
 
 def _stored(d: date) -> str:
-    return xte.format_date_for_storage(d)
+    return jte.format_date_for_storage(d)
 
 
 class ParseDateTests(unittest.TestCase):
@@ -31,42 +31,42 @@ class ParseDateTests(unittest.TestCase):
                  "06/05/2016": SLASH_DATE, "06/05/16": SLASH_DATE}
         for text, expected in cases.items():
             with self.subTest(text=text):
-                self.assertEqual(xte.parse_date(text), expected)
+                self.assertEqual(jte.parse_date(text), expected)
 
     def test_garbage_and_empty_parse_to_none(self):
         for text in ("foo", "", "32.13.2016", "2016"):
             with self.subTest(text=text):
-                self.assertIsNone(xte.parse_date(text))
+                self.assertIsNone(jte.parse_date(text))
 
     def test_storage_format_round_trips(self):
-        self.assertEqual(xte.parse_date(_stored(date(2025, 12, 31))), date(2025, 12, 31))
+        self.assertEqual(jte.parse_date(_stored(date(2025, 12, 31))), date(2025, 12, 31))
 
     def test_qdate_is_stored_like_a_date(self):
-        self.assertEqual(xte.format_date_for_storage(QDate(2025, 12, 31)), _stored(date(2025, 12, 31)))
+        self.assertEqual(jte.format_date_for_storage(QDate(2025, 12, 31)), _stored(date(2025, 12, 31)))
 
 
 class NormalizeTests(unittest.TestCase):
     def test_legacy_date_is_rewritten_to_the_storage_format(self):
         entries = [cs.make_entry(modify_date="2016-05-06")]
-        xte.normalize_entry_dates(entries)
+        jte.normalize_entry_dates(entries)
         self.assertEqual(entries[0].modify_date, _stored(MAY_6))
 
     def test_count_includes_only_rewritten_entries(self):
         entries = [cs.make_entry(modify_date="2016-05-06"), cs.make_entry(modify_date=_stored(MAY_6)),
                    cs.make_entry(modify_date="")]
-        self.assertEqual(xte.normalize_entry_dates(entries), (1, []))
+        self.assertEqual(jte.normalize_entry_dates(entries), (1, []))
 
     def test_unparseable_value_is_reported(self):
-        self.assertEqual(xte.normalize_entry_dates([cs.make_entry(modify_date="foo")]), (0, ["foo"]))
+        self.assertEqual(jte.normalize_entry_dates([cs.make_entry(modify_date="foo")]), (0, ["foo"]))
 
     def test_unparseable_value_is_left_unchanged(self):
         entries = [cs.make_entry(modify_date="foo")]
-        xte.normalize_entry_dates(entries)
+        jte.normalize_entry_dates(entries)
         self.assertEqual(entries[0].modify_date, "foo")
 
     def test_empty_date_is_skipped(self):
         entries = [cs.make_entry(modify_date="")]
-        self.assertEqual((xte.normalize_entry_dates(entries), entries[0].modify_date), ((0, []), ""))
+        self.assertEqual((jte.normalize_entry_dates(entries), entries[0].modify_date), ((0, []), ""))
 
 
 ENTRIES = [
@@ -81,7 +81,7 @@ ENTRIES = [
 
 def _visible(**settings) -> List[str]:
     """Names of ENTRIES that a FilterEngine with *settings* lets through."""
-    engine = xte.FilterEngine()
+    engine = jte.FilterEngine()
     for key, value in settings.items():
         setattr(engine, key, value)
     return [e.name for e in ENTRIES if engine.matches(e)]
@@ -133,7 +133,7 @@ class FilterEngineTests(unittest.TestCase):
         self.assertEqual(_visible(search_text="tab", status="Review"), ["data-tablet (x)"])
 
     def test_compiled_pattern_gives_the_same_result(self):
-        engine = xte.FilterEngine()
+        engine = jte.FilterEngine()
         engine.search_text = "tab"
         pattern = engine.compiled_search_pattern()
         self.assertEqual([engine.matches(e, pattern) for e in ENTRIES],

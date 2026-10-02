@@ -58,7 +58,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 
 def check(failures, label, ok, detail=""):
@@ -111,8 +111,8 @@ LEGACY_XML = (
 
 def check_queue(failures, win):
     label = win._dynamic_label
-    real_min = xte.NOTIFY_MIN_TURN_MS
-    xte.NOTIFY_MIN_TURN_MS = 100
+    real_min = jte.NOTIFY_MIN_TURN_MS
+    jte.NOTIFY_MIN_TURN_MS = 100
     try:
         _reset(win)
         win._show_message("lone", 200)
@@ -152,7 +152,7 @@ def check_queue(failures, win):
         QTest.qWait(250)
         check(failures, "fallback to the mod status", label.text() == "Unsaved changes", repr(label.text()))
     finally:
-        xte.NOTIFY_MIN_TURN_MS = real_min
+        jte.NOTIFY_MIN_TURN_MS = real_min
         _reset(win)
 
 
@@ -175,16 +175,16 @@ def check_guards(failures, win):
     for i in range(7):
         win._show_message(f"m{i}", 5000)
     waiting = [n.text for n in win._notice_queue]
-    check(failures, "limit: five waiting", len(waiting) == xte.NOTIFY_QUEUE_MAX == 5, repr(waiting))
+    check(failures, "limit: five waiting", len(waiting) == jte.NOTIFY_QUEUE_MAX == 5, repr(waiting))
     check(failures, "limit: the oldest waiting one dropped",
           waiting == ["m2", "m3", "m4", "m5", "m6"], repr(waiting))
     check(failures, "limit: all seven in the history", len(win._notice_history) == 7)
 
     _reset(win)
-    for i in range(xte.NOTIFY_HISTORY_MAX + 5):
+    for i in range(jte.NOTIFY_HISTORY_MAX + 5):
         win._show_message(f"h{i}", 5000)
     history = [n.text for n in win._notice_history]
-    check(failures, "history: stops at its maximum", len(history) == xte.NOTIFY_HISTORY_MAX == 200,
+    check(failures, "history: stops at its maximum", len(history) == jte.NOTIFY_HISTORY_MAX == 200,
           str(len(history)))
     check(failures, "history: keeps the newest", (history[0], history[-1]) == ("h5", "h204"),
           repr((history[0], history[-1])))
@@ -192,7 +192,7 @@ def check_guards(failures, win):
     _reset(win)
     win._show_message("zero", 0)
     check(failures, "ms 0 treated as the default",
-          win._notify_timer.interval() == xte.NOTIFY_DEFAULT_MS == 4000,
+          win._notify_timer.interval() == jte.NOTIFY_DEFAULT_MS == 4000,
           str(win._notify_timer.interval()))
     win._show_message("bogus level", 5000, "bogus")
     check(failures, "unknown level treated as info", win._notice_queue[-1].level == "info",
@@ -204,7 +204,7 @@ def check_levels(failures, win):
     label = win._dynamic_label
     for theme in ("dark", "light"):
         win._set_theme(theme)
-        t = xte.THEMES[theme]
+        t = jte.THEMES[theme]
         for level, key in (("info", "fg_dim"), ("warning", "text_warn"), ("error", "text_bad")):
             _reset(win)
             win._show_message(f"{level} text", 5000, level)
@@ -215,7 +215,7 @@ def check_levels(failures, win):
     win._show_message("warn", 5000, "warning")
     win._set_theme("light")
     check(failures, "theme switch recolours a shown warning",
-          xte.THEMES["light"]["text_warn"] in label.styleSheet(), label.styleSheet())
+          jte.THEMES["light"]["text_warn"] in label.styleSheet(), label.styleSheet())
     win._set_theme("dark")
 
     _reset(win)
@@ -228,8 +228,8 @@ def check_levels(failures, win):
 
 
 def check_icon(failures):
-    plain = xte._render_history_icon("#ffffff", 64)
-    dotted = xte._render_history_icon("#ffffff", 64, "#ff0000")
+    plain = jte._render_history_icon("#ffffff", 64)
+    dotted = jte._render_history_icon("#ffffff", 64, "#ff0000")
     check(failures, "icon: lines drawn", plain.pixelColor(32, 32).alpha() > 200,
           str(plain.pixelColor(32, 32).alpha()))
     check(failures, "icon: no dot by default", plain.pixelColor(52, 12).alpha() == 0,
@@ -252,11 +252,11 @@ def check_button(failures, win):
     _reset(win)
     QTest.mouseClick(btn, Qt.LeftButton)
     popup = QApplication.activePopupWidget()
-    if not isinstance(popup, xte.MessageHistoryPopup):
-        found = btn.findChildren(xte.MessageHistoryPopup)
+    if not isinstance(popup, jte.MessageHistoryPopup):
+        found = btn.findChildren(jte.MessageHistoryPopup)
         popup = found[0] if found else None
     check(failures, "button: a click opens the history",
-          isinstance(popup, xte.MessageHistoryPopup), repr(popup))
+          isinstance(popup, jte.MessageHistoryPopup), repr(popup))
     _close(popup)
     _reset(win)
 
@@ -339,10 +339,10 @@ def check_popup_sizes(failures, win):
 
 
 def check_load_messages(failures, win):
-    canonical = xte.format_date_for_storage(date(2016, 5, 6))
+    canonical = jte.format_date_for_storage(date(2016, 5, 6))
     legacy = "2016-05-06" if canonical != "2016-05-06" else "06.05.2016"
     path = SCRATCH / "legacy.xml"
-    path.write_text(LEGACY_XML.format(good=xte.format_date_for_storage(date(2025, 1, 1)), legacy=legacy),
+    path.write_text(LEGACY_XML.format(good=jte.format_date_for_storage(date(2025, 1, 1)), legacy=legacy),
                     encoding="utf-8")
     _reset(win)
     win._load(path)
@@ -371,7 +371,7 @@ def check_load_messages(failures, win):
 def check_merge_messages(failures, win):
     # Needs the file check_load_messages opened.
     _reset(win)
-    win._apply_merge_diff(xte.MergeDiff([], [], [], []), [], [], [], 2, ["bad"])
+    win._apply_merge_diff(jte.MergeDiff([], [], [], []), [], [], [], 2, ["bad"])
     messages = [(n.text, n.level) for n in win._notice_history]
     check(failures, "merge: summary first",
           len(messages) == 3 and messages[0][0].startswith("Merged: 0 added") and messages[0][1] == "info",
@@ -388,27 +388,27 @@ def check_merge_messages(failures, win):
 
 def check_settings_notices(failures):
     """Settings.load()'s startup notices, on a settings file in a folder of its own."""
-    real = xte.SETTINGS_FILE
+    real = jte.SETTINGS_FILE
     folder = SCRATCH / "settings_case"
     folder.mkdir()
-    path = folder / "translation_editor_settings.json"
-    xte.SETTINGS_FILE = path
+    path = folder / "json_translation_editor_settings.json"
+    jte.SETTINGS_FILE = path
     damaged = ("Settings file was damaged and could not be read "
-               "(kept as translation_editor_settings.json.corrupt-")
+               "(kept as json_translation_editor_settings.json.corrupt-")
     try:
-        s = xte.Settings()
+        s = jte.Settings()
         check(failures, "settings missing: one warning",
               s.startup_notices == [("Settings file not found — default settings in use", "warning")],
               repr(s.startup_notices))
         check(failures, "settings missing: no recovery dialog", s.recovery_notice == "")
 
         path.write_text(json.dumps({"theme": "light"}), encoding="utf-8")
-        s = xte.Settings()
+        s = jte.Settings()
         check(failures, "settings valid: no notices", s.startup_notices == [], repr(s.startup_notices))
 
-        xte.backup_settings_daily(path)
+        jte.backup_settings_daily(path)
         path.write_text('{"theme": "li', encoding="utf-8")
-        s = xte.Settings()
+        s = jte.Settings()
         notices = s.startup_notices
         check(failures, "settings restored: damaged as an error",
               len(notices) == 2 and notices[0][0].startswith(damaged) and notices[0][1] == "error",
@@ -418,9 +418,9 @@ def check_settings_notices(failures):
               and notices[1][1] == "warning", repr(notices))
         check(failures, "settings restored: dialog kept", s.recovery_notice != "")
 
-        xte._settings_archive_path(path).unlink()
+        jte._settings_archive_path(path).unlink()
         path.write_text('{"theme": "li', encoding="utf-8")
-        s = xte.Settings()
+        s = jte.Settings()
         notices = s.startup_notices
         check(failures, "settings no backup: damaged as an error",
               len(notices) == 2 and notices[0][0].startswith(damaged) and notices[0][1] == "error",
@@ -431,12 +431,12 @@ def check_settings_notices(failures):
 
         shutil.rmtree(folder)
         path.mkdir(parents=True)   # exists, but reading it raises an OSError, like a locked file
-        s = xte.Settings()
+        s = jte.Settings()
         check(failures, "settings unreadable: one error",
               s.startup_notices == [("Settings file could not be read — default settings in use "
                                      "for this session", "error")], repr(s.startup_notices))
     finally:
-        xte.SETTINGS_FILE = real
+        jte.SETTINGS_FILE = real
 
 
 def check_backup_messages(failures):
@@ -448,12 +448,12 @@ def check_backup_messages(failures):
     source = docs / "sample.xml"
     source.write_text(LEGACY_XML.format(good="01.01.2025", legacy="01.01.2025"), encoding="utf-8")
     (docs / "sample.glossary.csv").write_text("term,translation,note\nA,Ā,\n", encoding="utf-8-sig")
-    ntf_dir = docs / xte.BACKUP_DIR_NAME
-    root_dir = app / xte.BACKUP_DIR_NAME
+    ntf_dir = docs / jte.BACKUP_DIR_NAME
+    root_dir = app / jte.BACKUP_DIR_NAME
 
     def run(mode, interval, path=source):
         got = []
-        thread = xte.BackupThread(path, "file_open", {"location_mode": mode, "compress": True,
+        thread = jte.BackupThread(path, "file_open", {"location_mode": mode, "compress": True,
                                   "max_count": 5, "min_interval_minutes": interval}, app)
         thread.finished.connect(lambda notices, root: got.append((notices, root)))
         thread.run()   # synchronously, so the signal is delivered at once
@@ -514,15 +514,15 @@ def check_backup_messages(failures):
 def check_startup_order(failures, win):
     """Settings notices play after the startup dialogs and before the translator message."""
     shown = []
-    real_warning = xte.QMessageBox.warning
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(a) or 0)
+    real_warning = jte.QMessageBox.warning
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: shown.append(a) or 0)
     try:
         _reset(win)
         win.settings.recovery_notice = "restored"
         win.settings.startup_notices = [("damaged", "error"), ("restored", "warning")]
         win._run_startup_prompts()
     finally:
-        xte.QMessageBox.warning = real_warning
+        jte.QMessageBox.warning = real_warning
         win.settings.recovery_notice = ""
         win.settings.startup_notices = []
     messages = [(n.text, n.level) for n in win._notice_history]
@@ -536,11 +536,11 @@ def check_startup_order(failures, win):
 
 def check_file_label(failures):
     check(failures, "file label: with a version",
-          xte._file_label("Latvian.xml", "4.1.1140") == "Latvian.xml  v4.1.1140",
-          repr(xte._file_label("Latvian.xml", "4.1.1140")))
+          jte._file_label("Latvian.xml", "4.1.1140") == "Latvian.xml  v4.1.1140",
+          repr(jte._file_label("Latvian.xml", "4.1.1140")))
     check(failures, "file label: without a version",
-          xte._file_label("Latvian.xml", "") == "Latvian.xml  (no version)",
-          repr(xte._file_label("Latvian.xml", "")))
+          jte._file_label("Latvian.xml", "") == "Latvian.xml  (no version)",
+          repr(jte._file_label("Latvian.xml", "")))
 
 
 def _texts(win):
@@ -549,13 +549,13 @@ def _texts(win):
 
 def check_file_messages(failures, win):
     """Saved, Autosaved, Closed, Restored and a version-less Loaded name the header's version."""
-    good = xte.format_date_for_storage(date(2025, 1, 1))
+    good = jte.format_date_for_storage(date(2025, 1, 1))
     path = SCRATCH / "files.xml"
     path.write_text(LEGACY_XML.format(good=good, legacy=good).replace('"foo"', f'"{good}"'),
                     encoding="utf-8")
     win._load(path)
     # A version changed the way File -> Properties does, then saved.
-    win.segments[0] = xte.build_header_xml(win.segments[0], None, "4.1.1141")
+    win.segments[0] = jte.build_header_xml(win.segments[0], None, "4.1.1141")
     win.xml_version = "4.1.1141"
     _reset(win)
     win._write(path)
@@ -587,13 +587,13 @@ def check_file_messages(failures, win):
     slot.mkdir(parents=True)
     dest = SCRATCH / "restored.xml"
     raw = path.read_bytes().replace(b'Version="4.1.1141"', b'Version="4.0.900"')
-    real_question = xte.QMessageBox.question
-    xte.QMessageBox.question = staticmethod(lambda *a, **k: xte.QMessageBox.No)
+    real_question = jte.QMessageBox.question
+    jte.QMessageBox.question = staticmethod(lambda *a, **k: jte.QMessageBox.No)
     try:
         _reset(win)
         win._do_restore_after_backup(slot, {}, False, dest, raw, None, None, "", True)
     finally:
-        xte.QMessageBox.question = real_question
+        jte.QMessageBox.question = real_question
     check(failures, "restore: version of the restored content",
           _texts(win) == ["Restored: restored.xml  v4.0.900"], repr(_texts(win)))
 
@@ -616,19 +616,25 @@ def check_file_messages(failures, win):
     win._update_title()
 
 
-STEPS = [check_queue, check_guards, check_levels, check_button, check_popup, check_popup_sizes,
+def check_window_title(failures, win):
+    check(failures, "window title names the JSON editor",
+          win.windowTitle().startswith("JSON Translation Editor v1 — "),
+          repr(win.windowTitle()))
+
+
+STEPS = [check_window_title, check_queue, check_guards, check_levels, check_button, check_popup, check_popup_sizes,
          check_load_messages, check_merge_messages, check_file_messages, check_startup_order]
 
 
 @contextmanager
 def _isolated_glyph_dir():
-    real = xte._glyph_cache_dir
+    real = jte._glyph_cache_dir
     with tempfile.TemporaryDirectory() as tmp:
-        xte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
+        jte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
         try:
             yield
         finally:
-            xte._glyph_cache_dir = real
+            jte._glyph_cache_dir = real
 
 
 def main():
@@ -636,15 +642,15 @@ def main():
     app.setStyle("Fusion")
     failures = []
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     for step in (check_icon, check_file_label, check_settings_notices, check_backup_messages):
         try:
             step(failures)
         except Exception as e:
             failures.append(f"{step.__name__}: {type(e).__name__}: {e}")
     with _isolated_glyph_dir():
-        win = xte.MainWindow()
+        win = jte.MainWindow()
         win.show()
         app.processEvents()   # runs the startup prompts while the patches are active
         for step in STEPS:

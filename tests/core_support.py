@@ -33,10 +33,10 @@ sys.path.insert(0, str(REPO))
 
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox  # noqa: E402
 
-import xml_translation_editor as xte  # noqa: E402
+import json_translation_editor as jte  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
-xte._glyph_cache_dir = lambda: SCRATCH / "glyphs"
+jte._glyph_cache_dir = lambda: SCRATCH / "glyphs"
 
 
 def temp_dir() -> Path:
@@ -46,7 +46,7 @@ def temp_dir() -> Path:
 
 # ── Builders ────────────────────────────────────────────────────────────────
 
-DEFAULT_DATE = xte.format_date_for_storage(date(2025, 2, 1))
+DEFAULT_DATE = jte.format_date_for_storage(date(2025, 2, 1))
 HEADER = ('<?xml version="1.0" encoding="utf-8"?>\n'
           '<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu" Version="4.1.1140">\n'
           '  <resources>\n')
@@ -56,8 +56,8 @@ FOOTER = '  </resources>\n</TRNExportImportModel>\n'
 def row(name: str, text: str, translator: str = "Jane", status: str = "Complete",
         modify_date: str = DEFAULT_DATE, istablet: str = "false") -> str:
     """One <string> line, indented and ending in a newline, escaped exactly as the app writes it."""
-    attrs = (f'name="{xte._escape_attr_value(name)}" '
-             f'translator="{xte._escape_attr_value(translator)}" status="{status}" '
+    attrs = (f'name="{jte._escape_attr_value(name)}" '
+             f'translator="{jte._escape_attr_value(translator)}" status="{status}" '
              f'modifyDate="{modify_date}" istablet="{istablet}"')
     return f'    <string {attrs}>{html.escape(text, quote=False)}</string>\n'
 
@@ -74,11 +74,11 @@ def write_exact(path: Path, data: Union[str, bytes]) -> Path:
     return path
 
 
-def make_entry(**fields: Any) -> "xte.StringEntry":
+def make_entry(**fields: Any) -> "jte.StringEntry":
     values = dict(name="Save", translator="Jane", status="Complete", modify_date=DEFAULT_DATE,
                   istablet="false", text="Saglabāt", seg_idx=1)
     values.update(fields)
-    return xte.StringEntry(**values)
+    return jte.StringEntry(**values)
 
 
 # ── The oracle ──────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
          staticmethod(lambda *a, **k: (modals.answer("open_path", ""), ""))),
         (QFileDialog, "getSaveFileName",
          staticmethod(lambda *a, **k: (modals.answer("save_path", ""), ""))),
-        (xte.TranslatorNameDialog, "exec", lambda dlg: QDialog.Rejected),
+        (jte.TranslatorNameDialog, "exec", lambda dlg: QDialog.Rejected),
     ]
     with ExitStack() as stack:
         for owner, name, value in patches:
@@ -177,15 +177,15 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
 
 @contextmanager
 def open_window(path: Optional[Path] = None, backup: bool = False,
-                **answers: Any) -> Iterator[Tuple["xte.MainWindow", Modals]]:
+                **answers: Any) -> Iterator[Tuple["jte.MainWindow", Modals]]:
     """A real MainWindow inside patched_modals(**answers), with its settings file in a folder of
     its own, backups off unless *backup*, and *path* loaded when given. The startup prompts run
     inside the patches: closing the window processes events, and an unpatched startup modal would
     then block forever (the CLAUDE.md startup-modals pitfall)."""
-    settings_path = temp_dir() / "translation_editor_settings.json"
+    settings_path = temp_dir() / "json_translation_editor_settings.json"
     with patched_modals(**answers) as modals, \
-            mock.patch.object(xte, "SETTINGS_FILE", settings_path):
-        win = xte.MainWindow()
+            mock.patch.object(jte, "SETTINGS_FILE", settings_path):
+        win = jte.MainWindow()
         win.settings.data.setdefault("backup", {})["enabled"] = backup
         win.show()
         pump()

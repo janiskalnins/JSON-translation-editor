@@ -44,7 +44,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 HEADER = ('<?xml version="1.0" encoding="utf-8"?>\n'
           '<TRNExportImportModel xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
@@ -64,45 +64,45 @@ def check(failures, label, ok, detail=""):
 
 
 def check_build_header(failures):
-    out = xte.build_header_xml(HEADER, "Latviešu 2", "4.2.7")
+    out = jte.build_header_xml(HEADER, "Latviešu 2", "4.2.7")
     check(failures, "replace keeps attribute order",
           out == HEADER.replace('DisplayLanguage="Latviešu"', 'DisplayLanguage="Latviešu 2"')
                        .replace('Version="4.1.1140"', 'Version="4.2.7"'), out)
     check(failures, "xml declaration untouched", out.startswith('<?xml version="1.0" encoding="utf-8"?>'))
 
-    only_version = xte.build_header_xml(HEADER, None, "5.0.1")
+    only_version = jte.build_header_xml(HEADER, None, "5.0.1")
     check(failures, "None leaves DisplayLanguage alone",
           only_version == HEADER.replace('Version="4.1.1140"', 'Version="5.0.1"'), only_version)
 
-    inserted = xte.build_header_xml(BARE_HEADER, "Latviešu", "4.1.1220")
+    inserted = jte.build_header_xml(BARE_HEADER, "Latviešu", "4.1.1220")
     check(failures, "missing attributes are inserted at the end of the root tag",
           '<TRNExportImportModel Culture="lv-LV" DisplayLanguage="Latviešu" Version="4.1.1220">' in inserted,
           inserted)
     check(failures, "insert leaves the rest intact", inserted.count("<TRNExportImportModel") == 1)
 
-    escaped = xte.build_header_xml(HEADER, 'R&D "x" <y>', None)
+    escaped = jte.build_header_xml(HEADER, 'R&D "x" <y>', None)
     check(failures, "values are escaped",
           'DisplayLanguage="R&amp;D &quot;x&quot; &lt;y&gt;"' in escaped, escaped)
 
-    backslash = xte.build_header_xml(HEADER, r"a\1b\g<0>", None)
+    backslash = jte.build_header_xml(HEADER, r"a\1b\g<0>", None)
     check(failures, "backslashes are literal", r'DisplayLanguage="a\1b\g&lt;0&gt;"' in backslash, backslash)
 
     xsi_version = HEADER.replace('Version="4.1.1140"', 'xsi:Version="9" Version="4.1.1140"')
-    out = xte.build_header_xml(xsi_version, None, "1.2.3")
+    out = jte.build_header_xml(xsi_version, None, "1.2.3")
     check(failures, "a prefixed attribute ending in Version is not matched",
           'xsi:Version="9" Version="1.2.3"' in out, out)
 
-    self_closing = xte.build_header_xml('<TRNExportImportModel Culture="lv-LV"/>\n', None, "1.2.3")
+    self_closing = jte.build_header_xml('<TRNExportImportModel Culture="lv-LV"/>\n', None, "1.2.3")
     check(failures, "self-closing root keeps its />",
           self_closing == '<TRNExportImportModel Culture="lv-LV" Version="1.2.3"/>\n', self_closing)
 
     raw_gt = BARE_HEADER.replace('Culture="lv-LV"', 'Culture="lv-LV" Note="a > b"')
-    out = xte.build_header_xml(raw_gt, None, "1.2.3")
+    out = jte.build_header_xml(raw_gt, None, "1.2.3")
     check(failures, "a raw > inside a quoted value is not the end of the tag",
           '<TRNExportImportModel Culture="lv-LV" Note="a > b" Version="1.2.3">' in out, out)
 
     try:
-        xte.build_header_xml('<?xml version="1.0"?>\n<Other/>', "x", "1.2.3")
+        jte.build_header_xml('<?xml version="1.0"?>\n<Other/>', "x", "1.2.3")
         check(failures, "missing root tag raises ValueError", False)
     except ValueError:
         pass
@@ -112,10 +112,10 @@ def check_round_trip(failures):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "Latvian.xml"
         path.write_text(HEADER + BODY, encoding="utf-8")
-        segments, entries, culture, lang, version = xte.parse_file(path)
-        segments[0] = xte.build_header_xml(segments[0], 'Latviešu & "Co"', "4.1.1220")
-        xte.save_file(path, segments, entries)
-        _, entries2, culture2, lang2, version2 = xte.parse_file(path)
+        segments, entries, culture, lang, version = jte.parse_file(path)
+        segments[0] = jte.build_header_xml(segments[0], 'Latviešu & "Co"', "4.1.1220")
+        jte.save_file(path, segments, entries)
+        _, entries2, culture2, lang2, version2 = jte.parse_file(path)
         check(failures, "round trip language", lang2 == 'Latviešu & "Co"', repr(lang2))
         check(failures, "round trip version", version2 == "4.1.1220", repr(version2))
         check(failures, "round trip culture", culture2 == "lv-LV", repr(culture2))
@@ -129,17 +129,17 @@ def check_version_helpers(failures):
              "04.1.1140": (4, 1, 1140), "4.1": None, "4.1.1140.2": None, "100.1.1": None,
              "1.1.100000": None, "": None, "a.b.c": None, " 4.1.1": None}
     for text, want in cases.items():
-        got = xte.parse_version_parts(text)
+        got = jte.parse_version_parts(text)
         check(failures, f"parse_version_parts({text!r})", got == want, repr(got))
-    check(failures, "format_version pads nothing", xte.format_version((4, 1, 1220)) == "4.1.1220")
-    check(failures, "format_version zeros", xte.format_version((0, 0, 0)) == "0.0.0")
+    check(failures, "format_version pads nothing", jte.format_version((4, 1, 1220)) == "4.1.1220")
+    check(failures, "format_version zeros", jte.format_version((0, 0, 0)) == "0.0.0")
 
 
 def check_culture(failures):
     cases = {"lv-LV": "Latvian (Latvia)", "lv_LV": "Latvian (Latvia)", "lv": "Latvian",
              "pt-BR": "Portuguese (Brazil)", "xx-YY": "", "": ""}
     for code, want in cases.items():
-        got = xte.describe_culture(code)
+        got = jte.describe_culture(code)
         check(failures, f"describe_culture({code!r})", got == want, repr(got))
 
 
@@ -147,8 +147,8 @@ def check_facts(failures):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "Latvian.xml"
         path.write_text(HEADER + BODY, encoding="utf-8")
-        _, entries, *_ = xte.parse_file(path)
-        facts = xte.compute_file_facts(entries, path)
+        _, entries, *_ = jte.parse_file(path)
+        facts = jte.compute_file_facts(entries, path)
         check(failures, "facts total", facts.total == 4, repr(facts.total))
         check(failures, "facts by status",
               facts.by_status == {"New": 1, "Review": 1, "Complete": 2}, repr(facts.by_status))
@@ -158,11 +158,11 @@ def check_facts(failures):
         check(failures, "facts modified", facts.modified == path.stat().st_mtime, repr(facts.modified))
         check(failures, "facts name/folder", (facts.file_name, facts.folder) == (path.name, str(path.parent)))
         path.unlink()
-        gone = xte.compute_file_facts(entries, path)
+        gone = jte.compute_file_facts(entries, path)
         check(failures, "file gone: size None", gone.size_bytes is None)
         check(failures, "file gone: modified None", gone.modified is None)
         check(failures, "file gone: counts still there", gone.total == 4)
-    empty = xte.compute_file_facts([], Path("nowhere.xml"))
+    empty = jte.compute_file_facts([], Path("nowhere.xml"))
     check(failures, "empty file facts", (empty.total, empty.by_status) == (0, {"New": 0, "Review": 0, "Complete": 0}))
 
 
@@ -185,11 +185,11 @@ class _StubMain(QWidget):
         self.settings = _StubSettings(pt)
 
     def _get_theme(self):
-        return xte.THEMES[self._theme]
+        return jte.THEMES[self._theme]
 
 
 def _facts():
-    return xte.FileFacts(file_name="Latvian.xml",
+    return jte.FileFacts(file_name="Latvian.xml",
                          folder="C:\\Users\\translator\\Documents\\Localization\\Projects\\2026\\"
                                 "Release 4.1\\Latvian\\Incoming from customer\\Reviewed",
                          size_bytes=1234, modified=0.0,
@@ -198,14 +198,14 @@ def _facts():
 
 
 def _dialog(stub, lang="Latviešu", version="4.1.1220", culture="lv-LV"):
-    dlg = xte.FilePropertiesDialog(culture, lang, version, _facts(), False, stub)
+    dlg = jte.FilePropertiesDialog(culture, lang, version, _facts(), False, stub)
     dlg.show()
     QApplication.processEvents()
     return dlg
 
 
 def check_dialog(failures):
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         stub = _StubMain(theme)
         dlg = _dialog(stub)
         spins = dlg._version_spins
@@ -264,7 +264,7 @@ def check_dialog(failures):
 
 def _run_dialog(win, language=None, parts=None, accept=True):
     """Open File -> Properties on *win* with exec() replaced: set the fields, then accept/cancel."""
-    real_exec = xte.FilePropertiesDialog.exec
+    real_exec = jte.FilePropertiesDialog.exec
     seen = []
 
     def fake_exec(dlg):
@@ -276,11 +276,11 @@ def _run_dialog(win, language=None, parts=None, accept=True):
                 spin.setValue(value)
         return QDialog.Accepted if accept else QDialog.Rejected
 
-    xte.FilePropertiesDialog.exec = fake_exec
+    jte.FilePropertiesDialog.exec = fake_exec
     try:
         win._open_file_properties()
     finally:
-        xte.FilePropertiesDialog.exec = real_exec
+        jte.FilePropertiesDialog.exec = real_exec
     return seen
 
 
@@ -292,22 +292,22 @@ def check_main_window(failures):
     # changed is rebuilt, so the Properties change is measured against that, not the raw file.
     baseline_path = SCRATCH / "baseline.xml"
     shutil.copy(path, baseline_path)
-    segments, entries, *_ = xte.parse_file(baseline_path)
-    xte.normalize_entry_dates(entries)
-    xte.save_file(baseline_path, segments, entries)
+    segments, entries, *_ = jte.parse_file(baseline_path)
+    jte.normalize_entry_dates(entries)
+    jte.save_file(baseline_path, segments, entries)
     original = baseline_path.read_text(encoding="utf-8")
-    win = xte.MainWindow()
+    win = jte.MainWindow()
     win.settings.data.setdefault("backup", {})["enabled"] = False
     win.show()
     app.processEvents()
 
     warned = []
-    real_warning = xte.QMessageBox.warning
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: warned.append(a) or 0)
+    real_warning = jte.QMessageBox.warning
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: warned.append(a) or 0)
     try:
         seen = _run_dialog(win)
     finally:
-        xte.QMessageBox.warning = real_warning
+        jte.QMessageBox.warning = real_warning
     check(failures, "no file: warning shown", len(warned) == 1)
     check(failures, "no file: no dialog", not seen)
 
@@ -343,7 +343,7 @@ def check_main_window(failures):
     check(failures, "save wrote only the two attributes",
           saved == original.replace('DisplayLanguage="Latviešu"', 'DisplayLanguage="Latviešu valoda"')
                            .replace('Version="4.1.1140"', 'Version="4.2.7"'))
-    _, _, culture, lang2, version2 = xte.parse_file(path)
+    _, _, culture, lang2, version2 = jte.parse_file(path)
     check(failures, "reopen", (culture, lang2, version2) == ("lv-LV", "Latviešu valoda", "4.2.7"),
           repr((culture, lang2, version2)))
 
@@ -354,13 +354,13 @@ def check_main_window(failures):
 
 @contextmanager
 def _isolated_glyph_dir():
-    real = xte._glyph_cache_dir
+    real = jte._glyph_cache_dir
     with tempfile.TemporaryDirectory() as tmp:
-        xte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
+        jte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
         try:
             yield
         finally:
-            xte._glyph_cache_dir = real
+            jte._glyph_cache_dir = real
 
 
 def main():
@@ -373,8 +373,8 @@ def main():
         except Exception as e:
             failures.append(f"{step.__name__}: {type(e).__name__}: {e}")
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     with _isolated_glyph_dir():
         for step in (check_dialog, check_main_window):
             try:

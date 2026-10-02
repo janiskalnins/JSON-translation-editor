@@ -39,7 +39,7 @@ from PySide6.QtCore import QEvent, QObject
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QWidget
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FONT_PTS = (10, 14, 18, 24)
 TOLERANCE_PX = 1
@@ -51,7 +51,7 @@ SWITCH_ORDER = ("google_dt", "claude_subscription", "google_dt", "deepl", "none"
 class _StubSettings:
     """Just enough of Settings for the dialog: the engine to open on, defaults for the rest."""
 
-    DEFAULTS = xte.Settings.DEFAULTS
+    DEFAULTS = jte.Settings.DEFAULTS
 
     def __init__(self, pt, engine):
         self._pt = pt
@@ -76,7 +76,7 @@ class _StubMain(QWidget):
         self.claude_session = None
 
     def _get_theme(self):
-        return xte.THEMES[self._theme]
+        return jte.THEMES[self._theme]
 
 
 class _GeometrySpy(QObject):
@@ -96,7 +96,7 @@ class _GeometrySpy(QObject):
 
 
 def _open(main, pt, engine):
-    dlg = xte.TranslationSettingsDialog(_StubSettings(pt, engine), parent=main)
+    dlg = jte.TranslationSettingsDialog(_StubSettings(pt, engine), parent=main)
     dlg.show()
     QApplication.processEvents()
     return dlg

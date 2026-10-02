@@ -36,7 +36,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FILL_TOLERANCE = 12
 REAL_FONT_PTS = (10, 14)
@@ -71,10 +71,10 @@ FORMAT_CASES = [
 def check_format_helpers(app):
     failures = []
     for what, fmt, hint, order in FORMAT_CASES:
-        got_hint = xte._date_format_hint(fmt)
+        got_hint = jte._date_format_hint(fmt)
         if got_hint != hint:
             failures.append(f"hint, {what}: {fmt!r} gave {got_hint!r}, expected {hint!r}")
-        got_order = xte._date_section_order(fmt)
+        got_order = jte._date_section_order(fmt)
         if got_order != order:
             failures.append(f"order, {what}: {fmt!r} gave {got_order}, expected {order}")
     return failures
@@ -82,14 +82,14 @@ def check_format_helpers(app):
 
 # ── Drum column ──────────────────────────────────────────────────────────────
 
-THEME = xte.THEMES["dark"]
+THEME = jte.THEMES["dark"]
 DAYS = list(range(1, 32))
 MONTHS = list(range(1, 13))
 YEARS = list(range(2000, 2101))
 
 
 def _column(app, values, current, wraps):
-    column = xte._DrumColumn(values, current, wraps, QFont("Segoe UI", 10), THEME)
+    column = jte._DrumColumn(values, current, wraps, QFont("Segoe UI", 10), THEME)
     column.show()
     _pump(app)
     return column
@@ -226,8 +226,8 @@ def _holder_field(app, start, field_class=None):
     """A date field inside a plain top-level widget, with the app's display format."""
     holder = QWidget()
     holder.resize(320, 60)
-    field = (field_class or xte.QDateEdit)(holder)
-    field.setDisplayFormat(xte.DATE_FMT_QT)
+    field = (field_class or jte.QDateEdit)(holder)
+    field.setDisplayFormat(jte.DATE_FMT_QT)
     field.setDate(_qdate(start))
     field.setGeometry(10, 10, 200, 30)
     holder.show()
@@ -239,7 +239,7 @@ def _popup(app, start):
     holder, field = _holder_field(app, start)
     changes = []
     field.dateChanged.connect(changes.append)
-    popup = xte._DateDrumPopup(field)
+    popup = jte._DateDrumPopup(field)
     popup.show_at_field()
     _pump(app)
     return holder, field, popup, changes
@@ -253,7 +253,7 @@ def _no_popup_open(app):
 def check_popup_columns(app):
     failures = []
     holder, field, popup, _ = _popup(app, "31.01.2025")
-    expected = xte._date_section_order(xte.DATE_FMT_QT)
+    expected = jte._date_section_order(jte.DATE_FMT_QT)
     if popup.order != expected or list(popup.columns()) != expected:
         failures.append(f"column order {popup.order} / {list(popup.columns())}, expected {expected}")
     xs = [popup.columns()[part].x() for part in popup.order]
@@ -263,8 +263,8 @@ def check_popup_columns(app):
     if got != {"d": 31, "M": 1, "y": 2025}:
         failures.append(f"opened on 31.01.2025 the columns show {got}")
     hints = [label.text() for label in popup.findChildren(QLabel)]
-    if hints != [xte._date_format_hint(xte.DATE_FMT_QT)]:
-        failures.append(f"format hint labels {hints}, expected [{xte._date_format_hint(xte.DATE_FMT_QT)!r}]")
+    if hints != [jte._date_format_hint(jte.DATE_FMT_QT)]:
+        failures.append(f"format hint labels {hints}, expected [{jte._date_format_hint(jte.DATE_FMT_QT)!r}]")
     popup.close()
     holder.close()
     return failures
@@ -390,7 +390,7 @@ def check_popup_placement(app):
     avail = field.screen().availableGeometry()
     holder.move(avail.left(), avail.bottom() - 60)
     _pump(app)
-    popup = xte._DateDrumPopup(field)
+    popup = jte._DateDrumPopup(field)
     popup.show_at_field()
     _pump(app)
     top = field.mapToGlobal(QPoint(0, 0)).y()
@@ -405,7 +405,7 @@ def check_popup_placement(app):
 # ── Closed field ─────────────────────────────────────────────────────────────
 
 def _field(app, start):
-    return _holder_field(app, start, xte._DatePickerField)
+    return _holder_field(app, start, jte._DatePickerField)
 
 
 def check_field_is_inert(app):
@@ -430,7 +430,7 @@ def check_field_is_inert(app):
         failures.append("wheel/keys on the closed field opened a pop-up")
     if not field.lineEdit().isReadOnly():
         failures.append("the field's text is editable")
-    if field.toolTip() != xte._date_format_hint(xte.DATE_FMT_QT):
+    if field.toolTip() != jte._date_format_hint(jte.DATE_FMT_QT):
         failures.append(f"the field's tooltip is {field.toolTip()!r}")
     holder.close()
     return failures
@@ -455,7 +455,7 @@ def check_field_opens(app):
         gesture()
         _pump(app)
         popup = QApplication.activePopupWidget()
-        if not isinstance(popup, xte._DateDrumPopup):
+        if not isinstance(popup, jte._DateDrumPopup):
             failures.append(f"{name} opened {type(popup).__name__ if popup else 'nothing'}, "
                             f"expected the drum pop-up")
         if field.calendarWidget() is not None and field.calendarWidget().isVisible():
@@ -488,7 +488,7 @@ def check_field_second_click_closes(app):
     QTest.mouseClick(field, Qt.LeftButton, pos=pos)
     _pump(app)
     popup = QApplication.activePopupWidget()
-    if not isinstance(popup, xte._DateDrumPopup):
+    if not isinstance(popup, jte._DateDrumPopup):
         failures.append(f"first click opened {type(popup).__name__ if popup else 'nothing'}, "
                         f"expected the drum pop-up")
         holder.close()
@@ -509,7 +509,7 @@ def check_field_second_click_closes(app):
 
 
 def _window(app, theme, pt):
-    win = xte.MainWindow()
+    win = jte.MainWindow()
     win.settings.data["font_size"] = pt
     win.settings.set("theme", theme)
     win._apply_palette()
@@ -526,7 +526,7 @@ def _window(app, theme, pt):
 
 
 def _edit_dialog(win, row):
-    return xte.EditDialog(win.model, row, win.settings.get_font(),
+    return jte.EditDialog(win.model, row, win.settings.get_font(),
                           shortcuts=win.settings.get("shortcuts", {}),
                           target_culture=win.target_culture,
                           transl_cfg=win.settings.get("translation", {}), parent=win)
@@ -534,9 +534,9 @@ def _edit_dialog(win, row):
 
 def check_real_pickers(app):
     failures = []
-    widest_date = QDate(2088, 12, 28).toString(xte.DATE_FMT_QT)
-    for theme in xte.THEMES:
-        t = xte.THEMES[theme]
+    widest_date = QDate(2088, 12, 28).toString(jte.DATE_FMT_QT)
+    for theme in jte.THEMES:
+        t = jte.THEMES[theme]
         for pt in REAL_FONT_PTS:
             win = _window(app, theme, pt)
             try:
@@ -547,7 +547,7 @@ def check_real_pickers(app):
                                      ("filter bar date to", win.filter_panel.date_to),
                                      ("Edit date", edit.date_edit)):
                     where = f"{theme} {name} at {pt}pt"
-                    if not isinstance(picker, xte._DatePickerField):
+                    if not isinstance(picker, jte._DatePickerField):
                         failures.append(f"{where}: is a {type(picker).__name__}")
                         continue
                     image = picker.grab().toImage()
@@ -555,7 +555,7 @@ def check_real_pickers(app):
                     if abs(fill.red() - QColor(t["bg4"]).red()) + abs(fill.green() - QColor(t["bg4"]).green()) \
                             + abs(fill.blue() - QColor(t["bg4"]).blue()) > FILL_TOLERANCE:
                         failures.append(f"{where}: field fill {fill.name()}, expected {t['bg4']}")
-                    needed = xte._width_for_text(picker, QFontMetrics(picker.font()), [widest_date])
+                    needed = jte._width_for_text(picker, QFontMetrics(picker.font()), [widest_date])
                     if picker.width() < needed:
                         failures.append(f"{where}: {picker.width()}px wide, needs {needed}px")
                     popup = picker.open_popup()
@@ -581,7 +581,7 @@ def check_edit_keeps_old_date(app):
     win = _window(app, "dark", 10)
     try:
         entry = win.model.get_entry(0)
-        entry.modify_date = xte.format_date_for_storage(date(1998, 5, 5))
+        entry.modify_date = jte.format_date_for_storage(date(1998, 5, 5))
         stored = entry.modify_date
         edit = _edit_dialog(win, 0)
         edit.show()
@@ -616,20 +616,20 @@ CHECKS = [check_format_helpers, check_column_keys, check_column_wheel, check_col
 
 @contextmanager
 def _patched(name, value):
-    real = getattr(xte, name)
-    setattr(xte, name, value)
+    real = getattr(jte, name)
+    setattr(jte, name, value)
     try:
         yield
     finally:
-        setattr(xte, name, real)
+        setattr(jte, name, real)
 
 
 def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")     # what main() does
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     failures = []
     with tempfile.TemporaryDirectory() as glyphs:
         with _patched("_glyph_cache_dir", lambda: Path(glyphs)):

@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSpinBox, QWidget
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FONT_PTS = (8, 10, 14)
 INSET = 1                # stay clear of a button's own edge
@@ -67,7 +67,7 @@ class _StubMain(QWidget):
         self.settings = _StubSettings(pt)
 
     def _get_theme(self):
-        return xte.THEMES[self._theme]
+        return jte.THEMES[self._theme]
 
 
 def _luminance(color):
@@ -115,12 +115,12 @@ def _dialogs(app, theme, pt):
     others."""
     app.setFont(QFont("Segoe UI", pt))
     stub = _StubMain(theme, pt)
-    xte.MainWindow._apply_palette(stub)
-    font_dlg = xte.FontSettingsDialog(QFont("Segoe UI", pt), stub)
-    backup_dlg = xte.AutosaveBackupDialog(stub.settings, stub)
-    facts = xte.FileFacts(file_name="Latvian.xml", folder="C:/x", size_bytes=1, modified=0.0,
+    jte.MainWindow._apply_palette(stub)
+    font_dlg = jte.FontSettingsDialog(QFont("Segoe UI", pt), stub)
+    backup_dlg = jte.AutosaveBackupDialog(stub.settings, stub)
+    facts = jte.FileFacts(file_name="Latvian.xml", folder="C:/x", size_bytes=1, modified=0.0,
                           total=0, by_status={}, untranslated=0, tablet=0)
-    props_dlg = xte.FilePropertiesDialog("lv-LV", "Latviešu", "4.1.1220", facts, False, stub)
+    props_dlg = jte.FilePropertiesDialog("lv-LV", "Latviešu", "4.1.1220", facts, False, stub)
     for dlg in (font_dlg, backup_dlg, props_dlg):
         dlg.show()
     app.processEvents()
@@ -129,7 +129,7 @@ def _dialogs(app, theme, pt):
 
 def check_arrows(app):
     failures = []
-    for theme, t in xte.THEMES.items():
+    for theme, t in jte.THEMES.items():
         for pt in FONT_PTS:
             stub, font_dlg, backup_dlg, props_dlg = _dialogs(app, theme, pt)
             cases = [("Choose UI Font size", font_dlg._size_spin, True),
@@ -162,12 +162,12 @@ def check_arrows(app):
 
 @contextmanager
 def _patched(name, value):
-    real = getattr(xte, name)
-    setattr(xte, name, value)
+    real = getattr(jte, name)
+    setattr(jte, name, value)
     try:
         yield
     finally:
-        setattr(xte, name, real)
+        setattr(jte, name, real)
 
 
 @contextmanager
@@ -182,9 +182,9 @@ def check_unwritable_folder_falls_back():
     failures = []
     with tempfile.NamedTemporaryFile() as blocker:
         with _patched("_glyph_cache_dir", lambda: Path(blocker.name) / "glyphs"):  # parent is a file
-            for theme, t in xte.THEMES.items():
+            for theme, t in jte.THEMES.items():
                 try:
-                    qss = xte._spinbox_qss(t, 10)
+                    qss = jte._spinbox_qss(t, 10)
                 except Exception as e:
                     failures.append(f"{theme}: {type(e).__name__} escaped _spinbox_qss")
                     continue

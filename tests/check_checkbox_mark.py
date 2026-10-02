@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QCheckBox, QStyle, QStyleOptionButton
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 MIN_TICK_PIXELS = 20   # a real tick is well over a hundred; anything under this is noise
 INSET = 5              # stay clear of the indicator's own border
@@ -60,7 +60,7 @@ def _box(app, t, checked, enabled):
     checkbox.setChecked(checked)
     checkbox.setEnabled(enabled)
     checkbox.setStyleSheet(f"QCheckBox {{ background: {t['bg']}; color: {t['fg']}; }}\n"
-                           + xte._prominent_checkbox_qss(t))
+                           + jte._prominent_checkbox_qss(t))
     checkbox.show()
     app.processEvents()
     return checkbox
@@ -68,7 +68,7 @@ def _box(app, t, checked, enabled):
 
 def check_states(app):
     failures = []
-    for theme, t in xte.THEMES.items():
+    for theme, t in jte.THEMES.items():
         checked = _interior_pixels(_box(app, t, True, True))
         if sum(1 for p in checked if _is_white(p)) < MIN_TICK_PIXELS:
             failures.append(f"{theme}: checked box shows no white tick")
@@ -88,12 +88,12 @@ def check_states(app):
 
 @contextmanager
 def _patched(name, value):
-    real = getattr(xte, name)
-    setattr(xte, name, value)
+    real = getattr(jte, name)
+    setattr(jte, name, value)
     try:
         yield
     finally:
-        setattr(xte, name, real)
+        setattr(jte, name, real)
 
 
 @contextmanager
@@ -108,9 +108,9 @@ def check_unwritable_folder_falls_back(app):
     failures = []
     with tempfile.NamedTemporaryFile() as blocker:
         with _patched("_glyph_cache_dir", lambda: Path(blocker.name) / "glyphs"):  # parent is a file
-            for theme, t in xte.THEMES.items():
+            for theme, t in jte.THEMES.items():
                 try:
-                    qss = xte._prominent_checkbox_qss(t)
+                    qss = jte._prominent_checkbox_qss(t)
                 except Exception as e:
                     failures.append(f"{theme}: {type(e).__name__} escaped _prominent_checkbox_qss")
                     continue

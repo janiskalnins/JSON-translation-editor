@@ -22,8 +22,8 @@ from urllib.parse import parse_qs
 
 from deep_translator.exceptions import TooManyRequests
 
-xte = cs.xte
-G = xte.GlossaryEntry
+jte = cs.jte
+G = jte.GlossaryEntry
 
 
 class _Response:
@@ -84,63 +84,63 @@ class CultureTests(unittest.TestCase):
                  "zh-Hans": "ZH", "de": "DE"}
         for culture, expected in cases.items():
             with self.subTest(culture=culture):
-                self.assertEqual(xte._culture_to_deepl(culture), expected)
+                self.assertEqual(jte._culture_to_deepl(culture), expected)
 
     def test_bcp47_language_subtags(self):
         for culture, expected in {"lv-LV": "lv", "EN-us": "en", "de": "de", "": ""}.items():
             with self.subTest(culture=culture):
-                self.assertEqual(xte._culture_to_bcp47(culture), expected)
+                self.assertEqual(jte._culture_to_bcp47(culture), expected)
 
 
 class GlossaryPromptTests(unittest.TestCase):
     def test_no_matches_add_nothing(self):
-        self.assertEqual(xte._format_glossary_prompt_block([]), "")
+        self.assertEqual(jte._format_glossary_prompt_block([]), "")
 
     def test_matches_are_listed_with_their_notes(self):
-        block = xte._format_glossary_prompt_block([G("Lane", "Celiņš", "bowling"), G("Ball", "Bumba")])
+        block = jte._format_glossary_prompt_block([G("Lane", "Celiņš", "bowling"), G("Ball", "Bumba")])
         self.assertTrue(block.endswith('- "Lane" → "Celiņš" (bowling)\n- "Ball" → "Bumba"'), block)
 
 
 class ClaudeTests(unittest.TestCase):
     def test_returns_the_translated_text(self):
         with fake_urlopen({"content": [{"text": " Saglabāt \n"}]}):
-            self.assertEqual(xte._translate_claude("Save", "lv-LV", "k", "m"), "Saglabāt")
+            self.assertEqual(jte._translate_claude("Save", "lv-LV", "k", "m"), "Saglabāt")
 
     def test_sends_the_key_and_the_model(self):
         with fake_urlopen({"content": [{"text": "x"}]}) as requests:
-            xte._translate_claude("Save", "lv-LV", "k", "m")
+            jte._translate_claude("Save", "lv-LV", "k", "m")
         self.assertEqual((requests[0].get_header("X-api-key"), json.loads(requests[0].data)["model"]),
                          ("k", "m"))
 
     def test_prompt_names_the_target_culture(self):
         with fake_urlopen({"content": [{"text": "x"}]}) as requests:
-            xte._translate_claude("Save", "lv-LV", "k", "m")
+            jte._translate_claude("Save", "lv-LV", "k", "m")
         self.assertIn("'lv-LV'", _claude_prompt(requests[0]))
 
     def test_prompt_holds_the_glossary(self):
         with fake_urlopen({"content": [{"text": "x"}]}) as requests:
-            xte._translate_claude("Lane", "lv-LV", "k", "m", glossary=[G("Lane", "Celiņš")])
+            jte._translate_claude("Lane", "lv-LV", "k", "m", glossary=[G("Lane", "Celiņš")])
         self.assertIn('"Lane" → "Celiņš"', _claude_prompt(requests[0]))
 
     def test_http_error_is_a_runtime_error(self):
         with fake_urlopen(error=http_error()), self.assertRaises(RuntimeError):
-            xte._translate_claude("Save", "lv-LV", "k", "m")
+            jte._translate_claude("Save", "lv-LV", "k", "m")
 
     def test_http_error_message_is_truncated(self):
         with fake_urlopen(error=http_error()):
             with self.assertRaises(RuntimeError) as caught:
-                xte._translate_claude("Save", "lv-LV", "k", "m")
+                jte._translate_claude("Save", "lv-LV", "k", "m")
         self.assertLess(len(str(caught.exception)), 400)
 
     def test_network_error_is_a_runtime_error(self):
         with fake_urlopen(error=urllib.error.URLError("offline")), self.assertRaises(RuntimeError):
-            xte._translate_claude("Save", "lv-LV", "k", "m")
+            jte._translate_claude("Save", "lv-LV", "k", "m")
 
 
 class DeepLTests(unittest.TestCase):
     def _request(self, key: str = "k:fx", use_free: bool = False):
         with fake_urlopen({"translations": [{"text": "x"}]}) as requests:
-            xte._translate_deepl("Save", "lv-LV", key, use_free)
+            jte._translate_deepl("Save", "lv-LV", key, use_free)
         return requests[0]
 
     def test_free_key_uses_the_free_host(self):
@@ -157,60 +157,60 @@ class DeepLTests(unittest.TestCase):
 
     def test_returns_the_translated_text(self):
         with fake_urlopen({"translations": [{"text": "Saglabāt"}]}):
-            self.assertEqual(xte._translate_deepl("Save", "lv-LV", "k", True), "Saglabāt")
+            self.assertEqual(jte._translate_deepl("Save", "lv-LV", "k", True), "Saglabāt")
 
     def test_http_error_is_a_runtime_error(self):
         with fake_urlopen(error=http_error(403)), self.assertRaises(RuntimeError):
-            xte._translate_deepl("Save", "lv-LV", "k", True)
+            jte._translate_deepl("Save", "lv-LV", "k", True)
 
     def test_http_error_message_is_truncated(self):
         with fake_urlopen(error=http_error(403)):
             with self.assertRaises(RuntimeError) as caught:
-                xte._translate_deepl("Save", "lv-LV", "k", True)
+                jte._translate_deepl("Save", "lv-LV", "k", True)
         self.assertLess(len(str(caught.exception)), 400)
 
     def test_network_error_is_a_runtime_error(self):
         with fake_urlopen(error=urllib.error.URLError("offline")), self.assertRaises(RuntimeError):
-            xte._translate_deepl("Save", "lv-LV", "k", True)
+            jte._translate_deepl("Save", "lv-LV", "k", True)
 
 
 class LibreTranslateTests(unittest.TestCase):
     def test_posts_to_the_translate_endpoint(self):
         with fake_urlopen({"translatedText": "x"}) as requests:
-            xte._translate_libretranslate("Save", "lv-LV", "https://lt.example/", "")
+            jte._translate_libretranslate("Save", "lv-LV", "https://lt.example/", "")
         self.assertEqual(requests[0].full_url, "https://lt.example/translate")
 
     def test_sends_the_language_subtag(self):
         with fake_urlopen({"translatedText": "x"}) as requests:
-            xte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
+            jte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
         self.assertEqual(json.loads(requests[0].data)["target"], "lv")
 
     def test_returns_the_translated_text(self):
         with fake_urlopen({"translatedText": "Saglabāt"}):
-            self.assertEqual(xte._translate_libretranslate("Save", "lv-LV", "https://lt.example", ""),
+            self.assertEqual(jte._translate_libretranslate("Save", "lv-LV", "https://lt.example", ""),
                              "Saglabāt")
 
     def test_http_error_is_a_runtime_error(self):
         with fake_urlopen(error=http_error()), self.assertRaises(RuntimeError):
-            xte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
+            jte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
 
     def test_http_error_message_is_truncated(self):
         with fake_urlopen(error=http_error()):
             with self.assertRaises(RuntimeError) as caught:
-                xte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
+                jte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
         self.assertLess(len(str(caught.exception)), 400)
 
     def test_network_error_is_a_runtime_error(self):
         with fake_urlopen(error=urllib.error.URLError("offline")), self.assertRaises(RuntimeError):
-            xte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
+            jte._translate_libretranslate("Save", "lv-LV", "https://lt.example", "")
 
 
 class GoogleTests(unittest.TestCase):
     def _translate(self, script: list, is_cancelled=lambda: False, delay: float = 0.01) -> str:
         seen: List[dict] = []
         with mock.patch("deep_translator.GoogleTranslator", fake_translator_class(script, seen)), \
-                mock.patch.object(xte, "_GOOGLE_RETRY_DELAY_S", delay):
-            return xte._translate_google_dt("Save", "lv-LV", is_cancelled)
+                mock.patch.object(jte, "_GOOGLE_RETRY_DELAY_S", delay):
+            return jte._translate_google_dt("Save", "lv-LV", is_cancelled)
 
     def test_one_429_is_retried(self):
         self.assertEqual(self._translate([TooManyRequests(), "Saglabāt"]), "Saglabāt")
@@ -218,7 +218,7 @@ class GoogleTests(unittest.TestCase):
     def test_two_429s_give_the_rate_limit_message(self):
         with self.assertRaises(RuntimeError) as caught:
             self._translate([TooManyRequests(), TooManyRequests()])
-        self.assertEqual(str(caught.exception), xte._GOOGLE_RATE_LIMIT_MSG)
+        self.assertEqual(str(caught.exception), jte._GOOGLE_RATE_LIMIT_MSG)
 
     def test_cancelled_pause_sends_no_second_request(self):
         script = [TooManyRequests(), "never sent"]
@@ -229,7 +229,7 @@ class GoogleTests(unittest.TestCase):
     def test_sends_the_language_subtag(self):
         seen: List[dict] = []
         with mock.patch("deep_translator.GoogleTranslator", fake_translator_class(["x"], seen)):
-            xte._translate_google_dt("Save", "lv-LV")
+            jte._translate_google_dt("Save", "lv-LV")
         self.assertEqual(seen[0]["target"], "lv")
 
     def test_empty_result_is_an_error(self):
@@ -241,7 +241,7 @@ class MyMemoryTests(unittest.TestCase):
     def _seen(self, culture: str = "lv-lv", email: str = "") -> dict:
         seen: List[dict] = []
         with mock.patch("deep_translator.MyMemoryTranslator", fake_translator_class(["x"], seen)):
-            xte._translate_mymemory_dt("Save", culture, email)
+            jte._translate_mymemory_dt("Save", culture, email)
         return seen[0]
 
     def test_region_casing_is_normalized(self):
@@ -253,32 +253,32 @@ class MyMemoryTests(unittest.TestCase):
     def test_empty_result_is_an_error(self):
         with mock.patch("deep_translator.MyMemoryTranslator", fake_translator_class([""], [])), \
                 self.assertRaises(RuntimeError):
-            xte._translate_mymemory_dt("Save", "lv-LV")
+            jte._translate_mymemory_dt("Save", "lv-LV")
 
 
 class MicrosoftTests(unittest.TestCase):
     def test_missing_key_is_a_value_error(self):
         with self.assertRaises(ValueError):
-            xte._translate_microsoft_dt("Save", "lv-LV", "  ")
+            jte._translate_microsoft_dt("Save", "lv-LV", "  ")
 
     def test_region_is_passed(self):
         seen: List[dict] = []
         with mock.patch("deep_translator.MicrosoftTranslator", fake_translator_class(["x"], seen)):
-            xte._translate_microsoft_dt("Save", "lv-LV", "k", "westeurope")
+            jte._translate_microsoft_dt("Save", "lv-LV", "k", "westeurope")
         self.assertEqual(seen[0]["region"], "westeurope")
 
     def test_error_message_is_truncated(self):
         script = [RuntimeError("e" * 1000)]
         with mock.patch("deep_translator.MicrosoftTranslator", fake_translator_class(script, [])):
             with self.assertRaises(RuntimeError) as caught:
-                xte._translate_microsoft_dt("Save", "lv-LV", "k")
+                jte._translate_microsoft_dt("Save", "lv-LV", "k")
         self.assertLessEqual(len(str(caught.exception)), 300)
 
 
 def _run_thread(cfg: dict, mw=None) -> str:
     """TranslationThread.run() on this thread; returns what it emitted (result or error)."""
     got: List[str] = []
-    thread = xte.TranslationThread("Lane", "lv-LV", cfg, mw=mw)
+    thread = jte.TranslationThread("Lane", "lv-LV", cfg, mw=mw)
     thread.finished.connect(got.append)
     thread.errored.connect(got.append)
     thread.run()
@@ -313,8 +313,8 @@ class TranslationThreadTests(unittest.TestCase):
 
 class EngineLabelTests(unittest.TestCase):
     def test_every_engine_has_a_translator_label(self):
-        engines = {key for key, _ in xte._TRANSLATION_ENGINES} - {"none"}
-        self.assertEqual(set(xte._ENGINE_LABELS), engines)
+        engines = {key for key, _ in jte._TRANSLATION_ENGINES} - {"none"}
+        self.assertEqual(set(jte._ENGINE_LABELS), engines)
 
 
 @contextmanager
@@ -339,7 +339,7 @@ class NoConsoleWindowTests(unittest.TestCase):
     def _open(self, **kwargs) -> List[int]:
         import anyio
         with recorded_open_process() as flags:
-            xte._install_no_window_process_spawn()
+            jte._install_no_window_process_spawn()
             with self.assertRaises(FileNotFoundError):
                 anyio.run(lambda: anyio.open_process(["x"], **kwargs))
         return flags
@@ -354,13 +354,13 @@ class NoConsoleWindowTests(unittest.TestCase):
     def test_installing_twice_wraps_once(self):
         import anyio
         with recorded_open_process():
-            xte._install_no_window_process_spawn()
+            jte._install_no_window_process_spawn()
             first = anyio.open_process
-            xte._install_no_window_process_spawn()
+            jte._install_no_window_process_spawn()
             self.assertIs(anyio.open_process, first)
 
     def test_subscription_session_starts_the_cli_without_a_window(self):
-        session = xte.ClaudeSubscriptionSession("token", "claude-haiku-4-5")
+        session = jte.ClaudeSubscriptionSession("token", "claude-haiku-4-5")
         with recorded_open_process() as flags:
             with self.assertRaises(RuntimeError):
                 session.start()
@@ -374,7 +374,7 @@ class NoConsoleWindowTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout="Token: sk-ant-abc", stderr="")
         with mock.patch("shutil.which", return_value="claude"), \
                 mock.patch("subprocess.run", fake_run):
-            xte.ClaudeSetupTokenThread().run()
+            jte.ClaudeSetupTokenThread().run()
         self.assertEqual(calls, [subprocess.CREATE_NO_WINDOW])
 
 

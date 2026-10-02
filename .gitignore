@@ -1,14 +1,8 @@
 # Runtime files — never commit
-translation_editor_settings.json
-# Any other copy of the settings (e.g. "translation_editor_settings - real.json")
+# Any other copy of the settings (e.g. "json_translation_editor_settings - real.json")
 # holds real API keys too
-translation_editor_settings*.json
 # Settings backups, damaged-file copies and atomic-write leftovers all
 # contain API keys in plain text
-translation_editor_settings.backups.zip
-translation_editor_settings.backups.zip.corrupt
-translation_editor_settings.json.corrupt-*
-.translation_editor_settings.*.tmp
 json_translation_editor_settings*.json
 json_translation_editor_settings.backups.zip
 json_translation_editor_settings.backups.zip.corrupt
@@ -21,8 +15,6 @@ launcher_cache.json
 bat_launcher_cache.txt
 error_log.txt
 
-# Backup folder
-XML_Translation_file_Backups/
 
 # Python / build artefacts
 __pycache__/
@@ -32,7 +24,6 @@ build/
 *.spec
 .worktrees/
 *.db
-XML_Translation_file_Backups/
 .claude/*
 !.claude/rules/
 trash/

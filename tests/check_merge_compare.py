@@ -46,10 +46,10 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 from shiboken6 import isValid
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
-D_OLD = xte.format_date_for_storage(date(2025, 2, 3))
-D_NEW = xte.format_date_for_storage(date(2026, 9, 12))
+D_OLD = jte.format_date_for_storage(date(2025, 2, 3))
+D_NEW = jte.format_date_for_storage(date(2026, 9, 12))
 TINT = "#aabbcc"
 SPAN = f'<span style="background-color: {TINT}">'
 
@@ -60,7 +60,7 @@ def check(failures, label, ok, detail=""):
 
 
 def _e(name, text, translator="x", status="Review", when=D_OLD, istablet="false"):
-    return xte.StringEntry(name, translator, status, when, istablet, text)
+    return jte.StringEntry(name, translator, status, when, istablet, text)
 
 
 def check_reason(failures):
@@ -76,49 +76,49 @@ def check_reason(failures):
         ("conflict", _e("A", "a", when=D_OLD), _e("A", "b", when=D_OLD), "same date"),
     ]
     for kind, open_entry, incoming_entry, want in cases:
-        got = xte.merge_row_reason(kind, open_entry, incoming_entry)
+        got = jte.merge_row_reason(kind, open_entry, incoming_entry)
         check(failures, f"reason for {want!r}", got == want, repr(got))
 
 
 def check_diff(failures):
     wrap = '<div style="white-space: pre-wrap">'
-    open_html, incoming_html = xte.merge_diff_html("Joslas platums", "Joslas platums", TINT)
+    open_html, incoming_html = jte.merge_diff_html("Joslas platums", "Joslas platums", TINT)
     check(failures, "identical texts are not tinted", SPAN not in open_html and SPAN not in incoming_html)
     check(failures, "pane HTML is a pre-wrap div", open_html == f"{wrap}Joslas platums</div>", open_html)
 
-    open_html, incoming_html = xte.merge_diff_html("ir pārāq mazs", "ir nepietiekams mazs", TINT)
+    open_html, incoming_html = jte.merge_diff_html("ir pārāq mazs", "ir nepietiekams mazs", TINT)
     check(failures, "changed word tinted on the open side", f"{SPAN}pārāq</span>" in open_html, open_html)
     check(failures, "changed word tinted on the incoming side",
           f"{SPAN}nepietiekams</span>" in incoming_html, incoming_html)
     check(failures, "equal words stay plain", open_html.startswith(f"{wrap}ir "), open_html)
 
-    open_html, incoming_html = xte.merge_diff_html("a b", "a new b", TINT)
+    open_html, incoming_html = jte.merge_diff_html("a b", "a new b", TINT)
     check(failures, "an insertion is tinted on the incoming side only",
           SPAN in incoming_html and "new" in incoming_html and SPAN not in open_html,
           f"{open_html} | {incoming_html}")
 
-    open_html, _ = xte.merge_diff_html("x < y & z > w", "x < y & z > v", TINT)
+    open_html, _ = jte.merge_diff_html("x < y & z > w", "x < y & z > v", TINT)
     check(failures, "<, > and & are escaped", "x &lt; y &amp; z &gt; " in open_html, open_html)
 
-    open_html, _ = xte.merge_diff_html("line1\nline2", "line1\nline3", TINT)
+    open_html, _ = jte.merge_diff_html("line1\nline2", "line1\nline3", TINT)
     check(failures, "a newline becomes <br>", "line1<br>" in open_html, open_html)
 
-    open_html, _ = xte.merge_diff_html("a  b", "a  c", TINT)
+    open_html, _ = jte.merge_diff_html("a  b", "a  c", TINT)
     check(failures, "double spaces are kept", f"{wrap}a  " in open_html, open_html)
 
-    check(failures, "_blend_hex mixes at alpha", xte._blend_hex("#ffffff", "#000000", 0.5) == "#808080",
-          xte._blend_hex("#ffffff", "#000000", 0.5))
+    check(failures, "_blend_hex mixes at alpha", jte._blend_hex("#ffffff", "#000000", 0.5) == "#808080",
+          jte._blend_hex("#ffffff", "#000000", 0.5))
 
 
 @contextmanager
 def _isolated_glyph_dir():
-    real = xte._glyph_cache_dir
+    real = jte._glyph_cache_dir
     with tempfile.TemporaryDirectory() as tmp:
-        xte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
+        jte._glyph_cache_dir = lambda: Path(tmp) / "glyphs"
         try:
             yield
         finally:
-            xte._glyph_cache_dir = real
+            jte._glyph_cache_dir = real
 
 
 def _fixture():
@@ -144,7 +144,7 @@ def _set_look(win, theme, pt):
 
 def _merge_dialog(win):
     additions, conflicts, deletions = _fixture()
-    mdlg = xte.MergeConflictDialog(additions, conflicts, deletions, parent=win)
+    mdlg = jte.MergeConflictDialog(additions, conflicts, deletions, parent=win)
     mdlg.show()
     QApplication.processEvents()
     return mdlg, (additions, conflicts, deletions)
@@ -193,14 +193,14 @@ def check_row_accessors(failures, win):
     check(failures, "shortcuts follow settings", mdlg.shortcuts()["edit_next"] == "Ctrl+J")
     win.settings.data["shortcuts"] = saved
 
-    tint_qss = xte._merge_tint_qss(theme, is_dark, max(8, pt - 1))
+    tint_qss = jte._merge_tint_qss(theme, is_dark, max(8, pt - 1))
     check(failures, "the toolbar uses the shared tint rules", tint_qss in mdlg.styleSheet())
     check(failures, "the shared tint rules style the current choice", '[current="true"]' in tint_qss)
     _close(mdlg)
 
 
 def _compare(mdlg, row):
-    dlg = xte.MergeCompareDialog(mdlg, row)
+    dlg = jte.MergeCompareDialog(mdlg, row)
     dlg.show()
     QApplication.processEvents()
     return dlg
@@ -255,7 +255,7 @@ def check_last_row_focus_with_auto_resolve(failures, win):
     focus to the Merge table, where the very next Enter triggers Apply & Close."""
     _set_look(win, "dark", 10)
     additions, conflicts, _ = _fixture()
-    mdlg = xte.MergeConflictDialog(additions, conflicts, [], parent=win)
+    mdlg = jte.MergeConflictDialog(additions, conflicts, [], parent=win)
     mdlg.show()
     QApplication.processEvents()
     mdlg._auto_chk.setChecked(True)
@@ -282,7 +282,7 @@ def check_content(failures, win):
           dlg._open_pane.toPlainText())
     check(failures, "incoming pane", dlg._incoming_pane.toPlainText() == conflicts[0][1].text,
           dlg._incoming_pane.toPlainText())
-    tint = xte._blend_hex(t["dlg_count_warn"], t["bg2"], xte.MergeCompareDialog._DIFF_TINT_ALPHA)
+    tint = jte._blend_hex(t["dlg_count_warn"], t["bg2"], jte.MergeCompareDialog._DIFF_TINT_ALPHA)
     check(failures, "diff tint in the open pane", tint in dlg._open_pane.toHtml().lower())
     for pane in dlg._panes:
         before = pane.toPlainText()
@@ -350,8 +350,8 @@ def check_content(failures, win):
     mdlg._auto_chk.setChecked(False)
 
     dlg = _compare(mdlg, 1)
-    full = xte.MergeConflictDialog._TINT_ALPHA_DARK["dlg_count_warn"]
-    faint = xte.MergeConflictDialog._TINT_ALPHA_DARK_FAINT["dlg_count_warn"]
+    full = jte.MergeConflictDialog._TINT_ALPHA_DARK["dlg_count_warn"]
+    faint = jte.MergeConflictDialog._TINT_ALPHA_DARK_FAINT["dlg_count_warn"]
     alpha = mdlg._table.item(1, mdlg.COL_SOURCE).background().color().alpha()
     check(failures, "row 1 starts full-strength", alpha == full, str(alpha))
     dlg._choice_btns[0].click()
@@ -425,14 +425,14 @@ def check_keys_and_opening(failures, win):
     _close(dlg)
 
     opened = []
-    real_exec = xte.MergeCompareDialog.exec
+    real_exec = jte.MergeCompareDialog.exec
 
     def fake_exec(d):
         opened.append(d._row)
         d.deleteLater()
         return 0
 
-    xte.MergeCompareDialog.exec = fake_exec
+    jte.MergeCompareDialog.exec = fake_exec
     try:
         table = mdlg._table
         rect = table.visualRect(table.model().index(2, mdlg.COL_SOURCE))
@@ -445,7 +445,7 @@ def check_keys_and_opening(failures, win):
         QTest.mouseDClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(header.width() // 2, y))
         QApplication.processEvents()
     finally:
-        xte.MergeCompareDialog.exec = real_exec
+        jte.MergeCompareDialog.exec = real_exec
     check(failures, "double-click opens on that row (cell, then row header)", opened == [2, 3], repr(opened))
     texts = [label.text() for label in mdlg.findChildren(QLabel)]
     check(failures, "status bar hint", any(text.endswith("Double-click a row to compare.") for text in texts))
@@ -508,10 +508,10 @@ def main():
         except Exception as e:
             failures.append(f"{step.__name__}: {type(e).__name__}: {e}")
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     with _isolated_glyph_dir():
-        win = xte.MainWindow()
+        win = jte.MainWindow()
         win.settings.data.setdefault("backup", {})["enabled"] = False
         win.show()
         app.processEvents()   # runs the pending startup prompts while the patches are active

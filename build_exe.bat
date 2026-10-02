@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-::  XML Translation Editor -- Build Executable (Hardened Launcher)
+::  JSON Translation Editor -- Build Executable (Hardened Launcher)
 ::  Version 2.0
 ::
 ::  Fallback chain:
@@ -22,12 +22,12 @@
 :: ============================================================================
 
 setlocal EnableDelayedExpansion
-title XML Translation Editor -- Build
+title JSON Translation Editor -- Build
 
 :: -- Resolve script directory -------------------------------------------------
 set "LAUNCH_DIR=%~dp0"
 set "PS1=%LAUNCH_DIR%build_exe.ps1"
-set "APP=%LAUNCH_DIR%xml_translation_editor.py"
+set "APP=%LAUNCH_DIR%json_translation_editor.py"
 set "ERRCODE=0"
 
 :: -- Detect UNC path ----------------------------------------------------------
@@ -36,7 +36,7 @@ echo %LAUNCH_DIR% | findstr /r "^\\\\" >nul 2>&1 && set "IS_UNC=1"
 
 echo.
 echo   +--------------------------------------------------+
-echo   ^|    XML Translation Editor -- Build Launcher     ^|
+echo   ^|    JSON Translation Editor -- Build Launcher    ^|
 echo   +--------------------------------------------------+
 echo.
 
@@ -46,7 +46,7 @@ if not exist "%APP%" (
     echo          %APP%
     echo.
     echo          Make sure build_exe.bat is in the same folder as
-    echo          xml_translation_editor.py
+    echo          json_translation_editor.py
     goto :fatal
 )
 echo   [ OK ] Application file found.
@@ -313,13 +313,13 @@ echo.
 :: module in the wheel, WebEngine and 3D and Quick included, even though the
 :: app imports only QtWidgets, QtGui and QtCore. PyInstaller's own hooks
 :: collect those plus the plugins they need.
-"%PYTHON%" -m PyInstaller --onefile --windowed --name XMLTranslationEditor ^
-    --noconfirm --collect-all deep_translator --collect-all claude_agent_sdk %ICON_ARGS% %SPLASH_ARGS% xml_translation_editor.py
+"%PYTHON%" -m PyInstaller --onefile --windowed --name JSONTranslationEditor ^
+    --noconfirm --collect-all deep_translator --collect-all claude_agent_sdk %ICON_ARGS% %SPLASH_ARGS% json_translation_editor.py
 set "ERRCODE=!errorlevel!"
 
 if "!ERRCODE!"=="0" (
     echo.
-    echo   [ OK ] Build complete. Output: dist\XMLTranslationEditor.exe
+    echo   [ OK ] Build complete. Output: dist\JSONTranslationEditor.exe
     if exist "Resources\User_Guide.pdf" (
         copy /y "Resources\User_Guide.pdf" "dist\User_Guide.pdf" >nul
         echo   [ OK ] Copied User_Guide.pdf to dist\
@@ -404,7 +404,7 @@ goto :fatal
 :fatal
 echo.
 echo   If problems persist, open a Command Prompt in this folder and run:
-echo     python -m PyInstaller --onefile --windowed xml_translation_editor.py
+echo     python -m PyInstaller --onefile --windowed json_translation_editor.py
 echo.
 set "ERRCODE=1"
 

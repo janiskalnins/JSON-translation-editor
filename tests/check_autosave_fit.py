@@ -35,7 +35,7 @@ sys.path.insert(0, str(REPO))
 
 from PySide6.QtWidgets import QApplication, QComboBox, QSpinBox
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FONT_PTS = (10, 12, 14, 18, 24)
 TOLERANCE_PX = 1
@@ -47,7 +47,7 @@ def _pump(app):
 
 
 def _window(app, theme, pt):
-    win = xte.MainWindow()
+    win = jte.MainWindow()
     win.settings.data["font_size"] = pt
     win.settings.set("theme", theme)
     win._apply_palette()
@@ -82,11 +82,11 @@ def _dialog_failures(dlg, where):
 
 def check_dialog(app):
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in FONT_PTS:
             win = _window(app, theme, pt)
             try:
-                dlg = xte.AutosaveBackupDialog(win.settings, parent=win)
+                dlg = jte.AutosaveBackupDialog(win.settings, parent=win)
                 interval = dlg._bk_min_interval_spin
                 interval.setValue(interval.minimum())    # "Always back up"
                 dlg.show()
@@ -130,8 +130,8 @@ def main():
     app = _create_app()
     app.setStyle("Fusion")     # what main() does
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     try:
         failures = check_dialog(app)
     except Exception as e:

@@ -1,7 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Build a standalone Windows executable for XML Translation Editor.
+    Build a standalone Windows executable for JSON Translation Editor.
 .DESCRIPTION
     Performs a full pre-flight check of every dependency needed to produce
     a portable single-file .exe via PyInstaller, then runs the build.
@@ -29,7 +29,7 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
-$HOST.UI.RawUI.WindowTitle = "XML Translation Editor -- Build"
+$HOST.UI.RawUI.WindowTitle = "JSON Translation Editor -- Build"
 
 # ==============================================================================
 #  CONSOLE HELPERS
@@ -38,7 +38,7 @@ function Write-Header {
     Clear-Host
     Write-Host ""
     Write-Host "  +==================================================+" -ForegroundColor Magenta
-    Write-Host "  |   XML Translation Editor -- Executable Builder   |" -ForegroundColor Magenta
+    Write-Host "  |   JSON Translation Editor -- Executable Builder  |" -ForegroundColor Magenta
     Write-Host "  +==================================================+" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -52,8 +52,8 @@ function Write-Sep   {           Write-Host "  ---------------------------------
 # ==============================================================================
 #  BUILD CONSTANTS
 # ==============================================================================
-$APP_SCRIPT  = "xml_translation_editor.py"
-$APP_NAME    = "XMLTranslationEditor"
+$APP_SCRIPT  = "json_translation_editor.py"
+$APP_NAME    = "JSONTranslationEditor"
 $ICON_FILE   = "Resources\xml_translation_editor.ico"
 $LOGO_FILE   = "Resources\xml_translation_editor.png"
 $SPLASH_FILE = "Resources\xml_translation_editor_splash.png"
@@ -741,7 +741,7 @@ if (Test-Path $LogoPath) {
 if ($tkOk -and (Test-Path $SplashPath)) {
     # PyInstaller embeds the splash image directly into the bootloader --
     # no --add-data needed. It is shown while the onefile archive is
-    # unpacking, before Python or Qt have started; xml_translation_editor.py's
+    # unpacking, before Python or Qt have started; json_translation_editor.py's
     # main() closes it once the main window is shown.
     $iconArgs += @("--splash", $SplashPath)
 }

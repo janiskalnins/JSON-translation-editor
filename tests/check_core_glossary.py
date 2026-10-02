@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 from typing import List, Tuple
 
-xte = cs.xte
-G = xte.GlossaryEntry
+jte = cs.jte
+G = jte.GlossaryEntry
 
 LANE = G("Lane", "Celiņš", "x")
 LANE_BARE = G("Lane", "Celiņš")
@@ -21,7 +21,7 @@ BALL = G("Ball", "Bumba")
 
 
 def _parse(data: bytes) -> Tuple[list, List[str]]:
-    return xte.parse_glossary(cs.write_exact(cs.temp_dir() / "Latvian.glossary.csv", data))
+    return jte.parse_glossary(cs.write_exact(cs.temp_dir() / "Latvian.glossary.csv", data))
 
 
 class ParseGlossaryTests(unittest.TestCase):
@@ -76,7 +76,7 @@ class ParseGlossaryTests(unittest.TestCase):
         self.assertEqual(warnings, ["skipped 2 row(s) missing a term or translation"])
 
     def test_missing_file_is_empty_without_warnings(self):
-        self.assertEqual(xte.parse_glossary(cs.temp_dir() / "none.glossary.csv"), ([], []))
+        self.assertEqual(jte.parse_glossary(cs.temp_dir() / "none.glossary.csv"), ([], []))
 
     def test_empty_file_is_empty_without_warnings(self):
         self.assertEqual(_parse(b""), ([], []))
@@ -87,12 +87,12 @@ class WriteGlossaryTests(unittest.TestCase):
 
     def test_write_then_parse_round_trips(self):
         path = cs.temp_dir() / "Latvian.glossary.csv"
-        xte.write_glossary(path, self.ENTRIES)
-        self.assertEqual(xte.parse_glossary(path), (self.ENTRIES, []))
+        jte.write_glossary(path, self.ENTRIES)
+        self.assertEqual(jte.parse_glossary(path), (self.ENTRIES, []))
 
     def test_written_file_has_a_bom_and_the_canonical_header(self):
         path = cs.temp_dir() / "Latvian.glossary.csv"
-        xte.write_glossary(path, self.ENTRIES)
+        jte.write_glossary(path, self.ENTRIES)
         self.assertTrue(path.read_bytes().startswith(b"\xef\xbb\xbfterm,translation,note"))
 
 
@@ -100,7 +100,7 @@ GLOSSARY = [G("Lane", "Celiņš"), G("box", "kaste"), G("pin setter", "ķegļu c
 
 
 def _matched(text: str) -> List[str]:
-    return [g.term for g in xte._match_glossary(text, GLOSSARY)]
+    return [g.term for g in jte._match_glossary(text, GLOSSARY)]
 
 
 class MatchGlossaryTests(unittest.TestCase):
@@ -128,7 +128,7 @@ class MatchGlossaryTests(unittest.TestCase):
 
 class GlossaryPathTests(unittest.TestCase):
     def test_glossary_sits_next_to_the_xml_file(self):
-        self.assertEqual(xte.glossary_path_for(Path("C:/work/Latvian.xml")),
+        self.assertEqual(jte.glossary_path_for(Path("C:/work/Latvian.xml")),
                          Path("C:/work/Latvian.glossary.csv"))
 
 

@@ -22,7 +22,7 @@ from collections import Counter
 from pathlib import Path
 from typing import List, Tuple
 
-xte = cs.xte
+jte = cs.jte
 
 REAL = cs.DATA / "real"
 FILES = sorted(REAL.glob("*.xml")) if REAL.is_dir() else []
@@ -39,7 +39,7 @@ def _etree_names(path: Path) -> List[str]:
 
 
 def _parse(path: Path) -> Tuple[list, list]:
-    segments, entries, *_ = xte.parse_file(path)
+    segments, entries, *_ = jte.parse_file(path)
     return segments, entries
 
 
@@ -56,7 +56,7 @@ def _print_notes() -> None:
         segments, entries = _parse(path)
         loaded = time.monotonic() - start
         start = time.monotonic()
-        xte.save_file(path, segments, entries)
+        jte.save_file(path, segments, entries)
         saved = time.monotonic() - start
         print(f"NOTE {source.name}: {len(entries)} strings, {_duplicate_groups(entries)} duplicate "
               f"group(s), load {loaded:.2f} s, save {saved:.2f} s", flush=True)
@@ -74,7 +74,7 @@ class CorpusTests(unittest.TestCase):
         for source in FILES:
             with self.subTest(file=source.name):
                 path = _copy(source)
-                xte.save_file(path, *_parse(path))
+                jte.save_file(path, *_parse(path))
                 self.assertEqual(path.read_bytes(), source.read_bytes())
 
     def test_editing_one_row_changes_only_that_row(self):
@@ -86,7 +86,7 @@ class CorpusTests(unittest.TestCase):
                     self.skipTest("no rows")
                 entry = entries[len(entries) // 2]
                 entry.text += " (edited)"
-                xte.save_file(path, segments, entries)
+                jte.save_file(path, segments, entries)
                 new_segments = _parse(path)[0]
                 changed = [i for i, (old, new) in enumerate(zip(segments, new_segments)) if old != new]
                 self.assertEqual((len(new_segments), changed), (len(segments), [entry.seg_idx]))
@@ -98,8 +98,8 @@ class CorpusTests(unittest.TestCase):
         if not entries:
             self.skipTest("no rows")
         entry = entries[len(entries) // 2]
-        xte._remove_entry_segment(segments, entry.seg_idx)
-        xte.save_file(path, segments, [e for e in entries if e is not entry])
+        jte._remove_entry_segment(segments, entry.seg_idx)
+        jte.save_file(path, segments, [e for e in entries if e is not entry])
         return path, entry.name
 
     def test_deleting_a_row_leaves_exactly_the_other_rows(self):
@@ -125,9 +125,9 @@ class CorpusTests(unittest.TestCase):
                 segments, entries = _parse(path)
                 if _duplicate_groups(entries):
                     self.skipTest("the file has duplicates, so Merge refuses it")
-                diff = xte.compute_merge_diff(entries, _parse(source)[1])
-                segments, entries = xte.insert_additions(segments, entries, diff.additions)
-                xte.save_file(path, segments, entries)
+                diff = jte.compute_merge_diff(entries, _parse(source)[1])
+                segments, entries = jte.insert_additions(segments, entries, diff.additions)
+                jte.save_file(path, segments, entries)
                 self.assertEqual(path.read_bytes(), source.read_bytes())
 
 

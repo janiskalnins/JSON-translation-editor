@@ -1,10 +1,10 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Launcher for XML Translation Editor
+    Launcher for JSON Translation Editor
 .DESCRIPTION
     Checks Python installation, verifies/installs dependencies,
-    then launches xml_translation_editor.py.
+    then launches json_translation_editor.py.
     Run with:  powershell -ExecutionPolicy Bypass -File run_translator.ps1
 #>
 
@@ -18,7 +18,7 @@ $ErrorActionPreference = "Continue"
 $script:_isWT = -not [string]::IsNullOrEmpty($env:WT_SESSION)
 
 # == Window: compact size + centered on screen =================================
-$HOST.UI.RawUI.WindowTitle = "XML Translation Editor"
+$HOST.UI.RawUI.WindowTitle = "JSON Translation Editor"
 
 if (-not $script:_isWT) {
     try {
@@ -81,7 +81,7 @@ function Write-Header {
         Write-Host ""
     }
     Write-Host "  +----------------------------------------------+" -ForegroundColor Cyan
-    Write-Host "  |       XML Translation Editor  --  Launcher   |" -ForegroundColor Cyan
+    Write-Host "  |       JSON Translation Editor  --  Launcher  |" -ForegroundColor Cyan
     Write-Host "  +----------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  !! Do not close this window while the app runs !!" -ForegroundColor Yellow
@@ -105,7 +105,7 @@ function Read-HostSafe {
 # == Constants =================================================================
 $MIN_PYTHON_MAJOR   = 3
 $MIN_PYTHON_MINOR   = 9
-$APP_SCRIPT         = "xml_translation_editor.py"
+$APP_SCRIPT         = "json_translation_editor.py"
 $REQUIRED_PACKAGES  = @("PySide6", "deep-translator", "claude-agent-sdk")
 $PackageImportMap   = @{ "PySide6" = "PySide6"; "deep-translator" = "deep_translator"; "claude-agent-sdk" = "claude_agent_sdk" }
 
@@ -440,7 +440,7 @@ if ($nodeOk) {
 Write-LaunchCache $PythonCmd $verStr $pkgVers["PySide6"]
 
 # -- Launch --------------------------------------------------------------------
-Write-Ok "All checks passed -- starting XML Translation Editor ..."
+Write-Ok "All checks passed -- starting JSON Translation Editor ..."
 Show-RunningBox
 
 $launchOk = $false
@@ -458,7 +458,7 @@ try {
 
 if (-not $launchOk) {
     Remove-LaunchCache
-    Write-Fail "XML Translation Editor exited with an error (code $appExitCode)."
+    Write-Fail "JSON Translation Editor exited with an error (code $appExitCode)."
     Read-HostSafe "  Press Enter to exit"
 }
 exit $appExitCode

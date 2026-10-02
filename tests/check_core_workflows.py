@@ -22,13 +22,13 @@ from PySide6.QtCore import QItemSelection, QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox
 
-xte = cs.xte
+jte = cs.jte
 
 ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atcelt"), cs.row("Open", "Atvērt")]
 NAMES = ["Save", "Cancel", "Open"]
-TODAY = xte.format_date_for_storage(date.today())
-OLD = xte.format_date_for_storage(date(2024, 1, 1))
-NEW = xte.format_date_for_storage(date(2025, 6, 1))
+TODAY = jte.format_date_for_storage(date.today())
+OLD = jte.format_date_for_storage(date(2024, 1, 1))
+NEW = jte.format_date_for_storage(date(2025, 6, 1))
 
 
 class WindowTestCase(unittest.TestCase):
@@ -71,14 +71,14 @@ def _edit(win, row: int, **fields) -> None:
             dlg.tablet_toggle.setChecked(fields["istablet"])
         dlg._save()
         return QDialog.Accepted
-    with mock.patch.object(xte.EditDialog, "exec", fake_exec):
+    with mock.patch.object(jte.EditDialog, "exec", fake_exec):
         win._edit_row(win.model.index(row, 0))
 
 
 def _select_rows(win, rows: List[int]) -> None:
     selection = QItemSelection()
     for r in rows:
-        selection.select(win.model.index(r, 0), win.model.index(r, len(xte.HEADERS) - 1))
+        selection.select(win.model.index(r, 0), win.model.index(r, len(jte.HEADERS) - 1))
     win.table.selectionModel().select(
         selection, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
 
@@ -89,8 +89,8 @@ class EditTests(WindowTestCase):
         self.win.session_translator = "Anna"
         _edit(self.win, 1, text="Atsaukt")
         self.win._save()
-        expected = xte.StringEntry("Cancel", "Anna", "Complete", TODAY, "false", "Atsaukt", seg_idx=3)
-        self.assertEqual(xte.parse_file(path)[1][1], expected)
+        expected = jte.StringEntry("Cancel", "Anna", "Complete", TODAY, "false", "Atsaukt", seg_idx=3)
+        self.assertEqual(jte.parse_file(path)[1][1], expected)
 
     def test_translation_edit_saves_an_intact_file(self):
         path = self.load()
@@ -102,9 +102,9 @@ class EditTests(WindowTestCase):
         path = self.load()
         _edit(self.win, 0, status="Review", translator="Bob", istablet=True)
         self.win._save()
-        expected = xte.StringEntry("Save", "Bob", "Review", cs.DEFAULT_DATE, "true", "Saglabāt",
+        expected = jte.StringEntry("Save", "Bob", "Review", cs.DEFAULT_DATE, "true", "Saglabāt",
                                    seg_idx=1)
-        self.assertEqual(xte.parse_file(path)[1][0], expected)
+        self.assertEqual(jte.parse_file(path)[1][0], expected)
 
     def test_file_with_legacy_dates_opens_modified(self):
         self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
@@ -113,8 +113,8 @@ class EditTests(WindowTestCase):
     def test_save_writes_canonical_dates(self):
         path = self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
         self.win._save()
-        canonical = xte.format_date_for_storage(date(2016, 5, 6))
-        self.assertEqual([e.modify_date for e in xte.parse_file(path)[1]], [canonical, canonical])
+        canonical = jte.format_date_for_storage(date(2016, 5, 6))
+        self.assertEqual([e.modify_date for e in jte.parse_file(path)[1]], [canonical, canonical])
 
     def test_save_with_canonical_dates_saves_an_intact_file(self):
         path = self.load([cs.row(n, t, modify_date="2016-05-06") for n, t in (("A", "a"), ("B", "b"))])
@@ -129,7 +129,7 @@ class EditShortcutTests(WindowTestCase):
 
     def row_after_key_in_source_box(self, key) -> int:
         self.load()
-        dlg = xte.EditDialog(self.win.model, 1, self.win.settings.get_font(),
+        dlg = jte.EditDialog(self.win.model, 1, self.win.settings.get_font(),
                              shortcuts=self.win.settings.get("shortcuts", {}),
                              target_culture=self.win.target_culture,
                              transl_cfg=self.win.settings.get("translation", {}), parent=self.win)
@@ -155,7 +155,7 @@ class BulkStatusTests(WindowTestCase):
         _select_rows(self.win, [0, 2])
         self.win._bulk_status("Review")
         self.win._save()
-        self.assertEqual([e.status for e in xte.parse_file(path)[1]],
+        self.assertEqual([e.status for e in jte.parse_file(path)[1]],
                          ["Review", "Complete", "Review"])
 
     def test_bulk_status_saves_an_intact_file(self):
@@ -207,7 +207,7 @@ class CloseFileTests(WindowTestCase):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
         self.win._close_file()
-        self.assertEqual(xte.parse_file(path)[1][0].text, "Changed")
+        self.assertEqual(jte.parse_file(path)[1][0].text, "Changed")
 
     def test_close_with_save_saves_an_intact_file(self):
         path, _ = self._load_modified()
@@ -236,7 +236,7 @@ class CloseFileTests(WindowTestCase):
     def test_failed_save_keeps_the_file_open(self):
         path, _ = self._load_modified()
         self.modals.answers["question"] = QMessageBox.Save
-        with mock.patch.object(xte, "save_file", side_effect=OSError("locked")):
+        with mock.patch.object(jte, "save_file", side_effect=OSError("locked")):
             self.win._close_file()
         self.assertEqual(self.win.current_file, path)
 
@@ -245,7 +245,7 @@ class SaveAsTests(WindowTestCase):
     def test_save_as_rederives_the_glossary(self):
         path = self.load()
         copy = path.parent / "Copy.xml"
-        xte.write_glossary(xte.glossary_path_for(copy), [xte.GlossaryEntry("Lane", "Celiņš")])
+        jte.write_glossary(jte.glossary_path_for(copy), [jte.GlossaryEntry("Lane", "Celiņš")])
         self.modals.answers["save_path"] = str(copy)
         self.win._save_as()
         self.assertEqual([g.term for g in self.win.glossary], ["Lane"])
@@ -274,7 +274,7 @@ class MergeWorkflowTests(WindowTestCase):
         path = self.load(self.OPEN_ROWS)
         incoming = cs.write_exact(path.parent / "incoming.xml", cs.xml_doc(self.INCOMING_ROWS))
         self.modals.answers["open_path"] = str(incoming)
-        with mock.patch.object(xte.MergeConflictDialog, "exec", _accept_merge_defaults):
+        with mock.patch.object(jte.MergeConflictDialog, "exec", _accept_merge_defaults):
             self.win._merge_from_file()
         self.win._save()
         return path
@@ -285,12 +285,12 @@ class MergeWorkflowTests(WindowTestCase):
 
     def test_full_merge_takes_the_newer_conflicting_text(self):
         path = self._merge_defaults()
-        self.assertEqual(xte.parse_file(path)[1][1].text, "Atsaukt")
+        self.assertEqual(jte.parse_file(path)[1][1].text, "Atsaukt")
 
 
 def _backup_manifests(folder: Path) -> List[dict]:
     return [json.loads(p.read_text(encoding="utf-8"))
-            for p in (folder / xte.BACKUP_DIR_NAME).rglob("backup_info.json")]
+            for p in (folder / jte.BACKUP_DIR_NAME).rglob("backup_info.json")]
 
 
 class RestoreTests(WindowTestCase):
@@ -309,11 +309,11 @@ class RestoreTests(WindowTestCase):
     def _slot(self, source: Path, glossary: Optional[bytes] = None,
               md5: Optional[str] = None) -> Tuple[Path, dict]:
         """A backup slot of OLD_TEXT for *source*, in a backup root of its own."""
-        slot = xte._write_backup_slot(
+        slot = jte._write_backup_slot(
             root_dir=cs.temp_dir() / "bk", location_id="root", backup_key=source.stem,
             ts="2025-01-01_00-00-00", source_path=source, raw_bytes=self.OLD_TEXT,
             md5=md5 or hashlib.md5(self.OLD_TEXT).hexdigest(),
-            glossary_source=xte.glossary_path_for(source) if glossary is not None else None,
+            glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
             glossary_bytes=glossary,
             glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
             compress=True, max_count=5, trigger="file_open", culture="lv-LV",
@@ -358,7 +358,7 @@ class RestoreTests(WindowTestCase):
         self.modals.answers.update(button="Save as copy", question=QMessageBox.No)
         self.win._do_restore(slot, info, restore_glossary=True)
         copy = next(path.parent.glob("Latvian_restored_*.xml"))
-        self.assertEqual(xte.glossary_path_for(copy).read_bytes(), self.GLOSSARY)
+        self.assertEqual(jte.glossary_path_for(copy).read_bytes(), self.GLOSSARY)
 
     def test_checksum_mismatch_warns(self):
         path = self.load()
@@ -374,14 +374,14 @@ class AutosaveTests(WindowTestCase):
         self.win.entries[0].text = "Changed"
         self.win.is_modified = False
         self.win._autosave_tick()
-        self.assertEqual(xte.parse_file(path)[1][0].text, "Saglabāt")
+        self.assertEqual(jte.parse_file(path)[1][0].text, "Saglabāt")
 
     def test_autosave_tick_saves_a_modified_file(self):
         path = self.load()
         self.win.entries[0].text = "Changed"
         self.win.is_modified = True
         self.win._autosave_tick()
-        self.assertEqual(xte.parse_file(path)[1][0].text, "Changed")
+        self.assertEqual(jte.parse_file(path)[1][0].text, "Changed")
 
     def test_autosave_tick_saves_an_intact_file(self):
         path = self.load()

@@ -15,10 +15,10 @@ from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
 
-xte = cs.xte
+jte = cs.jte
 
-OLD = xte.format_date_for_storage(date(2024, 1, 1))
-NEW = xte.format_date_for_storage(date(2025, 6, 1))
+OLD = jte.format_date_for_storage(date(2024, 1, 1))
+NEW = jte.format_date_for_storage(date(2025, 6, 1))
 
 
 def _entry(name: str, text: str, modify_date: str = cs.DEFAULT_DATE, **fields):
@@ -27,60 +27,60 @@ def _entry(name: str, text: str, modify_date: str = cs.DEFAULT_DATE, **fields):
 
 class DiffTests(unittest.TestCase):
     def test_name_only_in_incoming_is_an_addition(self):
-        diff = xte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a"), _entry("B", "b")])
+        diff = jte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a"), _entry("B", "b")])
         self.assertEqual([e.name for e in diff.additions], ["B"])
 
     def test_different_text_is_a_conflict(self):
-        diff = xte.compute_merge_diff([_entry("A", "a")], [_entry("A", "b")])
+        diff = jte.compute_merge_diff([_entry("A", "a")], [_entry("A", "b")])
         self.assertEqual([(o.text, i.text) for o, i in diff.conflicts], [("a", "b")])
 
     def test_name_only_in_open_is_a_deletion(self):
-        diff = xte.compute_merge_diff([_entry("A", "a"), _entry("B", "b")], [_entry("A", "a")])
+        diff = jte.compute_merge_diff([_entry("A", "a"), _entry("B", "b")], [_entry("A", "a")])
         self.assertEqual([e.name for e in diff.deletions], ["B"])
 
     def test_metadata_difference_with_newer_incoming_is_auto_updated(self):
-        diff = xte.compute_merge_diff([_entry("A", "a", OLD, translator="x")],
+        diff = jte.compute_merge_diff([_entry("A", "a", OLD, translator="x")],
                                       [_entry("A", "a", NEW, translator="y")])
         self.assertEqual([e.translator for e in diff.auto_updated], ["y"])
 
     def test_metadata_difference_with_newer_open_is_not_recorded(self):
-        diff = xte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
+        diff = jte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
                                       [_entry("A", "a", OLD, translator="y")])
         self.assertEqual(diff.auto_updated, [])
 
     def test_metadata_difference_with_equal_dates_is_not_recorded(self):
-        diff = xte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
+        diff = jte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
                                       [_entry("A", "a", NEW, translator="y")])
         self.assertEqual(diff.auto_updated, [])
 
     def test_metadata_difference_with_a_missing_date_is_not_recorded(self):
-        diff = xte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
+        diff = jte.compute_merge_diff([_entry("A", "a", NEW, translator="x")],
                                       [_entry("A", "a", "", translator="y")])
         self.assertEqual(diff.auto_updated, [])
 
     def test_identical_files_give_an_empty_diff(self):
-        diff = xte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a")])
-        self.assertEqual(diff, xte.MergeDiff([], [], [], []))
+        diff = jte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a")])
+        self.assertEqual(diff, jte.MergeDiff([], [], [], []))
 
     def test_duplicate_in_the_incoming_file_raises(self):
         with self.assertRaises(ValueError):
-            xte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a"), _entry("A", "b")])
+            jte.compute_merge_diff([_entry("A", "a")], [_entry("A", "a"), _entry("A", "b")])
 
 
 class PickNewerTests(unittest.TestCase):
     def test_untranslated_open_loses_to_an_older_translated_incoming(self):
         incoming = _entry("A", "a", OLD)
-        self.assertIs(xte._pick_newer_entry(_entry("A", "A", NEW), incoming), incoming)
+        self.assertIs(jte._pick_newer_entry(_entry("A", "A", NEW), incoming), incoming)
 
     def test_untranslated_incoming_loses_to_an_older_translated_open(self):
-        self.assertIsNone(xte._pick_newer_entry(_entry("A", "a", OLD), _entry("A", "A", NEW)))
+        self.assertIsNone(jte._pick_newer_entry(_entry("A", "a", OLD), _entry("A", "A", NEW)))
 
     def test_newer_incoming_wins(self):
         incoming = _entry("A", "b", NEW)
-        self.assertIs(xte._pick_newer_entry(_entry("A", "a", OLD), incoming), incoming)
+        self.assertIs(jte._pick_newer_entry(_entry("A", "a", OLD), incoming), incoming)
 
     def test_unparseable_date_keeps_the_open_side(self):
-        self.assertIsNone(xte._pick_newer_entry(_entry("A", "a", "later"), _entry("A", "b", NEW)))
+        self.assertIsNone(jte._pick_newer_entry(_entry("A", "a", "later"), _entry("A", "b", NEW)))
 
 
 OPEN_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atcelt", modify_date=OLD),
@@ -92,36 +92,36 @@ INCOMING_ROWS = [cs.row("Save", "Saglabāt"), cs.row("Cancel", "Atsaukt", modify
 class InsertAdditionsTests(unittest.TestCase):
     def setUp(self):
         self.path = cs.write_exact(cs.temp_dir() / "open.xml", cs.xml_doc(OPEN_ROWS))
-        self.segments, self.entries, *_ = xte.parse_file(self.path)
+        self.segments, self.entries, *_ = jte.parse_file(self.path)
         self.additions = [_entry("New", "Jauns"), _entry("Newer", "Jaunāks")]
 
     def test_additions_land_before_the_closing_resources_tag(self):
-        segments, _ = xte.insert_additions(self.segments, self.entries, self.additions)
+        segments, _ = jte.insert_additions(self.segments, self.entries, self.additions)
         text = "".join(segments)
         self.assertLess(text.index('name="Newer"'), text.index("</resources>"))
 
     def test_added_rows_have_odd_seg_idx(self):
-        _, entries = xte.insert_additions(self.segments, self.entries, self.additions)
+        _, entries = jte.insert_additions(self.segments, self.entries, self.additions)
         self.assertEqual([e.seg_idx % 2 for e in entries], [1] * 5)
 
     def test_added_entries_point_at_their_own_rows(self):
-        segments, entries = xte.insert_additions(self.segments, self.entries, self.additions)
-        self.assertEqual([xte._get_attr(segments[e.seg_idx], "name") for e in entries],
+        segments, entries = jte.insert_additions(self.segments, self.entries, self.additions)
+        self.assertEqual([jte._get_attr(segments[e.seg_idx], "name") for e in entries],
                          ["Save", "Cancel", "Old", "New", "Newer"])
 
     def test_input_lists_are_not_mutated(self):
         before = (list(self.segments), list(self.entries))
-        xte.insert_additions(self.segments, self.entries, self.additions)
+        jte.insert_additions(self.segments, self.entries, self.additions)
         self.assertEqual((self.segments, self.entries), before)
 
     def test_missing_closing_resources_tag_raises(self):
         self.segments[-1] = "\n</TRNExportImportModel>\n"
         with self.assertRaises(ValueError):
-            xte.insert_additions(self.segments, self.entries, self.additions)
+            jte.insert_additions(self.segments, self.entries, self.additions)
 
     def test_saved_file_with_additions_is_intact(self):
-        segments, entries = xte.insert_additions(self.segments, self.entries, self.additions)
-        xte.save_file(self.path, segments, entries)
+        segments, entries = jte.insert_additions(self.segments, self.entries, self.additions)
+        jte.save_file(self.path, segments, entries)
         cs.assert_xml_intact(self, self.path, ["Save", "Cancel", "Old", "New", "Newer"])
 
 
@@ -144,8 +144,8 @@ class FileMergeTests(unittest.TestCase):
         path = cs.write_exact(folder / "open.xml", cs.xml_doc(OPEN_ROWS))
         incoming = cs.write_exact(folder / "incoming.xml", cs.xml_doc(INCOMING_ROWS))
         self.win._load(path)
-        _, incoming_entries, *_ = xte.parse_file(incoming)
-        diff = xte.compute_merge_diff(self.win.entries, incoming_entries)
+        _, incoming_entries, *_ = jte.parse_file(incoming)
+        diff = jte.compute_merge_diff(self.win.entries, incoming_entries)
         additions = diff.additions if accept_addition else []
         resolutions = [inc if keep_incoming else op for op, inc in diff.conflicts]
         deletions = diff.deletions if delete else []
@@ -163,16 +163,16 @@ class FileMergeTests(unittest.TestCase):
 
     def test_keep_incoming_writes_the_incoming_text(self):
         path = self._merge(accept_addition=False, keep_incoming=True, delete=False)
-        self.assertEqual(xte.parse_file(path)[1][1].text, "Atsaukt")
+        self.assertEqual(jte.parse_file(path)[1][1].text, "Atsaukt")
 
     def test_keep_open_keeps_the_open_text(self):
         path = self._merge(accept_addition=False, keep_incoming=False, delete=False)
-        self.assertEqual(xte.parse_file(path)[1][1].text, "Atcelt")
+        self.assertEqual(jte.parse_file(path)[1][1].text, "Atcelt")
 
     def test_merging_the_same_file_again_adds_nothing(self):
         path = self._merge(accept_addition=True, keep_incoming=False, delete=False)
-        _, incoming_entries, *_ = xte.parse_file(path.parent / "incoming.xml")
-        diff = xte.compute_merge_diff(self.win.entries, incoming_entries)
+        _, incoming_entries, *_ = jte.parse_file(path.parent / "incoming.xml")
+        diff = jte.compute_merge_diff(self.win.entries, incoming_entries)
         self.win._apply_merge_diff(diff, diff.additions, [op for op, _ in diff.conflicts], [], 0, [])
         self.win._write(path)
         cs.assert_xml_intact(self, path, ["Save", "Cancel", "Old", "New"])
@@ -181,8 +181,8 @@ class FileMergeTests(unittest.TestCase):
         text = cs.xml_doc(OPEN_ROWS)
         path = cs.write_exact(cs.temp_dir() / "open.xml", text)
         self.win._load(path)
-        _, same_entries, *_ = xte.parse_file(path)
-        diff = xte.compute_merge_diff(self.win.entries, same_entries)
+        _, same_entries, *_ = jte.parse_file(path)
+        diff = jte.compute_merge_diff(self.win.entries, same_entries)
         self.win._apply_merge_diff(diff, diff.additions, [op for op, _ in diff.conflicts],
                                    diff.deletions, 0, [])
         self.win._write(path)

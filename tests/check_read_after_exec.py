@@ -33,7 +33,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QDialog
 from shiboken6 import isValid
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 
 def check(failures, label, ok, detail=""):
@@ -42,7 +42,7 @@ def check(failures, label, ok, detail=""):
 
 
 def _e(name, text):
-    return xte.StringEntry(name, "x", "Review", "", "false", text)
+    return jte.StringEntry(name, "x", "Review", "", "false", text)
 
 
 def _exec_then(dlg, before_accept):
@@ -58,7 +58,7 @@ def check_merge(failures, win):
     addition, kept_addition = _e("Add", "Pievieno"), _e("Keep add", "Paliek")
     conflict = (_e("A", "a"), _e("A", "b"))
     deletion = _e("Del", "Dzēst")
-    dlg = xte.MergeConflictDialog([addition, kept_addition], [conflict], [deletion], parent=win)
+    dlg = jte.MergeConflictDialog([addition, kept_addition], [conflict], [deletion], parent=win)
 
     def choose(d):
         d._addition_combos[0].setCurrentText("Reject")
@@ -81,7 +81,7 @@ def check_merge(failures, win):
 
 def check_restore(failures, win):
     for ticked in (True, False):
-        dlg = xte.RestoreFromBackupDialog(SCRATCH, parent=win)
+        dlg = jte.RestoreFromBackupDialog(SCRATCH, parent=win)
         result = _exec_then(dlg, lambda d: d._restore_glossary_chk.setChecked(ticked))
         check(failures, f"restore ({ticked}): accepted", result == QDialog.Accepted, str(result))
         check(failures, f"restore ({ticked}): dialog deleted after exec()", not isValid(dlg))
@@ -97,9 +97,9 @@ def main():
     app.setStyle("Fusion")
     failures = []
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
-    win = xte.MainWindow()
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
+    win = jte.MainWindow()
     win.settings.data.setdefault("backup", {})["enabled"] = False
     win.show()
     app.processEvents()

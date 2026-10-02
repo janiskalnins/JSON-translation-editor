@@ -1,6 +1,6 @@
 """
-XML Translation Editor
-A PySide6 desktop app for viewing, filtering, and editing XML translation files.
+JSON Translation Editor
+A PySide6 desktop app for viewing, filtering, and editing JSON translation files.
 """
 
 import sys
@@ -63,14 +63,15 @@ from PySide6.QtCore import (
 #  CONSTANTS
 # ══════════════════════════════════════════════════════════════
 
-SETTINGS_FILE = Path("translation_editor_settings.json")
+SETTINGS_FILE = Path("json_translation_editor_settings.json")
 STATUSES = ["New", "Review", "Complete"]
 
 _ERROR_LOG_FILE = Path("error_log.txt")
 
 SETTINGS_BACKUP_MAX = 10   # daily snapshots kept in the settings archive
 
-APP_VERSION = "39"   # plain integer, matches the GitHub release tag scheme (v24, v25, ... vNN) -- bump manually before tagging a release
+APP_VERSION = "1"    # plain integer, matches the GitHub release tag scheme (v1, v2, ...) -- bump manually before tagging a release
+APP_NAME = "JSON Translation Editor"
 
 
 def _resource_path(*parts: str) -> Path:
@@ -625,7 +626,7 @@ def _glyph_cache_dir() -> Path:
     base = QStandardPaths.writableLocation(QStandardPaths.GenericCacheLocation)
     if not base:
         raise OSError("no per-user cache location")
-    return Path(base) / "XMLTranslationEditor" / "glyphs"
+    return Path(base) / "JSONTranslationEditor" / "glyphs"
 
 
 def _encode_png(image: QImage) -> bytes:
@@ -5809,7 +5810,7 @@ class StatusDelegate(QStyledItemDelegate):
 #  BACKUP & RESTORE HELPERS
 # ══════════════════════════════════════════════════════════════
 
-BACKUP_DIR_NAME = "XML_Translation_file_Backups"
+BACKUP_DIR_NAME = "JSON_Translation_file_Backups"
 # Info-bar message prefixes per backup location; the names match the Restore dialog's Location column.
 _BACKUP_LOCATION_LABELS = {"next_to_file": "Backup next to file", "root": "Backup in root"}
 
@@ -6797,7 +6798,7 @@ class AutosaveBackupDialog(QDialog):
         self._bk_restore_glossary.setProperty("filterChk", True)
         bk_lay.addWidget(self._bk_restore_glossary, 5, 0, 1, 3)
         self._bk_note = QLabel(
-            "Location:  XML_Translation_file_Backups / <filename> / <date-time> /\n"
+            "Location:  JSON_Translation_file_Backups / <filename> / <date-time> /\n"
             "Root: next to the app, or next to the file (or both) — see dropdown above.")
         bk_lay.addWidget(self._bk_note, 6, 0, 1, 3)
         layout.addWidget(bk_grp)
@@ -8298,7 +8299,7 @@ class WelcomeScreen(QWidget):
         outer.addWidget(logo_lbl)
         outer.addSpacing(12)
 
-        name_lbl = QLabel("XML Translation Editor")
+        name_lbl = QLabel(APP_NAME)
         name_lbl.setObjectName("welcomeNameLbl")
         name_lbl.setAlignment(Qt.AlignCenter)
         outer.addWidget(name_lbl)
@@ -9034,7 +9035,7 @@ class MainWindow(QMainWindow):
 
         Layout per enabled location::
 
-            <location_root>/XML_Translation_file_Backups/
+            <location_root>/JSON_Translation_file_Backups/
                 <stem>[__v<version>]/
                     2025-03-05_14-30-00/
                         Latvian.xml.gz
@@ -9088,7 +9089,7 @@ class MainWindow(QMainWindow):
                 self._show_message(text, 5000 if level == "info" else 6000, level)
 
     def _remember_next_to_file_backup_dir(self, root_dir: Path) -> None:
-        """Record *root_dir* (a resolved '<folder>/XML_Translation_file_Backups'
+        """Record *root_dir* (a resolved '<folder>/JSON_Translation_file_Backups'
         path) in backup.known_next_to_file_dirs so RestoreFromBackupDialog can
         discover it later, even when no file from that folder is currently
         open. Writes back only when the folder isn't already known, to avoid
@@ -9981,7 +9982,7 @@ class MainWindow(QMainWindow):
     def _update_title(self):
         name = self.current_file.name if self.current_file else "No file"
         mod  = " ●" if self.is_modified else ""
-        self.setWindowTitle(f"XML Translation Editor v{APP_VERSION} — {name}{mod}")
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} — {name}{mod}")
         if self.is_modified:
             self._mod_kind = "modified"
             self._mod_text = "Unsaved changes"
@@ -10071,12 +10072,12 @@ def main():
         # taskbar shows the generic Python icon even after setWindowIcon() below.
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("XMLTranslationEditor")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JSONTranslationEditor")
         except Exception:
             pass
 
     app = QApplication(sys.argv)
-    app.setApplicationName("XML Translation Editor")
+    app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
 
     if APP_ICON_PATH.exists():

@@ -15,13 +15,13 @@ from pathlib import Path
 from typing import Callable, List, Tuple
 from unittest import mock
 
-xte = cs.xte
+jte = cs.jte
 
 
 def _parse(text: str, name: str = "file.xml") -> Tuple[Path, List[str], list]:
     """Write *text* byte for byte into a fresh folder and parse it: (path, segments, entries)."""
     path = cs.write_exact(cs.temp_dir() / name, text)
-    segments, entries, *_ = xte.parse_file(path)
+    segments, entries, *_ = jte.parse_file(path)
     return path, segments, entries
 
 
@@ -30,7 +30,7 @@ def _save(text: str, edit: Callable[[list], None] = lambda entries: None,
     """Parse *text*, apply *edit* to the entries, save; returns the saved file's path."""
     path, segments, entries = _parse(text, name)
     edit(entries)
-    xte.save_file(path, segments, entries)
+    jte.save_file(path, segments, entries)
     return path
 
 
@@ -50,7 +50,7 @@ BARE_ROW = '    <string name="M">m</string>\n'
 class ParseTests(unittest.TestCase):
     def test_row_values_are_read(self):
         _, _, entries = _parse(cs.xml_doc([SAVE_ROW]))
-        expected = xte.StringEntry("Save", "Jane", "Review", cs.DEFAULT_DATE, "true", "Saglabāt",
+        expected = jte.StringEntry("Save", "Jane", "Review", cs.DEFAULT_DATE, "true", "Saglabāt",
                                    seg_idx=1)
         self.assertEqual(entries[0], expected)
 
@@ -64,7 +64,7 @@ class ParseTests(unittest.TestCase):
 
     def test_header_values_are_read(self):
         path = cs.write_exact(cs.temp_dir() / "file.xml", cs.xml_doc([SAVE_ROW]))
-        _, _, culture, language, version = xte.parse_file(path)
+        _, _, culture, language, version = jte.parse_file(path)
         self.assertEqual((culture, language, version), ("lv-LV", "Latviešu", "4.1.1140"))
 
     def test_entities_are_unescaped_in_the_name(self):
@@ -117,15 +117,15 @@ class EscapingTests(unittest.TestCase):
         for text in ("</string>", '<string name="x">', "]]>", "<![CDATA[x]]>"):
             with self.subTest(text=text):
                 path = _save(cs.xml_doc([SAVE_ROW]), _set(0, text=text))
-                self.assertEqual(xte.parse_file(path)[1][0].text, text)
+                self.assertEqual(jte.parse_file(path)[1][0].text, text)
 
 
 class HeaderTests(unittest.TestCase):
     def test_header_edit_survives_save_and_reopen(self):
         path, segments, entries = _parse(cs.xml_doc([SAVE_ROW]))
-        segments[0] = xte.build_header_xml(segments[0], "Latviešu 2", "4.2.7")
-        xte.save_file(path, segments, entries)
-        self.assertEqual(xte.parse_xml_header(path), ("lv-LV", "Latviešu 2", "4.2.7"))
+        segments[0] = jte.build_header_xml(segments[0], "Latviešu 2", "4.2.7")
+        jte.save_file(path, segments, entries)
+        self.assertEqual(jte.parse_xml_header(path), ("lv-LV", "Latviešu 2", "4.2.7"))
 
 
 
@@ -193,7 +193,7 @@ class CorruptionTests(unittest.TestCase):
                                   ("modify_date", cs.DEFAULT_DATE), ("istablet", "true")):
             with self.subTest(field=field_name):
                 path = _save(cs.xml_doc([BARE_ROW]), _set(0, **{field_name: value}))
-                self.assertEqual(getattr(xte.parse_file(path)[1][0], field_name), value)
+                self.assertEqual(getattr(jte.parse_file(path)[1][0], field_name), value)
 
     def test_missing_attribute_stays_missing_when_its_value_is_the_default(self):
         path = _save(cs.xml_doc([BARE_ROW]), _set(0, text="n"))
@@ -240,22 +240,22 @@ class LineEndingTests(unittest.TestCase):
     def test_second_save_is_byte_identical_to_the_first(self):
         path = _save(cs.xml_doc(MULTI_ROWS), _set(0, text="Jauns"))
         first = path.read_bytes()
-        segments, entries, *_ = xte.parse_file(path)
-        xte.save_file(path, segments, entries)
+        segments, entries, *_ = jte.parse_file(path)
+        jte.save_file(path, segments, entries)
         self.assertEqual(path.read_bytes(), first)
 
     def test_merge_addition_in_a_crlf_file_is_written_with_crlf(self):
         path, segments, entries = _parse(cs.xml_doc(MULTI_ROWS, newline="\r\n"))
-        new_segments, new_entries = xte.insert_additions(
+        new_segments, new_entries = jte.insert_additions(
             segments, entries, [cs.make_entry(name="New", text="Jauns\nteksts")])
-        xte.save_file(path, new_segments, new_entries)
+        jte.save_file(path, new_segments, new_entries)
         self.assertNotIn(b"\n", path.read_bytes().replace(b"\r\n", b""))
 
     def test_merge_addition_in_an_lf_file_is_written_with_lf(self):
         path, segments, entries = _parse(cs.xml_doc(MULTI_ROWS))
-        new_segments, new_entries = xte.insert_additions(
+        new_segments, new_entries = jte.insert_additions(
             segments, entries, [cs.make_entry(name="New", text="Jauns")])
-        xte.save_file(path, new_segments, new_entries)
+        jte.save_file(path, new_segments, new_entries)
         self.assertNotIn(b"\r", path.read_bytes())
 
 
@@ -285,7 +285,7 @@ class UnchangedRowTests(unittest.TestCase):
         old_line = next(line for line in original.splitlines() if segments[entry.seg_idx] in line)
         new_line = old_line.replace(f">{entry.text}</string>", ">Jauns teksts</string>")
         entry.text = "Jauns teksts"
-        xte.save_file(path, segments, entries)
+        jte.save_file(path, segments, entries)
         changed = [line for line in difflib.ndiff(original.splitlines(),
                                                   path.read_bytes().decode("utf-8").splitlines())
                    if line.startswith(("- ", "+ "))]
@@ -306,7 +306,7 @@ class UnchangedRowTests(unittest.TestCase):
 
     def test_edited_cdata_row_reads_back_the_new_value(self):
         path = _save(cs.xml_doc([CDATA_ROW]), _set(0, text="new & <v>"))
-        self.assertEqual(xte.parse_file(path)[1][0].text, "new & <v>")
+        self.assertEqual(jte.parse_file(path)[1][0].text, "new & <v>")
 
 
 
@@ -318,7 +318,7 @@ class AtomicSaveTests(unittest.TestCase):
         entries[0].text = "Changed"
         with mock.patch.object(os, "replace", side_effect=OSError("locked")):
             try:
-                xte.save_file(path, segments, entries)
+                jte.save_file(path, segments, entries)
             except OSError as error:
                 return path, text, error
         return path, text, None
@@ -350,20 +350,20 @@ class RemoveEntrySegmentTests(unittest.TestCase):
             for newline in ("\n", "\r\n"):
                 with self.subTest(index=index, newline=repr(newline)):
                     _, segments, entries = _parse(cs.xml_doc(THREE_ROWS, newline=newline))
-                    xte._remove_entry_segment(segments, entries[index].seg_idx)
+                    jte._remove_entry_segment(segments, entries[index].seg_idx)
                     remaining = THREE_ROWS[:index] + THREE_ROWS[index + 1:]
                     self.assertEqual("".join(segments), cs.xml_doc(remaining, newline=newline))
 
     def test_removing_two_adjacent_rows_leaves_no_blank_line(self):
         _, segments, entries = _parse(cs.xml_doc(THREE_ROWS))
-        xte._remove_entry_segment(segments, entries[0].seg_idx)
-        xte._remove_entry_segment(segments, entries[1].seg_idx)
+        jte._remove_entry_segment(segments, entries[0].seg_idx)
+        jte._remove_entry_segment(segments, entries[1].seg_idx)
         self.assertEqual("".join(segments), cs.xml_doc(THREE_ROWS[2:]))
 
     def test_other_rows_keep_their_seg_idx(self):
         _, segments, entries = _parse(cs.xml_doc(THREE_ROWS))
-        xte._remove_entry_segment(segments, entries[1].seg_idx)
-        self.assertEqual(xte._get_attr(segments[entries[2].seg_idx], "name"), "Open")
+        jte._remove_entry_segment(segments, entries[1].seg_idx)
+        self.assertEqual(jte._get_attr(segments[entries[2].seg_idx], "name"), "Open")
 
 
 if __name__ == "__main__":

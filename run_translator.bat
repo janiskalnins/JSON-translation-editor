@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================================
-::  XML Translation Editor -- Hardened Launcher
+::  JSON Translation Editor -- Hardened Launcher
 ::  Version 2.1 -- Safe to double-click on any Windows 7/8/10/11 machine.
 ::
 ::  Fallback chain:
@@ -28,12 +28,12 @@
 :: ============================================================================
 
 setlocal EnableDelayedExpansion
-title XML Translation Editor
+title JSON Translation Editor
 
 :: -- Resolve script directory (trailing backslash included) -------------------
 set "LAUNCH_DIR=%~dp0"
 set "PS1=%LAUNCH_DIR%run_translator.ps1"
-set "APP=%LAUNCH_DIR%xml_translation_editor.py"
+set "APP=%LAUNCH_DIR%json_translation_editor.py"
 set "CACHE_JSON=%LAUNCH_DIR%launcher_cache.json"
 set "CACHE_DATA=%LAUNCH_DIR%bat_launcher_cache.txt"
 set "ASCII_ART=%LAUNCH_DIR%Resources\xml_translation_editor_ascii.txt"
@@ -56,7 +56,7 @@ type "%ASCII_ART%"
 echo.
 :skip_banner
 echo   +--------------------------------------------------+
-echo   ^|       XML Translation Editor Launcher           ^|
+echo   ^|       JSON Translation Editor Launcher          ^|
 echo   +--------------------------------------------------+
 echo.
 echo   !! Do not close this window while the app is running !!
@@ -69,7 +69,7 @@ if not exist "%APP%" (
     echo          %APP%
     echo.
     echo          Make sure run_translator.bat is in the same folder as
-    echo          xml_translation_editor.py
+    echo          json_translation_editor.py
     goto :fatal
 )
 echo   [ OK ] Application file found.
@@ -385,7 +385,7 @@ goto :launch
 echo   [ OK ] Claude CLI is available.
 
 :launch
-echo   [ OK ] Starting XML Translation Editor...
+echo   [ OK ] Starting JSON Translation Editor...
 echo.
 echo   +-------------------------------------------------+
 echo   ^|  App is running.  Do NOT close this window.   ^|
@@ -481,7 +481,7 @@ goto :fatal
 :fatal
 echo.
 echo   If problems persist, open a Command Prompt in this folder and run:
-echo     python xml_translation_editor.py
+echo     python json_translation_editor.py
 echo.
 set "ERRCODE=1"
 

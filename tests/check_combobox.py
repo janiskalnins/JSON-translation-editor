@@ -50,7 +50,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QApplication, QComboBox, QDateEdit, QFontComboBox, QStyle,
                                QStyleOptionComboBox)
 
-import xml_translation_editor as xte
+import json_translation_editor as jte
 
 FONT_PTS = (8, 10, 14)
 REAL_FONT_PTS = (10, 14)  # the default, and the size where the filter bar's fixed widths get tight
@@ -121,7 +121,7 @@ def _glyph(widget):
 
 def _arrow_failures(widget, theme, where):
     """Failures for the arrow of one shown widget, judged by its current enabled state."""
-    t = xte.THEMES[theme]
+    t = jte.THEMES[theme]
     width, height, color, fill = _glyph(widget)
     if width < MIN_GLYPH_WIDTH or height < MIN_GLYPH_HEIGHT:
         return [f"{theme} {where}: arrow is {width}x{height}px, "
@@ -141,7 +141,7 @@ def _arrow_failures(widget, theme, where):
 def _popup_failures(app, combo, theme, pt, where):
     """The popup is a list: a selected row is filled with the selection colour, and rows are tall
     enough to click comfortably. Under Fusion's menu-style popup neither holds."""
-    t = xte.THEMES[theme]
+    t = jte.THEMES[theme]
     combo.showPopup()
     _pump(app)
     view = combo.view()
@@ -188,8 +188,8 @@ def _date_edit():
 
 
 def _themed(app, widget, theme, pt, with_helper):
-    t = xte.THEMES[theme]
-    qss = BASE_RULES.format(**t) + (xte._combobox_qss(t, pt) if with_helper else "")
+    t = jte.THEMES[theme]
+    qss = BASE_RULES.format(**t) + (jte._combobox_qss(t, pt) if with_helper else "")
     widget.setStyleSheet(qss)
     widget.show()
     _pump(app)
@@ -198,7 +198,7 @@ def _themed(app, widget, theme, pt, with_helper):
 
 def check_helper(app):
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in FONT_PTS:
             for kind, make in (("combo", QComboBox), ("date edit", _date_edit)):
                 widget = _themed(app, make(), theme, pt, with_helper=True)
@@ -209,13 +209,13 @@ def check_helper(app):
                 failures += _arrow_failures(widget, theme, f"{where} (disabled)")
                 widget.close()
             # Narrower than its longest item, so a popup that is only as wide as the combo elides it.
-            combo = _themed(app, xte._WidePopupComboBox(), theme, pt, with_helper=True)
+            combo = _themed(app, jte._WidePopupComboBox(), theme, pt, with_helper=True)
             combo.addItems(["Alpha", "Beta", "Gamma", "A considerably longer item than the combo"])
             combo.setFixedWidth(90)
             failures += _popup_failures(app, combo, theme, pt, f"{pt}pt popup")
             combo.close()
             # More rows than fit: the popup's scrollbar then takes width from the items.
-            many = _themed(app, xte._WidePopupComboBox(), theme, pt, with_helper=True)
+            many = _themed(app, jte._WidePopupComboBox(), theme, pt, with_helper=True)
             many.addItems([f"Item number {n} with a long label" for n in range(many.maxVisibleItems() + 5)])
             many.setFixedWidth(90)
             failures += _popup_failures(app, many, theme, pt, f"{pt}pt popup with a scrollbar")
@@ -234,7 +234,7 @@ def check_size_unchanged(app):
     """The helper must neither make a control taller nor take text room from it: the Backup
     location combo and the filter bar's date pickers are fixed-width and already tight."""
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in FONT_PTS:
             for kind, make in (("combo", QComboBox), ("date edit", _date_edit)):
                 plain = _themed(app, make(), theme, pt, with_helper=False)
@@ -254,7 +254,7 @@ def check_size_unchanged(app):
 
 
 def _window(app, theme, pt):
-    win = xte.MainWindow()
+    win = jte.MainWindow()
     win.settings.data["font_size"] = pt
     win.settings.set("theme", theme)
     win._apply_palette()
@@ -273,7 +273,7 @@ def _window(app, theme, pt):
 def _surfaces(win):
     """(name, widget, dialog to close afterwards or None) for every real drop-down in the app. A
     dialog rides on its last widget: closing deletes it (WA_DeleteOnClose), and with it the rest."""
-    E = xte.StringEntry
+    E = jte.StringEntry
     adds = [E("Add one", "Jane", "New", "01.01.2026", "false", "Pievienot")]
     confs = [(E("Conflict src", "A", "Review", "01.01.2025", "false", "Vecais"),
               E("Conflict src", "B", "Complete", "02.02.2026", "false", "Jaunais"))]
@@ -285,25 +285,25 @@ def _surfaces(win):
     yield "filter bar tablet combo", fp.tablet_combo, None
     yield "filter bar date from", fp.date_from, None
     yield "filter bar date to", fp.date_to, None
-    font = xte.FontSettingsDialog(win.settings.get_font(), parent=win)
+    font = jte.FontSettingsDialog(win.settings.get_font(), parent=win)
     font.show()
     yield "Choose UI Font family", font._family_combo, font
-    backup = xte.AutosaveBackupDialog(win.settings, parent=win)
+    backup = jte.AutosaveBackupDialog(win.settings, parent=win)
     backup.show()
     yield "Autosave & Backup location", backup._bk_location_combo, backup
-    transl = xte.TranslationSettingsDialog(win.settings, parent=win)
+    transl = jte.TranslationSettingsDialog(win.settings, parent=win)
     transl.show()
     yield "Translation Settings engine", transl._engine_combo, None
     transl._engine_combo.setCurrentIndex(transl._engine_combo.findData("claude"))
     yield "Translation Settings Claude model", transl._claude_model, None
     transl._engine_combo.setCurrentIndex(transl._engine_combo.findData("claude_subscription"))
     yield "Translation Settings subscription model", transl._claude_sub_model, transl
-    merge = xte.MergeConflictDialog(adds, confs, dels, parent=win)
+    merge = jte.MergeConflictDialog(adds, confs, dels, parent=win)
     merge.show()
     yield "Merge addition row", merge._addition_combos[0], None
     yield "Merge conflict row", merge._conflict_combos[0], None
     yield "Merge deletion row", merge._deletion_combos[0], merge
-    edit = xte.EditDialog(win.model, 0, win.settings.get_font(),
+    edit = jte.EditDialog(win.model, 0, win.settings.get_font(),
                           shortcuts=win.settings.get("shortcuts", {}),
                           target_culture=win.target_culture,
                           transl_cfg=win.settings.get("translation", {}), parent=win)
@@ -314,7 +314,7 @@ def _surfaces(win):
 
 def check_real_surfaces(app):
     failures = []
-    for theme in xte.THEMES:
+    for theme in jte.THEMES:
         for pt in REAL_FONT_PTS:
             win = _window(app, theme, pt)
             try:
@@ -327,7 +327,7 @@ def check_real_surfaces(app):
                         failures += _popup_failures(app, widget, theme, pt, f"{where} popup")
                     if dialog is not None:
                         dialog.close()
-                backup = xte.AutosaveBackupDialog(win.settings, parent=win)
+                backup = jte.AutosaveBackupDialog(win.settings, parent=win)
                 backup.show()
                 backup._bk_enable.setChecked(False)
                 _pump(app)
@@ -345,21 +345,21 @@ def check_real_surfaces(app):
 
 @contextmanager
 def _patched(name, value):
-    real = getattr(xte, name)
-    setattr(xte, name, value)
+    real = getattr(jte, name)
+    setattr(jte, name, value)
     try:
         yield
     finally:
-        setattr(xte, name, real)
+        setattr(jte, name, real)
 
 
 def check_unwritable_folder_falls_back():
     failures = []
     with tempfile.NamedTemporaryFile() as blocker:
         with _patched("_glyph_cache_dir", lambda: Path(blocker.name) / "glyphs"):  # parent is a file
-            for theme, t in xte.THEMES.items():
+            for theme, t in jte.THEMES.items():
                 try:
-                    qss = xte._combobox_qss(t, 10)
+                    qss = jte._combobox_qss(t, 10)
                 except Exception as e:
                     failures.append(f"{theme}: {type(e).__name__} escaped _combobox_qss")
                     continue
@@ -374,8 +374,8 @@ def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")     # what main() does
     # The startup modals block forever with nobody to click them (see the offscreen-smoke-test pitfall).
-    xte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
-    xte.TranslatorNameDialog.exec = lambda self: 0
+    jte.QMessageBox.warning = staticmethod(lambda *a, **k: 0)
+    jte.TranslatorNameDialog.exec = lambda self: 0
     failures = []
     with tempfile.TemporaryDirectory() as glyphs:
         with _patched("_glyph_cache_dir", lambda: Path(glyphs)):

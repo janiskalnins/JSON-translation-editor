@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Tuple
 
-xte = cs.xte
+jte = cs.jte
 
 RAW = cs.xml_doc([cs.row("Save", "Saglabāt")]).encode("utf-8")
 KEY = "Latvian__v4.1.1140"
@@ -28,28 +28,28 @@ class SanitizeTests(unittest.TestCase):
         cases = {"a<b>:c": "a_b__c", "CON": "_CON", "///": "_", "4.1.": "4.1", "x" * 100: "x" * 60}
         for value, expected in cases.items():
             with self.subTest(value=value):
-                self.assertEqual(xte._sanitize_path_component(value), expected)
+                self.assertEqual(jte._sanitize_path_component(value), expected)
 
 
 class AtomicWriteTests(unittest.TestCase):
     def test_atomic_write_replaces_the_content(self):
         path = cs.write_exact(cs.temp_dir() / "f.bin", b"old")
-        xte._atomic_write_bytes(path, b"new")
+        jte._atomic_write_bytes(path, b"new")
         self.assertEqual(path.read_bytes(), b"new")
 
     def test_atomic_write_leaves_no_temp_file(self):
         path = cs.temp_dir() / "f.bin"
-        xte._atomic_write_bytes(path, b"new")
+        jte._atomic_write_bytes(path, b"new")
         self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["f.bin"])
 
 
 def _write_slot(root: Path, ts: str = "2025-01-01_00-00-00", compress: bool = True,
                 glossary: bytes = None, max_count: int = 5) -> Path:
     source = root.parent / "Latvian.xml"
-    return xte._write_backup_slot(
+    return jte._write_backup_slot(
         root_dir=root, location_id="root", backup_key=KEY, ts=ts, source_path=source,
         raw_bytes=RAW, md5=hashlib.md5(RAW).hexdigest(),
-        glossary_source=xte.glossary_path_for(source) if glossary is not None else None,
+        glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
         glossary_bytes=glossary,
         glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
         compress=compress, max_count=max_count, trigger="file_open", culture="lv-LV",
@@ -103,16 +103,16 @@ class SlotAgeTests(unittest.TestCase):
         root = cs.temp_dir()
         (root / KEY / "notes").mkdir(parents=True)
         (root / KEY / ((datetime.now() - timedelta(seconds=120)).strftime(STAMP) + "_001")).mkdir()
-        age = xte._newest_slot_age_seconds(root, KEY)
+        age = jte._newest_slot_age_seconds(root, KEY)
         self.assertTrue(110 <= age < 300, age)
 
     def test_junk_folders_only_give_none(self):
         root = cs.temp_dir()
         (root / KEY / "notes").mkdir(parents=True)
-        self.assertIsNone(xte._newest_slot_age_seconds(root, KEY))
+        self.assertIsNone(jte._newest_slot_age_seconds(root, KEY))
 
     def test_missing_key_folder_gives_none(self):
-        self.assertIsNone(xte._newest_slot_age_seconds(cs.temp_dir(), KEY))
+        self.assertIsNone(jte._newest_slot_age_seconds(cs.temp_dir(), KEY))
 
 
 class BackupRun:
@@ -124,12 +124,12 @@ class BackupRun:
         self.docs.mkdir()
         self.source = cs.write_exact(self.docs / "Latvian.xml", RAW)
         self.app_dir = folder / "app"
-        self.next_to_file = self.docs / xte.BACKUP_DIR_NAME
-        self.root = self.app_dir / xte.BACKUP_DIR_NAME
+        self.next_to_file = self.docs / jte.BACKUP_DIR_NAME
+        self.root = self.app_dir / jte.BACKUP_DIR_NAME
 
     def run(self, trigger: str = "file_open", **cfg) -> Tuple[List[Tuple[str, str]], object]:
         got = []
-        thread = xte.BackupThread(self.source, trigger, dict(cfg), self.app_dir)
+        thread = jte.BackupThread(self.source, trigger, dict(cfg), self.app_dir)
         thread.finished.connect(lambda notices, root: got.append((notices, root)))
         thread.run()
         return got[0]
