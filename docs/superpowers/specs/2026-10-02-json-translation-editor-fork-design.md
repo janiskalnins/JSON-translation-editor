@@ -59,7 +59,8 @@ indent, non-ASCII written literally, trailing newline. Each is byte-identical to
 - **Repo files**: `.gitignore` merges the XML repo's entries (settings, archives, `.corrupt*`,
   `.tmp`, backups, `Tools/`, `tests/reports/`, `tests/data/real/*` except its README) and adds
   `*.json.meta.corrupt-*`. `.gitattributes` keeps `* text=auto` and adds `tests/hooks/* text eol=lf`.
-- The four language files at the root are the user's; the fork never commits them. The frozen
+- The four language files at the root are the user's (committed by them in `0d5d20e`); the fork
+  never commits a change to them or a sidecar beside them. The frozen
   test copies go to `tests/data/` (`es.json` plus a short drifted file built for the Sync Keys
   tests).
 
@@ -220,4 +221,4 @@ but found a data problem, `info` otherwise.
 ## Out of scope
 
 Pairing renamed keys automatically; nested JSON or non-string values; a different icon; importing
-the XML repo's history; committing the user's language files.
+the XML repo's history; changing the user's language files.

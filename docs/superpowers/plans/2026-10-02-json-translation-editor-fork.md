@@ -19,7 +19,7 @@
 - Sidecar: `<name>.json.meta`, `format` 1, keys `language`, `language_name`, `version`, `entries`; entry fields `status`, `translator`, `modified` (ISO `YYYY-MM-DD`); only entries with non-default metadata listed; `indent=1`, `ensure_ascii=False`, LF, trailing newline.
 - Language file: refuse invalid JSON / non-object / non-string value / duplicate key; write back in the detected style; unchanged round-tripping file saves byte-identical.
 - First open without a sidecar: every entry `New`.
-- Never commit the user's language files at the repo root (`es.json`, `id.json`, `it.json`, `pt-BR.json`) or their sidecars.
+- The language files at the repo root (`es.json`, `id.json`, `it.json`, `pt-BR.json`) are the user's, committed by them in `0d5d20e`. Never commit a change to them, and never commit a sidecar (`*.json.meta`) at the root; restore them (`git checkout -- <file>`, delete the `.meta`) after any manual run.
 - The pre-commit hook (`tests/hooks/pre-commit`) runs every check before a commit that touches the app or `tests/`; a red suite blocks the commit. Never use `--no-verify`. Every task ends green.
 - Launchers/build scripts: pure ASCII; `.ps1` saved UTF-8 with BOM, `.bat` CRLF (CLAUDE.md "Encoding rules").
 - Test style (`.claude/rules/testing.md`): one assertion per test, input tables through `subTest`, Arrange-Act-Assert, names describe behaviour. Core checks import `core_support as cs` first and end with `sys.exit(cs.run_suite(sys.modules[__name__]))`.
@@ -107,18 +107,14 @@ python tests/run_all.py
 ```
 Expected: last lines `N passed, 0 failed (...)` and `Report: tests/reports/...`. A failure here is an environment problem (missing PySide6, deep-translator, claude-agent-sdk): report it, do not edit code.
 
-- [ ] **Step 7: Confirm the user's files stay out**
+- [ ] **Step 7: Confirm the user's files are untouched, then stage**
 
 ```bash
-git status --short | grep -E '^\?\? (es|id|it|pt-BR)\.json$'
-```
-Expected: the four language files listed as untracked. Stage everything except them:
-```bash
+git diff --quiet -- es.json id.json it.json pt-BR.json; echo "exit=$?"
 git add -A
-git reset -q -- es.json id.json it.json pt-BR.json
-git status --short | grep -E '(es|id|it|pt-BR)\.json' ; echo "exit=$?"
+git diff --cached --name-only | grep -E '^(es|id|it|pt-BR)\.json$' ; echo "exit=$?"
 ```
-Expected: the four show as `??` (not staged).
+Expected: `exit=0`, then nothing listed and `exit=1` (the copy did not touch the user's language files; the XML repo has none).
 
 - [ ] **Step 8: Commit**
 
@@ -236,7 +232,7 @@ Expected: `N passed, 0 failed`, the new title check included.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add -A && git reset -q -- es.json id.json it.json pt-BR.json
+git add -A
 git commit -F - <<'EOF'
 refactor: rename the fork to JSON Translation Editor v1
 
@@ -315,7 +311,7 @@ Expected: `N passed, 0 failed`; `grep -n -i tablet json_translation_editor.py` l
 - [ ] **Step 7: Commit**
 
 ```bash
-git add -A && git reset -q -- es.json id.json it.json pt-BR.json
+git add -A
 git commit -F - <<'EOF'
 refactor: drop the Is tablet column, filter, toggle and fact
 
@@ -1552,12 +1548,12 @@ Expected: `N passed, 0 failed`. Fix failures by finding the XML assumption the f
 
 - [ ] **Step 13: Smoke-test the real app**
 
-Run: `python json_translation_editor.py es.json` (the root file, untracked). Check: 2460 strings load, every status New, the info bar shows `es` at the right, the `#` column counts from 1. Edit one entry, Save, then `git diff --no-index tests/data/es.json es.json` shows exactly one changed line, and `es.json.meta` lists that one entry as Complete. Restore the root file afterwards: `cp tests/data/es.json es.json && rm es.json.meta`.
+Run: `python json_translation_editor.py es.json` (the root file, untracked). Check: 2460 strings load, every status New, the info bar shows `es` at the right, the `#` column counts from 1. Edit one entry, Save, then `git diff --no-index tests/data/es.json es.json` shows exactly one changed line, and `es.json.meta` lists that one entry as Complete. Restore the root file afterwards: `git checkout -- es.json && rm es.json.meta`.
 
 - [ ] **Step 14: Commit**
 
 ```bash
-git add -A && git reset -q -- es.json id.json it.json pt-BR.json
+git add -A
 git status --short | grep -E "\.meta$" ; echo "exit=$?"   # expect only tests/data/es.json.meta staged
 git commit -F - <<'EOF'
 feat: edit JSON language files with a .json.meta sidecar
@@ -2715,12 +2711,12 @@ Expected: `OK`, then `N passed, 0 failed`.
 
 - [ ] **Step 2: Real-file pass over the user's four files**
 
-Copy `es.json`, `id.json`, `it.json`, `pt-BR.json` into `tests/data/real/` (gitignored) and run `python tests/run_all.py core_corpus`. Expected: `PASS`, one `NOTE` per file. Delete the copies afterwards.
+Copy the user's `es.json`, `id.json`, `it.json`, `pt-BR.json` into `tests/data/real/` (gitignored) and run `python tests/run_all.py core_corpus`. Expected: `PASS`, one `NOTE` per file. Delete the copies afterwards.
 
 - [ ] **Step 3: Manual run**
 
-`python json_translation_editor.py id.json` and walk through: open `id.json` → Sync Keys from `es.json` (205 additions untranslated after their neighbours, 2 deletions defaulting to Keep) → Cancel. File → New Language… `lv` into a scratch folder → 2460 keys, all New. Edit an entry with `{name}` and drop it → amber "Missing: {name}"; Check filter → Placeholder mismatch lists it. File → Properties: change the code to `id-ID`. Do not save the user's files (Discard on close). `git status --short` shows no change to the four root files and no `.meta` files there.
+`python json_translation_editor.py id.json` and walk through: open `id.json` → Sync Keys from `es.json` (205 additions untranslated after their neighbours, 2 deletions defaulting to Keep) → Cancel. File → New Language… `lv` into a scratch folder → 2460 keys, all New. Edit an entry with `{name}` and drop it → amber "Missing: {name}"; Check filter → Placeholder mismatch lists it. File → Properties: change the code to `id-ID`. Do not save the user's files (Discard on close). `git status --short` shows no change to the four root files and no `.meta` files there (`git checkout -- <file>` and delete any `.meta` otherwise).
 
 - [ ] **Step 4: Report**
 
-Tell the user what was built, the commit list (`git log --oneline 97066ca..HEAD`), that nothing was pushed, and that the four language files remain untracked.
+Tell the user what was built, the commit list (`git log --oneline 61107f1..HEAD`), that nothing was pushed, and that the four language files are unchanged.
