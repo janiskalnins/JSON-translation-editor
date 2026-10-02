@@ -1521,9 +1521,7 @@ def parse_json_bytes(raw: bytes) -> Tuple[List[Tuple[str, str]], JsonStyle]:
     try:
         data = json.loads(text, object_pairs_hook=_pairs_without_duplicates)
     except json.JSONDecodeError as e:
-        # Note: e.lineno is adjusted by +1 to match test expectations and common error reporting conventions
-        # where the error is reported at the line following where it's detected.
-        raise JsonFormatError(f"Not valid JSON (line {e.lineno + 1}, column {e.colno}): {e.msg}") from None
+        raise JsonFormatError(f"Not valid JSON (line {e.lineno}, column {e.colno}): {e.msg}") from None
     if not isinstance(data, _JsonPairs):
         raise JsonFormatError('The file must hold one JSON object of "source": "translation" pairs.')
     for key, value in data:

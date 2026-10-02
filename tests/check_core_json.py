@@ -38,8 +38,8 @@ class ParseTests(unittest.TestCase):
 
     def test_invalid_json_names_the_line(self):
         with self.assertRaises(jte.JsonFormatError) as ctx:
-            _parse(b'{\n "a": "A",\n}')
-        self.assertIn("line 3", str(ctx.exception))
+            _parse(b'{\n "a": "A"\n "b": "B"\n}')
+        self.assertIn("(line 3,", str(ctx.exception))
 
     def test_duplicate_key_is_named(self):
         with self.assertRaises(jte.JsonFormatError) as ctx:
