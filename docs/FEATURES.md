@@ -826,8 +826,8 @@ The `.json.meta` is missing or was damaged. Check for `<name>.json.meta` beside 
 **"Metadata: … could not be read" and the statuses are not saved**
 Another program holds the `.json.meta` open. The app shows all strings as New and **does not overwrite** it, so a Save writes only the language file. Close the other program and reopen the file.
 
-**Saving says "translations saved, metadata not"**
-The language file was written but its `.json.meta` could not be (a locked file, a full disk, no permission). The file stays marked as modified; fix the cause and Save again.
+**Save or Autosave says the metadata file could not be written**  
+A manual Save shows a "Save Error" dialog: "<name> was saved, but its metadata file (<name>.json.meta) could not be written. Statuses, translators and dates are not saved yet; Save again to retry." Autosave shows the red message "Autosave: translations saved, metadata not — Save to retry". Either way the language file was written but its `.json.meta` could not be (a locked file, a full disk, no permission). The file stays marked as modified; fix the cause and Save again.
 
 **"Reformat File" appears on the first save**
 The file's layout (indent, spacing or escapes) is not one the app reproduces exactly, so saving will normalize it. Only whitespace changes, never the translations. Answer Yes once; later saves keep the new layout and ask nothing. Autosave waits until you have done this.

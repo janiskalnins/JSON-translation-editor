@@ -2743,15 +2743,6 @@ non-fatal failure (a corrupt settings file, an unreadable backup source) that
 shouldn't interrupt the user but still deserves a diagnostic trail. It never
 raises itself, so it's always safe to call from inside an `except` block.
 
-**Opening a file can set `is_modified = True` with no user action** —
-`MainWindow._load()` calls `normalize_entry_dates()` (see [Date
-normalization](#date-normalization)), which rewrites any legacy-format
-`modify_date` to canonical form in memory. If that changes at least one
-entry, `_load()` deliberately marks the file modified even though the user
-hasn't touched anything yet — this is intentional (the in-memory state
-really does differ from disk), not a stray bug to "fix" by moving the
-`is_modified = True` line or removing it.
-
 **`QThread.wait()` doesn't pump the event loop that delivers its own queued
 signal.** `MainWindow.closeEvent()` waits on each in-flight
 `self._backup_threads` entry via `t.wait(2000)`, but that alone doesn't
