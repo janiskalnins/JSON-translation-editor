@@ -45,7 +45,8 @@ class AtomicWriteTests(unittest.TestCase):
 
 
 def _write_slot(root: Path, ts: str = "2025-01-01_00-00-00", compress: bool = True,
-                glossary: bytes = None, max_count: int = 5) -> Path:
+                glossary: bytes = None, meta: bytes = None,
+                max_count: int = 5) -> Path:
     source = root.parent / "es.json"
     return jte._write_backup_slot(
         root_dir=root, location_id="root", backup_key=KEY, ts=ts, source_path=source,
@@ -53,6 +54,9 @@ def _write_slot(root: Path, ts: str = "2025-01-01_00-00-00", compress: bool = Tr
         glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
         glossary_bytes=glossary,
         glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
+        meta_source=source.parent / f"{source.name}.meta" if meta is not None else None,
+        meta_bytes=meta,
+        meta_md5=hashlib.md5(meta).hexdigest() if meta is not None else None,
         compress=compress, max_count=max_count, trigger="file_open", culture="es",
         display_language="Español", version="4.1.1140", is_fallback=False)
 
@@ -62,6 +66,19 @@ def _manifest(slot: Path) -> dict:
 
 
 class WriteSlotTests(unittest.TestCase):
+    def test_slot_holds_the_sidecar(self):
+        slot = _write_slot(cs.temp_dir() / "bk", compress=False, meta=b"{}\n")
+        self.assertEqual((slot / "es.json.meta").read_bytes(), b"{}\n")
+
+    def test_manifest_records_the_sidecar(self):
+        info = _manifest(_write_slot(cs.temp_dir() / "bk", compress=True, meta=b"{}\n"))
+        self.assertEqual((info["meta_backed_up"], info["meta_file"], info["meta_compressed"],
+                          info["meta_md5_checksum"]),
+                         (True, "es.json.meta.gz", True, hashlib.md5(b"{}\n").hexdigest()))
+
+    def test_manifest_without_a_sidecar(self):
+        self.assertFalse(_manifest(_write_slot(cs.temp_dir() / "bk"))["meta_backed_up"])
+
     def test_manifest_describes_the_slot(self):
         info = _manifest(_write_slot(cs.temp_dir() / "bk"))
         keys = ("backup_file", "compressed", "md5_checksum", "trigger", "version", "location",
@@ -158,6 +175,12 @@ def _labels(notices: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
 
 
 class BackupThreadTests(unittest.TestCase):
+    def test_thread_backs_up_the_sidecar(self):
+        b = BackupRun()
+        b.run(location_mode="root")
+        slot = b.root / KEY / b.slots(b.root)[0]
+        self.assertTrue(_manifest(slot)["meta_backed_up"])
+
     def test_both_mode_writes_a_slot_at_each_location(self):
         b = BackupRun()
         b.run(location_mode="both")

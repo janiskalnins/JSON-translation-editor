@@ -5809,6 +5809,20 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
         raise
 
 
+def _write_companion(slot_dir: Path, source: Path, data: bytes, compress: bool) -> str:
+    """Write a file that travels with the backed-up language file (sidecar, glossary) into the
+    slot, gzipped when *compress*. Returns its name in the slot."""
+    if compress:
+        buf = io.BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6) as gz:
+            gz.write(data)
+        name, payload = source.name + ".gz", buf.getvalue()
+    else:
+        name, payload = source.name, data
+    _atomic_write_bytes(slot_dir / name, payload)
+    return name
+
+
 def _write_backup_slot(
     *,
     root_dir: Path,
@@ -5828,6 +5842,9 @@ def _write_backup_slot(
     display_language: str,
     version: str,
     is_fallback: bool,
+    meta_source: Optional[Path] = None,
+    meta_bytes: Optional[bytes] = None,
+    meta_md5: Optional[str] = None,
 ) -> Optional[Path]:
     """Write one complete, self-contained backup slot at
     <root_dir>/<backup_key>/<ts>/ and prune older slots for this key beyond
@@ -5887,22 +5904,25 @@ def _write_backup_slot(
         glossary_backed_up = False
         if glossary_source is not None and glossary_bytes is not None:
             try:
-                if compress:
-                    gbuf = io.BytesIO()
-                    with gzip.GzipFile(fileobj=gbuf, mode="wb", compresslevel=6) as gz:
-                        gz.write(glossary_bytes)
-                    glossary_dest = slot_dir / (glossary_source.name + ".gz")
-                    _atomic_write_bytes(glossary_dest, gbuf.getvalue())
-                else:
-                    glossary_dest = slot_dir / glossary_source.name
-                    _atomic_write_bytes(glossary_dest, glossary_bytes)
-                info["glossary_file"]         = glossary_dest.name
+                info["glossary_file"]         = _write_companion(
+                    slot_dir, glossary_source, glossary_bytes, compress)
                 info["glossary_compressed"]   = compress
                 info["glossary_md5_checksum"] = glossary_md5
                 glossary_backed_up = True
             except Exception:
                 pass  # glossary backup is best-effort; never blocks the language file's backup
         info["glossary_backed_up"] = glossary_backed_up
+
+        meta_backed_up = False
+        if meta_source is not None and meta_bytes is not None:
+            try:
+                info["meta_file"]         = _write_companion(slot_dir, meta_source, meta_bytes, compress)
+                info["meta_compressed"]   = compress
+                info["meta_md5_checksum"] = meta_md5
+                meta_backed_up = True
+            except Exception:
+                pass  # best-effort, like the glossary: never blocks the language-file backup
+        info["meta_backed_up"] = meta_backed_up
 
         _atomic_write_bytes(
             slot_dir / "backup_info.json",
@@ -6125,6 +6145,16 @@ class BackupThread(QThread):
                 except Exception:
                     glossary_source = None  # best-effort; skip on read failure
 
+            meta_source = meta_path_for(source_path)
+            meta_bytes  = None
+            meta_md5    = None
+            if meta_source.exists():
+                try:
+                    meta_bytes = meta_source.read_bytes()
+                    meta_md5   = hashlib.md5(meta_bytes).hexdigest()
+                except Exception:
+                    meta_source = None  # best-effort; skip on read failure
+
             results: dict = {}
             next_to_file_root_ok: Optional[Path] = None
             now = datetime.now()
@@ -6146,6 +6176,7 @@ class BackupThread(QThread):
                         glossary_md5=glossary_md5, compress=compress, max_count=max_count,
                         trigger=trigger, culture=culture, display_language=display_language,
                         version=version, is_fallback=is_fallback,
+                        meta_source=meta_source, meta_bytes=meta_bytes, meta_md5=meta_md5,
                     )
 
             if location_mode in ("next_to_file", "both") and skip_ntf_age is None:
@@ -6172,13 +6203,16 @@ class BackupThread(QThread):
                 if slot is None:
                     return f"{prefix}: failed — could not write the backup folder", "error"
                 glossary_note = ""
+                meta_note = ""
                 try:
                     slot_info = json.loads((slot / "backup_info.json").read_text(encoding="utf-8"))
                     if slot_info.get("glossary_backed_up", False):
                         glossary_note = ", +glossary"
+                    if slot_info.get("meta_backed_up", False):
+                        meta_note = ", +metadata"
                 except Exception:
                     pass
-                return f"{prefix}: saved at {now:%H:%M:%S}  ({label}{glossary_note})", level
+                return f"{prefix}: saved at {now:%H:%M:%S}  ({label}{meta_note}{glossary_note})", level
 
             notices: List[Tuple[str, str]] = []
             for location_id in ("next_to_file", "root"):
@@ -9173,7 +9207,7 @@ class MainWindow(QMainWindow):
         # Read (and verify) the glossary backup now, before the pre-restore
         # safety backup below runs -- its pruning operates on the same
         # key_dir slot_dir lives under, so reading any later risks slot_dir
-        # being pruned out from under it (see _read_glossary_backup). Only
+        # being pruned out from under it (see _read_companion_backup). Only
         # the read happens here; the write is deferred until after the
         # safety backup so that backup still captures dest_path's true
         # pre-restore state -- including its own glossary companion --
@@ -9181,8 +9215,13 @@ class MainWindow(QMainWindow):
         glossary_raw_bytes    = None
         glossary_md5_verified = None
         if restore_glossary and info.get("glossary_backed_up", False):
-            glossary_raw_bytes, glossary_md5_verified = self._read_glossary_backup(
-                slot_dir, info)
+            glossary_raw_bytes, glossary_md5_verified = self._read_companion_backup(
+                slot_dir, info, "glossary", "Glossary")
+        # The sidecar is read here for the same reason, and written after the file.
+        meta_raw_bytes, meta_md5_verified = None, None
+        if info.get("meta_backed_up", False):
+            meta_raw_bytes, meta_md5_verified = self._read_companion_backup(
+                slot_dir, info, "meta", "Metadata")
 
         # Snapshot whatever currently exists at dest_path before overwriting
         # it -- best-effort, backgrounded so it doesn't block the UI. The
@@ -9200,18 +9239,21 @@ class MainWindow(QMainWindow):
                 # for this backup have already been handled.
                 thread.finished.connect(lambda *_: self._do_restore_after_backup(
                     slot_dir, info, restore_glossary, dest_path, raw_bytes,
-                    glossary_raw_bytes, glossary_md5_verified, actual_md5, md5_ok,
+                    glossary_raw_bytes, glossary_md5_verified,
+                    meta_raw_bytes, meta_md5_verified, actual_md5, md5_ok,
                 ))
                 return
 
         self._do_restore_after_backup(
             slot_dir, info, restore_glossary, dest_path, raw_bytes,
-            glossary_raw_bytes, glossary_md5_verified, actual_md5, md5_ok,
+            glossary_raw_bytes, glossary_md5_verified,
+            meta_raw_bytes, meta_md5_verified, actual_md5, md5_ok,
         )
 
     def _do_restore_after_backup(self, slot_dir: Path, info: dict, restore_glossary: bool,
                                   dest_path: Path, raw_bytes: bytes,
                                   glossary_raw_bytes, glossary_md5_verified,
+                                  meta_raw_bytes, meta_md5_verified,
                                   actual_md5: str, md5_ok: bool):
         """Write the restored file, restore its glossary, log, and
         reload/notify -- everything that must happen strictly after the
@@ -9231,6 +9273,18 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Restore Error",
                                  f"Failed to write file:\n{e}")
             return
+
+        restored_meta_to = None
+        if meta_raw_bytes is not None:
+            try:
+                _atomic_write_bytes(meta_path_for(dest_path), meta_raw_bytes)
+                restored_meta_to = str(meta_path_for(dest_path))
+            except Exception as e:
+                _log_error(f"restoring the sidecar of {dest_path}", e)
+                meta_md5_verified = None
+        meta_msg: Optional[Tuple[str, str]] = None
+        if info.get("meta_backed_up", False) and restored_meta_to is None:
+            meta_msg = ("Metadata restore failed", "error")
 
         # Write the glossary bytes read above, if any. A glossary-restore
         # failure never blocks or rolls back the language file restore above, which
@@ -9253,6 +9307,7 @@ class MainWindow(QMainWindow):
         self._write_restore_log(
             slot_dir, info, dest_path, actual_md5, md5_ok,
             restored_glossary_to, glossary_md5_verified,
+            restored_meta_to, meta_md5_verified,
         )
 
         # Reload if we just overwrote the currently open file; otherwise offer
@@ -9285,12 +9340,14 @@ class MainWindow(QMainWindow):
             else:
                 self._show_message(f"Restored: {restored_label}", 6000)
 
+        if meta_msg is not None:
+            self._show_message(meta_msg[0], 6000, meta_msg[1])
         if glossary_msg is not None:
             self._show_message(glossary_msg[0], 6000, glossary_msg[1])
 
-    def _read_glossary_backup(self, slot_dir: Path, info: dict):
-        """Decompress and verify the glossary paired with a restored language
-        file, without writing anything.
+    def _read_companion_backup(self, slot_dir: Path, info: dict, prefix: str, label: str):
+        """Decompress and verify a companion (glossary or sidecar) paired with a
+        restored language file, without writing anything.
 
         Split out from the writing half (_write_restored_glossary) so
         _do_restore() can read every byte it needs from slot_dir before its
@@ -9304,20 +9361,20 @@ class MainWindow(QMainWindow):
         md5_verified is None unless a decline is the reason (then False),
         or the read succeeded (then the actual verify result).
         """
-        glossary_file_name  = info.get("glossary_file", "")
-        glossary_compressed = info.get("glossary_compressed", True)
-        expected_md5        = info.get("glossary_md5_checksum", "")
+        file_name    = info.get(f"{prefix}_file", "")
+        compressed   = info.get(f"{prefix}_compressed", True)
+        expected_md5 = info.get(f"{prefix}_md5_checksum", "")
 
-        glossary_backup_file = slot_dir / glossary_file_name
-        if not glossary_backup_file.exists():
+        backup_file = slot_dir / file_name
+        if not backup_file.exists():
             return None, None
 
         try:
-            if glossary_compressed:
-                with gzip.open(glossary_backup_file, "rb") as fh:
+            if compressed:
+                with gzip.open(backup_file, "rb") as fh:
                     raw_bytes = fh.read()
             else:
-                raw_bytes = glossary_backup_file.read_bytes()
+                raw_bytes = backup_file.read_bytes()
         except Exception:
             return None, None
 
@@ -9325,8 +9382,8 @@ class MainWindow(QMainWindow):
         md5_ok     = (not expected_md5) or (actual_md5 == expected_md5)
         if not md5_ok:
             r = QMessageBox.warning(
-                self, "Glossary Checksum Mismatch",
-                f"MD5 mismatch for the glossary backup — it may be corrupted.\n\n"
+                self, f"{label} Checksum Mismatch",
+                f"MD5 mismatch for the {label.lower()} backup — it may be corrupted.\n\n"
                 f"Expected : {expected_md5}\n"
                 f"Actual   : {actual_md5}\n\n"
                 "Restore it anyway?",
@@ -9339,7 +9396,7 @@ class MainWindow(QMainWindow):
 
     def _write_restored_glossary(self, dest_path: Path, raw_bytes: bytes):
         """Write previously-read glossary backup bytes (from
-        _read_glossary_backup) to the glossary companion of dest_path. A
+        _read_companion_backup) to the glossary companion of dest_path. A
         glossary-restore failure never blocks or rolls back the file restore
         in _do_restore(), which has already completed successfully by the
         time this runs. Any failure here is reported to the caller only via
@@ -9369,6 +9426,8 @@ class MainWindow(QMainWindow):
         md5_ok:     bool,
         restored_glossary_to:  Optional[str]  = None,
         glossary_md5_verified: Optional[bool] = None,
+        restored_meta_to:      Optional[str]  = None,
+        meta_md5_verified:     Optional[bool] = None,
     ):
         """Append a restore record to restore_log.json in the language folder."""
         log_path = slot_dir.parent / "restore_log.json"
@@ -9393,6 +9452,9 @@ class MainWindow(QMainWindow):
         if restored_glossary_to is not None:
             record["restored_glossary_to"]  = restored_glossary_to
             record["glossary_md5_verified"] = glossary_md5_verified
+        if restored_meta_to is not None:
+            record["restored_meta_to"]  = restored_meta_to
+            record["meta_md5_verified"] = meta_md5_verified
         existing.append(record)
         try:
             log_path.write_text(

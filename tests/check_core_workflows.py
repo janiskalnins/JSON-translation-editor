@@ -394,7 +394,7 @@ class RestoreTests(WindowTestCase):
         cs.wait_until(lambda: not self.win._backup_threads)
 
     def _slot(self, source: Path, glossary: Optional[bytes] = None,
-              md5: Optional[str] = None) -> Tuple[Path, dict]:
+              md5: Optional[str] = None, meta: Optional[bytes] = None) -> Tuple[Path, dict]:
         """A backup slot of OLD_TEXT for *source*, in a backup root of its own."""
         slot = jte._write_backup_slot(
             root_dir=cs.temp_dir() / "bk", location_id="root", backup_key=source.stem,
@@ -403,9 +403,32 @@ class RestoreTests(WindowTestCase):
             glossary_source=jte.glossary_path_for(source) if glossary is not None else None,
             glossary_bytes=glossary,
             glossary_md5=hashlib.md5(glossary).hexdigest() if glossary is not None else None,
+            meta_source=jte.meta_path_for(source) if meta is not None else None,
+            meta_bytes=meta,
+            meta_md5=hashlib.md5(meta).hexdigest() if meta is not None else None,
             compress=True, max_count=5, trigger="file_open", culture="es",
             display_language="Español", version="4.1.1140", is_fallback=False)
         return slot, json.loads((slot / "backup_info.json").read_text(encoding="utf-8"))
+
+    META = cs.sidecar_doc({"Old": ("Review", "Jo", "2026-10-02")})
+
+    def test_copy_restore_restores_the_sidecar_with_it(self):
+        path = self.load()
+        slot, info = self._slot(path, meta=self.META)
+        self.modals.answers.update(button="Save as copy", question=QMessageBox.No)
+        self.win._do_restore(slot, info)
+        copy = next(path.parent.glob("es_restored_*.json"))
+        self.assertEqual(jte.meta_path_for(copy).read_bytes(), self.META)
+
+    def test_overwrite_restore_brings_back_the_sidecar(self):
+        path = self.load()
+        slot, info = self._slot(path, meta=self.META)
+        self.modals.answers["button"] = "Overwrite original"
+        self.win._do_restore(slot, info)
+        meta = jte.meta_path_for(path)
+        cs.wait_until(lambda: meta.exists() and meta.read_bytes() == self.META)
+        cs.wait_until(lambda: not self.win._backup_threads)
+        self.assertEqual(meta.read_bytes(), self.META)
 
     def _overwrite_restore(self) -> Tuple[Path, bytes]:
         path = self.load()

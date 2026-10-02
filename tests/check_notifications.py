@@ -589,7 +589,7 @@ def check_file_messages(failures, win):
     jte.QMessageBox.question = staticmethod(lambda *a, **k: jte.QMessageBox.No)
     try:
         _reset(win)
-        win._do_restore_after_backup(slot, {}, False, dest, raw, None, None, "", True)
+        win._do_restore_after_backup(slot, {}, False, dest, raw, None, None, None, None, "", True)
     finally:
         jte.QMessageBox.question = real_question
     check(failures, "restore: version of the restored content",
@@ -602,7 +602,7 @@ def check_file_messages(failures, win):
         QTest.qWait(50)
     _write_sidecar(bare, "4.0.900")
     _reset(win)
-    win._do_restore_after_backup(slot, {}, False, bare, raw, None, None, "", True)
+    win._do_restore_after_backup(slot, {}, False, bare, raw, None, None, None, None, "", True)
     texts = _texts(win)
     check(failures, "restore and reload: Loaded and Restored name the version",
           texts[:1] == ["Loaded: bare.json  v4.0.900  (3 strings)"]
