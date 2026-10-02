@@ -242,6 +242,9 @@ class SidecarPathTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(jte.guess_language(Path(name)), expected)
 
+    def test_language_code_accepts_a_long_variant(self):
+        self.assertTrue(jte.LANGUAGE_CODE_RE.match("ca-valencia"))
+
     def test_effective_language_prefers_the_header(self):
         self.assertEqual(jte.effective_language(jte.FileHeader(language="es-AR"), Path("es.json")),
                          "es-AR")

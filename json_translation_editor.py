@@ -1550,7 +1550,9 @@ def dump_json_pairs(pairs: List[Tuple[str, str]], style: JsonStyle) -> bytes:
 
 META_SUFFIX = ".meta"   # not ".json": a program that loads every *.json in the folder must not see it
 META_FORMAT = 1
-LANGUAGE_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})*$")
+LANGUAGE_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$")
+# Stricter than the validator: a file name like es_restored_2026-... must not be read as a language.
+_GUESSABLE_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,4})*$")
 
 
 @dataclass
@@ -1573,7 +1575,7 @@ def meta_path_for(json_path: Path) -> Path:
 def guess_language(json_path: Path) -> str:
     """'es' for es.json, 'pt-BR' for pt-BR.json, '' when the name is not a language code."""
     stem = json_path.stem
-    return stem if LANGUAGE_CODE_RE.match(stem) else ""
+    return stem if _GUESSABLE_LANGUAGE_RE.match(stem) else ""
 
 
 def effective_language(header: FileHeader, json_path: Optional[Path]) -> str:
