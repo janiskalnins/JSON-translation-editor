@@ -267,11 +267,14 @@ The checks:
 - **`check_file_properties.py`** — offscreen check for File → Properties: a
   `save_translation_file()` → `read_file_header()` round trip (a name with `&` and `"`, the
   language file left unchanged), `parse_version_parts()`/`format_version()`, `describe_culture()`,
-  `compute_file_facts()` (including a file gone from disk), the dialog itself (language-code
-  validation, spin-box limits, unpadded values, blank name and invalid stored version block OK,
-  `.` jumps to the next box), and then a real `MainWindow` on a copy of `es.json` and its sidecar:
-  OK with changes (header, info bar, title bullet; Save + reopen persists them in the sidecar and
-  leaves the language file byte for byte as it was), OK with none, Cancel, and no file open. Runs
+  `native_language_name()`, `compute_file_facts()` (including a file gone from disk), the dialog
+  itself (language-code validation, spin-box limits, unpadded values, a blank name blocks OK, a
+  missing name filled from the code and following it until one is typed, a stored name never
+  replaced, 0.0.0 as no version, an invalid stored version not blocking OK, `.` jumps to the next
+  box), and then a real `MainWindow` on a copy of `es.json` and its sidecar: OK with changes
+  (header, info bar, title bullet; Save + reopen persists them in the sidecar and leaves the
+  language file byte for byte as it was), OK with none, Cancel, 0.0.0 saved as no version, an
+  invalid stored version kept until a box is edited, and no file open. Runs
   from a throwaway folder with the startup modals patched, like `check_combobox.py`.
 - **`check_merge_compare.py`** — offscreen check for the Merge row compare pop-up:
   `merge_row_reason()` (every phrase, an unparseable date, a tie) and `merge_diff_html()` (no tint
@@ -1845,14 +1848,23 @@ the file's language code, language name and version. It is JSON in a file whose 
   `MainWindow.target_culture`, so a code guessed from the file name is shown, and is only written
   to the sidecar when the user changes it. *Language name* is a `QLineEdit`, trimmed, not blank, at
   most `DISPLAY_LANGUAGE_MAX_LEN` (64) characters, which keeps the info bar and title readable.
+  When the sidecar has no name, `native_language_name()` fills it from the code in the language's
+  own words (`QLocale.nativeLanguageName()`, first letter capitalised, since Qt gives "italiano";
+  the native territory in brackets for a code with a region). It follows the code while the field
+  is empty or still holds the name the dialog last filled in (`_auto_name`), so a typed name, and a
+  stored one, are never replaced. Qt names a region-less code by the territory it guesses
+  (`es` → "Español de España", `en` → "American English"); accepted, the user can type over it.
   *Version* is three `QSpinBox`es limited to `VERSION_PART_MAXIMA` (99, 99, 99999), matching
   `_VERSION_PARTS_RE`; a spin box shows a plain integer, so nothing is ever zero-padded, and
   `format_version()` writes `4.1.1220` exactly. `.` or `,` (a Latvian numeric keypad types `,`)
   moves to the next box; the dialog watches both the spin box and its line edit, since the key can
   reach either. Box widths come from `_width_for_text()` on the widest value, so they follow the
-  UI font, and both group boxes share one caption width so their values line up. A stored version
-  that `parse_version_parts()` rejects (missing, `4.1`, `4.1.1140.2`, `100.1.1`) opens the boxes
-  at 0.0.0 with a `text_warn` line naming it, and OK stays disabled until a box is changed.
+  UI font, and both group boxes share one caption width so their values line up. The version is
+  optional, since the sidecar is the editor's own: 0.0.0 means no version (`version()` returns
+  `""`), with a dim "0.0.0 means no version." under the boxes, and a file without one opens there.
+  A stored version that `parse_version_parts()` rejects (`4.1`, `4.1.1140.2`, `100.1.1`) opens
+  the boxes at 0.0.0 with a `text_warn` line naming it; it never blocks OK, and it is kept as
+  stored unless a box is changed (`version_edited()`).
 - **About this file (read-only):** `compute_file_facts(entries, path)` → `FileFacts`: name,
   folder (always shown in full: a path has no spaces for word wrap to break at, so a zero-width
   space after each `\` and `/` lets it wrap onto more lines; that row is not selectable, since a
@@ -1862,8 +1874,9 @@ the file's language code, language name and version. It is JSON in a file whose 
   with a share. Numbers, size, percentages and the date use `QLocale.system()`. A dim note says
   the counts include unsaved changes when there are any.
 - **Applying OK** is an in-memory edit of `MainWindow.header` like any other, nothing is written
-  until Save. The version is compared as numbers (`parse_version_parts()`), so a stored `04.1.1140`
-  is not rewritten when nothing changed; the language name as trimmed text; the code against
+  until Save. The version counts only when a box was edited; a valid stored one is then compared
+  as numbers (`parse_version_parts()`), so a stored `04.1.1140` is not rewritten when nothing
+  changed, and anything else as text; the language name as trimmed text; the code against
   `target_culture`. Only a changed field is replaced (`dataclasses.replace()` on the header), then
   `is_modified`, `_update_title()`, `_update_file_meta_labels()` and a 4 s "File properties updated"
   notification.
@@ -2449,7 +2462,9 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] In the Version boxes: click the arrows, scroll the wheel, and type — verify the first two stop at 99 and the last at 99999 (a sixth digit is refused), no value is ever shown as `04` or padded, and typing `7.2.15` from the first box moves on at each `.` (also the numeric keypad's decimal key)
 - [ ] Change the language and version, click OK — verify the info bar shows the new language and `v…` at once, the title shows ●, and "File properties updated" appears; Ctrl+S, reopen — verify the sidecar holds the new `language`, `language_name` and `version` and the language file itself is untouched
 - [ ] Open File → Properties and click OK without changing anything, and separately Cancel after changing things — verify no ● and no change
-- [ ] Clear the language name — verify OK disables; hand-edit a sidecar to `"version": "4.1"` and open the file — verify the amber warning, boxes at 0.0.0 and OK disabled until a box changes
+- [ ] Clear the language name — verify OK disables; hand-edit a sidecar to `"version": "4.1"` and open the file — verify the amber warning, boxes at 0.0.0 and OK enabled; change only the name and Save — verify the sidecar still holds `"4.1"`
+- [ ] Open a file whose sidecar has no `language_name` (e.g. `it.json` with `"language_name": ""`) — verify Language name reads "Italiano"; change the code to `es-AR` — verify it becomes "Español (Argentina)"; type your own name, change the code again — verify your name stays
+- [ ] Open a file with no version — verify the boxes show 0.0.0 with "0.0.0 means no version.", OK is enabled and saves with an empty `version`; set a version, then set it back to 0.0.0 and Save — verify `version` is empty again and the info bar shows no `v…`
 - [ ] With no file open, **File → Properties…** — verify a warning and no dialog
 - [ ] Look at File → Properties in both themes at 10 and 14 pt — verify the version boxes show their full value next to visible arrows, the two groups' values line up, and nothing sits on a dark strip
 - [ ] Run `python tests/check_groupbox_title.py`, then again with `QT_QPA_PLATFORM=windows` set — verify `PASSED: 0 failure(s)` both times

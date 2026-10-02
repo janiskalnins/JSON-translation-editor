@@ -6,9 +6,11 @@ Covers, first without a MainWindow:
     name with & and " in it, leaving the language file itself unchanged;
   * parse_version_parts()/format_version(): N.N.N within 99.99.99999, no zero padding added;
   * describe_culture(): known, region-less, unknown and empty codes;
+  * native_language_name(): Qt's native name, first letter capitalised, territory in brackets;
   * compute_file_facts(): status/untranslated counts, and a file gone from disk;
   * the dialog: spin-box limits, a stored version loads unpadded, OK disabled for a blank name,
-    an invalid stored version blocks OK until a box changes, '.' jumps to the next box.
+    '.' jumps to the next box; a missing name is filled from the code and follows it until the
+    user types one; 0.0.0 means no version and never blocks OK, nor does an invalid stored one.
 
 then through a real MainWindow on a copy of es.json and its sidecar, run from a throwaway folder
 with the startup modals patched (the app derives its settings file and backup root from the
@@ -17,6 +19,7 @@ working directory / argv[0], so the real ones are never touched):
   * OK with changes: the header, info bar, title bullet, is_modified; Save + reopen persists them
     in the sidecar and leaves the language file byte for byte as it was;
   * OK with nothing changed, and Cancel: no change, file not marked modified;
+  * 0.0.0 saves an empty version; an invalid stored version is kept unless a box is changed;
   * no file open: a warning, no dialog.
 
 Run:  python tests/check_file_properties.py      (exit code 0 = all passed)
@@ -101,6 +104,15 @@ def check_culture(failures):
     for code, want in cases.items():
         got = jte.describe_culture(code)
         check(failures, f"describe_culture({code!r})", got == want, repr(got))
+
+
+def check_native_name(failures):
+    cases = {"it": "Italiano", "es-AR": "Español (Argentina)", "lv-LV": "Latviešu (Latvija)",
+             "lv_LV": "Latviešu (Latvija)", "lv": "Latviešu", "pt-BR": "Português (Brasil)",
+             "ja": "日本語", "xx": "", "xx-YY": "", "": ""}
+    for code, want in cases.items():
+        got = jte.native_language_name(code)
+        check(failures, f"native_language_name({code!r})", got == want, repr(got))
 
 
 def check_facts(failures):
@@ -232,10 +244,50 @@ def check_dialog(failures):
               [s.value() for s in bad._version_spins] == [0, 0, 0])
         check(failures, f"{theme}: invalid stored version shows the warning", bad._version_warning.isVisible())
         check(failures, f"{theme}: warning names the stored value", "4.1.1140.2" in bad._version_warning.text())
-        check(failures, f"{theme}: invalid stored version blocks OK", not bad._ok_btn.isEnabled())
+        check(failures, f"{theme}: invalid stored version does not block OK", bad._ok_btn.isEnabled())
+        check(failures, f"{theme}: untouched boxes are not an edit", not bad.version_edited())
         bad._version_spins[2].setValue(1)
-        check(failures, f"{theme}: a changed box unblocks OK", bad._ok_btn.isEnabled())
+        check(failures, f"{theme}: a changed box is an edit", bad.version_edited())
+        check(failures, f"{theme}: a changed box hides the warning", not bad._version_warning.isVisible())
         bad.close()
+
+        none = _dialog(stub, version="")
+        check(failures, f"{theme}: no version does not block OK", none._ok_btn.isEnabled())
+        check(failures, f"{theme}: no version shows no warning", not none._version_warning.isVisible())
+        check(failures, f"{theme}: 0.0.0 shows the no-version note", none._version_note.isVisible())
+        check(failures, f"{theme}: 0.0.0 is no version", none.version() == "", repr(none.version()))
+        none._version_spins[0].setValue(1)
+        check(failures, f"{theme}: a version hides the note", not none._version_note.isVisible())
+        check(failures, f"{theme}: version() of 1.0.0", none.version() == "1.0.0", repr(none.version()))
+        none.close()
+
+        filled = _dialog(stub, lang="", culture="it")
+        check(failures, f"{theme}: a missing name is filled from the code",
+              filled._lang_edit.text() == "Italiano", repr(filled._lang_edit.text()))
+        filled._code_edit.setText("es-AR")
+        check(failures, f"{theme}: a filled name follows the code",
+              filled._lang_edit.text() == "Español (Argentina)", repr(filled._lang_edit.text()))
+        filled._lang_edit.setText("Castellano")
+        filled._code_edit.setText("it")
+        check(failures, f"{theme}: a typed name is kept on a code change",
+              filled._lang_edit.text() == "Castellano", repr(filled._lang_edit.text()))
+        filled._lang_edit.setText("")
+        filled._code_edit.setText("lv")
+        check(failures, f"{theme}: a cleared name is filled again",
+              filled._lang_edit.text() == "Latviešu", repr(filled._lang_edit.text()))
+        filled._code_edit.setText("xx")
+        check(failures, f"{theme}: an unknown code clears a filled name",
+              filled._lang_edit.text() == "", repr(filled._lang_edit.text()))
+        check(failures, f"{theme}: an unknown code with no name blocks OK", not filled._ok_btn.isEnabled())
+        filled.close()
+
+        stored = _dialog(stub, lang="Español", culture="it")
+        check(failures, f"{theme}: a stored name is never replaced on open",
+              stored._lang_edit.text() == "Español", repr(stored._lang_edit.text()))
+        stored._code_edit.setText("de")
+        check(failures, f"{theme}: a stored name is kept on a code change",
+              stored._lang_edit.text() == "Español", repr(stored._lang_edit.text()))
+        stored.close()
 
         missing = _dialog(stub, lang="", version="", culture="")
         check(failures, f"{theme}: missing everything blocks OK", not missing._ok_btn.isEnabled())
@@ -336,6 +388,27 @@ def check_main_window(failures):
           repr(jte.read_file_header(path)))
 
     win.is_modified = False
+    _run_dialog(win, parts=(0, 0, 0))
+    check(failures, "0.0.0: header version emptied", win.header.version == "", repr(win.header.version))
+    check(failures, "0.0.0: info bar shows no version", win._sb_ver_label.text() == "",
+          repr(win._sb_ver_label.text()))
+    win._save()
+    check(failures, "0.0.0: saved as no version", jte.read_file_header(path).version == "",
+          repr(jte.read_file_header(path)))
+
+    win.is_modified = False
+    _run_dialog(win)
+    check(failures, "no version: unchanged OK leaves the file unmodified", not win.is_modified)
+
+    win.header = jte.replace(win.header, version="4.1")
+    _run_dialog(win, language="Español")
+    check(failures, "invalid stored version kept when the boxes are untouched",
+          win.header.version == "4.1", repr(win.header.version))
+    _run_dialog(win, parts=(4, 1, 7))
+    check(failures, "invalid stored version replaced by an edit",
+          win.header.version == "4.1.7", repr(win.header.version))
+
+    win.is_modified = False
     win.close()
     app.processEvents()
 
@@ -355,7 +428,7 @@ def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")
     failures = []
-    for step in (check_round_trip, check_version_helpers, check_culture, check_facts):
+    for step in (check_round_trip, check_version_helpers, check_culture, check_native_name, check_facts):
         try:
             step(failures)
         except Exception as e:
