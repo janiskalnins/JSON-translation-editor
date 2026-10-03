@@ -562,6 +562,35 @@ class ImportWorkflowTests(WindowTestCase):
         self._import(_package(glossary=GLOSSARY_LANE), _choose_glossary("Keep incoming"))
         self.assertEqual(jte.parse_glossary(jte.glossary_path_for(path))[0][0].translation, "Carril")
 
+    def test_glossary_edited_outside_after_open_keeps_its_new_terms(self):
+        path = self.load()
+        glossary = jte.glossary_path_for(path)
+        jte.write_glossary(glossary, [jte.GlossaryEntry("Lane", "Carril")])
+        self.win._load(path)
+        jte.write_glossary(glossary, [jte.GlossaryEntry("Lane", "Carril"),
+                                      jte.GlossaryEntry("Bridge", "Puente")])
+        self._import(_package(glossary="term,translation,note\r\nRoad,Vía,\r\n".encode("utf-8-sig")))
+        self.assertEqual([g.term for g in jte.parse_glossary(glossary)[0]],
+                         ["Lane", "Bridge", "Road"])
+
+    def test_unreadable_glossary_is_not_imported_into(self):
+        path = self.load()
+        glossary = cs.write_exact(jte.glossary_path_for(path), GLOSSARY_LANE)
+        real_parse = jte.parse_glossary
+
+        def parse(p):
+            if p.resolve() == glossary.resolve():   # _load() resolves the 8.3 temp path
+                return [], ["glossary unreadable (locked); treated as empty"]
+            return real_parse(p)
+        with mock.patch.object(jte, "parse_glossary", parse):
+            self.win._load(path)
+            self._import(_package(glossary="term,translation,note\r\nRoad,Vía,\r\n"
+                                           .encode("utf-8-sig")))
+        self.assertEqual((glossary.read_bytes(),
+                          ("Glossary: not imported — es.glossary.csv could not be read", "error")
+                          in self._notices()),
+                         (GLOSSARY_LANE, True))
+
     def test_glossary_only_import_leaves_the_strings_saved(self):
         self.load()
         self._import(_package(glossary=GLOSSARY_LANE))

@@ -10386,12 +10386,15 @@ class MainWindow(QMainWindow):
         except ValueError as e:
             QMessageBox.critical(self, "Import Error", str(e))
             return
-        glossary_diff = compute_glossary_diff(self.glossary, incoming_glossary)
+        glossary_skipped = not self._reread_glossary() and bool(incoming_glossary)
+        glossary_diff = compute_glossary_diff(self.glossary,
+                                              [] if glossary_skipped else incoming_glossary)
         has_string_rows = bool(diff.additions or diff.conflicts or diff.deletions)
         has_glossary_rows = bool(glossary_diff.additions or glossary_diff.changes)
         if not (has_string_rows or has_glossary_rows or diff.auto_updated):
             self._show_message(f"Nothing to import — {self.current_file.name} already matches", 4000)
-            self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff)
+            self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff,
+                                         glossary_skipped)
             return
         additions, resolutions, deletions = diff.additions, [], []
         glossary_additions: List[GlossaryEntry] = []
@@ -10410,10 +10413,27 @@ class MainWindow(QMainWindow):
             self._apply_merge_diff(diff, additions, resolutions, deletions)
         if glossary_additions or glossary_changes:
             self._apply_glossary_import(glossary_additions, glossary_changes)
-        self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff)
+        self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff, glossary_skipped)
+
+    def _reread_glossary(self) -> bool:
+        """Read the open file's glossary again before Import diffs against it and writes it: it
+        may have been edited outside since the file was opened, or have been unreadable then.
+        False when it exists but cannot be read now; the copy in memory is then kept and Import
+        must not write the file."""
+        path = glossary_path_for(self.current_file)
+        entries, warnings = parse_glossary(path)
+        if any(w.startswith("glossary unreadable") for w in warnings):
+            return False
+        self.glossary_path = path
+        self.glossary, self.glossary_load_warnings = entries, warnings
+        return True
 
     def _show_incoming_warnings(self, incoming: LoadedFile, glossary_warnings: List[str],
-                                glossary_diff: GlossaryDiff):
+                                glossary_diff: GlossaryDiff, glossary_skipped: bool):
+        if glossary_skipped:
+            self._show_message(f"Glossary: not imported — "
+                               f"{glossary_path_for(self.current_file).name} could not be read",
+                               6000, "error")
         for text, level in incoming.notices:
             self._show_message(f"Incoming file: {text}", 6000, level)
         for text in glossary_warnings:
