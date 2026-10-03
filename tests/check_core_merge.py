@@ -1,4 +1,4 @@
-"""Core tests: Merge from File. The pure diff (compute_merge_diff, _pick_newer_entry), then
+"""Core tests: Merge (Import's merge path). The pure diff (compute_merge_diff, _pick_newer_entry), then
 whole-file merges: open and incoming language files with sidecars, every combination of choices
 applied through MainWindow._apply_merge_diff(), saved, and judged by the oracle. No choice may
 lose an entry or create a duplicate.

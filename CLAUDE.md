@@ -290,8 +290,9 @@ The checks:
   double-click on a cell and a row number (exec patched); the cell gets a click first, since
   `QTest.mouseDClick` alone sends no press and an item view ignores a double-click on an index it
   did not see pressed; widget count back to baseline after Close; sizes in both themes at 10 and
-  14 pt. 1920 × 1080 offscreen screen from a `configfile`, throwaway folder, startup modals
-  patched, like `check_file_properties.py`.
+  14 pt; the Strings header band as tall with a Glossary tab as without one (the toolbar on one
+  row), both themes at 10 and 14 pt. 1920 × 1080 offscreen screen from a `configfile`, throwaway
+  folder, startup modals patched, like `check_file_properties.py`.
 - **`check_groupbox_title.py`** — check that every group box's border line runs through the
   middle of its title's capitals (±2 px) and its first row starts below the title: a real
   `MainWindow` at 10, 12, 14, 18 and 24 pt in both themes, opening Keyboard Shortcuts, Translation Settings
@@ -396,7 +397,8 @@ The checks:
   `insert_synced`, the dialog flow through `MainWindow._apply_sync()`).
 - **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, bulk status,
   delete, Close File (Save/Discard/Cancel, failed save), Save, Save As, Export, Import (into the open file, a folder, over stray
-  companions, nothing to import, a plain .json), Restore
+  companions, nothing to import with a damaged incoming sidecar, a plain .json, no temporary
+  folder, a glossary edited or unreadable since the file was opened), Restore
   (overwrite with its safety backup, copy, glossary, sidecar, MD5 mismatch), autosave, the reformat
   prompt, the Robo-Translate skip rule, the placeholder label, New Language and the trimmed-paste
   note.
@@ -417,8 +419,9 @@ The checks:
   run, the hook's included.
 - **`check_core_export.py`**: the export format, the package reader's refusals and checksums, the
   glossary diff: contents byte for byte, `export_info.json`, `export_summary()` and
-  `suggested_export_name()`; `read_translation_package()`; `compute_glossary_diff()` and
-  `apply_glossary_diff()`.
+  `suggested_export_name()`; `read_translation_package()` (an undecodable entry name and corrupt
+  LZMA data refused as damaged); `_is_plain_file_name()`, `_folder_label()`;
+  `compute_glossary_diff()` and `apply_glossary_diff()`.
 - **`check_run_all_report.py`**: `run_all.py`'s report from made-up results (header, summary,
   table row and test count, CRLF output, the Notes and Failures sections), `write_report()` (the file name,
   `latest.md`, pruning), and `main()` with the checks faked (report written, a failed write keeps
@@ -1849,7 +1852,7 @@ the file's language code, language name and version. It is JSON in a file whose 
 ### File Properties
 
 - Entry point: **File → Properties…** → `MainWindow._open_file_properties()` →
-  `FilePropertiesDialog`. With no file open it shows a warning, like Merge.
+  `FilePropertiesDialog`. With no file open it shows a warning, like Sync Keys.
 - **Header group (editable):** *Language code* is a `QLineEdit` (max 35 characters), validated
   against `LANGUAGE_CODE_RE`; `describe_culture()` turns the code into "Spanish (Argentina)" through
   `QLocale` (so `es-AR` and `es_AR` both work) and shows it beside the field in dim text; a code
@@ -1898,7 +1901,7 @@ the file's language code, language name and version. It is JSON in a file whose 
 ### Export
 
 - Entry point: **File → Export…** → `MainWindow._export()` → `ExportDialog`. With no file open it
-  shows a warning, like Merge.
+  shows a warning, like Sync Keys.
 - Export reads the files on disk, so with unsaved changes it first asks Save / Cancel. After
   `_save()` it checks `is_modified` again and stops if it is still set: the save failed or its
   Reformat prompt was declined. Cancel writes nothing and keeps the changes.
@@ -1918,16 +1921,30 @@ the file's language code, language name and version. It is JSON in a file whose 
 ### Import
 
 - Entry point: **File → Import…** → `MainWindow._import()` → `_import_from(source, temp_dir)`, run
-  inside a `tempfile.TemporaryDirectory()`. It reads with `read_translation_package()` (a `.zip` is
-  validated and unpacked into the temp folder, anything else is a loose `.json` with the sidecar and
-  glossary beside it), asks the checksum question, then calls
+  in a folder from `tempfile.mkdtemp()` that a `finally` removes with
+  `shutil.rmtree(..., ignore_errors=True)`, not a `TemporaryDirectory()`: on Windows a virus scanner
+  holding an unpacked file makes its cleanup raise, and Python 3.9 has no `ignore_cleanup_errors`.
+  If no folder can be created the error message is "Import failed — no temporary folder could be
+  created" (no path; the detail goes to `_log_error()`). It reads with `read_translation_package()`
+  (a `.zip` is validated and unpacked into the temp folder, anything else is a loose `.json` with
+  the sidecar and glossary beside it), asks the checksum question, then calls
   `load_translation_file(package.json_path, keep_damaged=False)` and `parse_glossary()` on the
   package's glossary. **Every refusal comes before anything outside the temp folder is written**: a
   `PackageError` shows "Not a translation package: <reason>", a read failure names the file and logs
   the detail with `_log_error()`, an invalid `.json` shows its `JsonFormatError`.
+- An archive `zipfile` cannot decode is a `PackageError` "the archive is damaged":
+  `_read_package_zip()` re-raises its own `PackageError`s first (they are `ValueError`s, and keep
+  their reason), then catches `_ZIP_DAMAGE_ERRORS`: `BadZipFile`, `zlib.error`, `lzma.LZMAError`,
+  `EOFError`, `RuntimeError`, `NotImplementedError`, `ValueError` (an entry name flagged UTF-8 that
+  is not raises `UnicodeDecodeError` from `ZipFile()` itself) and, on Python 3.14+, `ZstdError`. A
+  corrupt bzip2 entry raises `OSError`, which `_import_from()` reports as "could not be read".
+- The reason and the checksum prompt's names come from the archive, so both message boxes escape
+  them with `html.escape()` inside `<p>…</p>`: a message box renders text with a tag as rich text,
+  and an escaped `&` without a tag around it would show as `&amp;`.
 - `IMPORT_MAX_BYTES` (10 MB) is checked against the sum of the ZIP directory's declared sizes before
   any entry is read. Entry names are validated by `_is_plain_file_name()` (no folder part, drive,
-  illegal character, trailing dot or space, Windows device name) and never used as paths: the
+  illegal character, trailing dot or space, Windows device name, also with spaces before the dot
+  as in `CON .json`, which Windows reads as `CON`) and never used as paths: the
   unpacked files are named from the `.json`'s stem. Exactly one `.json`, optionally its `.json.meta`
   and `<stem>.glossary.csv`, and `export_info.json`, nothing else; a name that appears twice is
   refused (`zipfile` allows duplicates and the reader would take the last).
@@ -1945,19 +1962,29 @@ the file's language code, language name and version. It is JSON in a file whose 
   and `_import_merge()` follows, so the Language Mismatch prompt comes *after* the target is open:
   answering No leaves it open. If it does not exist, the current file is closed the same way and
   `_unpack_package()` writes the package there, then `_load()` opens it and "Imported: es.json
-  v1.0.0  (N strings) into <folder>" is shown.
+  v1.0.0  (N strings) into <folder>" is shown. Messages name a folder by `_folder_label()`: its
+  name, or its path for a drive root such as `D:\`, which has none.
 - `_unpack_package()` writes the companions first and the `.json` last, each through
   `_atomic_write_bytes()`, so a failure never leaves a `.json` without the sidecar that came with it.
   A stray `.json.meta` or `.glossary.csv` already beside the target is replaced by the package's, or
   removed when the package has none (left in place it would attach itself to the new file); one
   Yes/No prompt (No default) names both kinds first, and No writes nothing.
-- `_import_merge()` warns on a language mismatch (Cancel aborts), runs `compute_merge_diff()` and
+- `_import_merge()` warns on a language mismatch (Yes/No, No the default; No aborts), runs
+  `compute_merge_diff()`, reads the open glossary again (`_reread_glossary()`, below) and runs
   `compute_glossary_diff()`, and shows "Nothing to import — es.json already matches" when there are
   no rows and no metadata-only updates. Otherwise it opens `MergeConflictDialog` (with
   `glossary_diff=`) only when there are string or glossary rows (metadata-only differences are
   applied without a dialog), then `_apply_merge_diff()` and `_apply_glossary_import()`. The open
-  file's header is kept. `incoming.notices` and the glossary warnings follow as "Incoming file: …",
-  "Incoming glossary: …" and "Glossary: …" messages.
+  file's header is kept. On both paths, "Nothing to import" included, `_show_incoming_warnings()`
+  then posts `incoming.notices` and the glossary warnings as "Incoming file: …", "Incoming
+  glossary: …" and "Glossary: …" messages (a cancelled dialog shows none).
+- `_reread_glossary()` parses `glossary_path_for(current_file)` again rather than diffing against
+  the `self.glossary` read at open: terms added in Excel since then would be overwritten, and a
+  glossary that was unreadable at open (`parse_glossary()` gave `[]` with "glossary unreadable …")
+  would make every incoming term an addition and the file would be replaced by them. If the file
+  exists but still cannot be read, the glossary part is skipped (the in-memory copy is kept), the
+  file is never written, and, when the package brought a glossary, the error message is "Glossary:
+  not imported — es.glossary.csv could not be read".
 - `_apply_glossary_import()` writes the open glossary at once with `write_glossary()` (canonical
   CSV, like View → Glossary's Save: UTF-8 with BOM, comma, `term,translation,note` header) via
   `apply_glossary_diff()` (changed terms replaced in place, additions appended), re-parses it into
@@ -1969,7 +1996,7 @@ the file's language code, language name and version. It is JSON in a file whose 
 
 - Reached through Import's merge path (`_import_merge()`); Sync Keys uses it too.
 - The language guard is `_import_merge()`'s: it warns via `QMessageBox.warning` if the open and
-  incoming codes are both non-empty and differ — Cancel aborts with no changes made. Each side's
+  incoming codes are both non-empty and differ — No (the default) aborts with no changes made. Each side's
   code is `effective_language()`: the sidecar's `language`, else the code guessed from the file
   name (`es.json` → `es`). If neither gives a code the guard is silently skipped. The incoming
   file is read with `keep_damaged=False`, so merging never moves its sidecar aside; its metadata
@@ -2067,7 +2094,12 @@ the file's language code, language name and version. It is JSON in a file whose 
   content for realistic strings, the toolbar for short ones.
   Deliberately not re-triggered later, though `FlowLayout` re-flows for free if
   the user resizes the window afterward, via Qt's normal height-for-width
-  contract.
+  contract. With a Glossary tab, `_fit_to_content()` first calls `invalidate()` on every layout
+  in the dialog: `QTabWidget` asks its pages for size hints in `_build_ui()`, before
+  `_apply_style()` sets the stylesheet, and the restyle leaves the toolbar columns' layouts with
+  those stale hints (column 0 reported 156 px while its button wanted 160), so the toolbar
+  measured ~150 px narrow and the Strings toolbar wrapped onto two rows (1226 px wide instead of
+  1372 at 10 pt). `ensurePolished()` does not help. The no-glossary path is unchanged.
 - **Footer and status bar**: the auto-resolve checkbox sits on the left of the
   footer band, with **Apply & Close** (`role="primary"`, default, `accept()`) and
   **Cancel** (`reject()`) on the right. There is no separate Close button: nothing

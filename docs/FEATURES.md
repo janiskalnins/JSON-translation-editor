@@ -538,7 +538,10 @@ the missing companion: `(2 files, no glossary)`.
   works like the Strings one. Terms only in your glossary are kept, never deleted. On **Apply &
   Close** the glossary is written at once ("Glossary: N added, M updated"), in the same canonical
   CSV form as View → Glossary's Save (UTF-8 with BOM, comma-separated, `term,translation,note`
-  header); the strings, as before, wait for Save.
+  header); the strings, as before, wait for Save. Your glossary file is read again when you
+  import, so terms added in another program since the file was opened are kept. If it cannot be
+  read, the glossary is not imported ("Glossary: not imported — es.glossary.csv could not be
+  read") and the file is left as it is.
 
 ---
 

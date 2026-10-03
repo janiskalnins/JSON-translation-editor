@@ -139,46 +139,22 @@ def _zip_path(files: Dict[str, bytes], compression: int = zipfile.ZIP_DEFLATED) 
 
 
 def _zip_path_with_raw_names(items: list) -> Path:
-    """Build a ZIP with entries that have backslash or other raw filenames in the bytes.
-    Items are (name_to_write, bytes) tuples. On Windows, zipfile.ZipInfo normalizes
-    backslashes to forward slashes when reading the central directory, so this function
-    patches the archive bytes to embed the raw name. The resulting ZIP can be rejected
-    by the reader when it opens and reads the archive bytes (proving the refusal works),
-    even though zipfile's own API returns the normalized name. This tests the archive
-    validation, not which specific validation branch catches it."""
+    """A ZIP whose entries are stored under exactly the given names, backslashes included.
+    *items* is a list of (name, bytes). ZipInfo("...") would turn a backslash into "/" on Windows;
+    setting .filename after construction skips that, so the archive holds the raw name. (Reading
+    it back, zipfile on Windows turns the backslash into "/" again, which the reader refuses too.)"""
     path = cs.temp_dir() / "package.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, raw in items:
-            zi = zipfile.ZipInfo("placeholder.json")
-            zi.filename = name
-            zf.writestr(zi, raw)
-
-    # Patch the archive bytes to embed the original raw name
-    for orig_name, _ in items:
-        with open(path, "rb") as f:
-            data = bytearray(f.read())
-
-        # The filename appears in both the local header and central directory.
-        # Find the normalized name that zipfile stored and replace it with the original.
-        # We expect exactly 2 occurrences (local + central). Use a more specific pattern
-        # to avoid replacing unrelated bytes.
-        normalized = orig_name.replace("\\", "/")
-        name_bytes = normalized.encode("utf-8")
-
-        # Count occurrences to ensure we're patching only the filename
-        count = data.count(name_bytes)
-        if count == 2:
-            # Safe to replace: only the two expected occurrences
-            data = data.replace(name_bytes, orig_name.encode("utf-8", errors="surrogateescape"), 2)
-            with open(path, "wb") as f:
-                f.write(data)
-
+            info = zipfile.ZipInfo("placeholder.json")
+            info.filename = name
+            zf.writestr(info, raw)
     return path
 
 
 def _zip_with_invalid_utf8_name() -> Path:
-    """"é.json" makes zipfile set the UTF-8 name flag; its two bytes become invalid UTF-8, which
-    zipfile.ZipFile() fails to decode with UnicodeDecodeError."""
+    """A ZIP whose entry name is flagged UTF-8 but is not: zipfile flags "é.json", and the two
+    bytes of the "é" are swapped for invalid UTF-8, so zipfile.ZipFile() raises UnicodeDecodeError."""
     raw = _zip_path({"é.json": cs.json_doc(PAIRS)}).read_bytes()
     return cs.write_exact(cs.temp_dir() / "names.zip",
                           raw.replace("é".encode("utf-8"), b"\xff\xfe"))

@@ -676,6 +676,15 @@ class ImportWorkflowTests(WindowTestCase):
                           (folder / "es.glossary.csv").exists(), self.modals.titles("question")),
                          (True, False, ["Replace Files"]))
 
+    def test_stray_companions_replaced_after_yes_leave_an_intact_file(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        cs.write_exact(folder / "es.json.meta", b"stray")
+        cs.write_exact(folder / "es.glossary.csv", b"stray")
+        self.modals.answers.update(folder=str(folder), question=QMessageBox.Yes)
+        self._import(_package(self.EXTRA))
+        cs.assert_json_intact(self, folder / "es.json", NAMES + ["New"])
+
     def test_stray_companions_declined_writes_nothing(self):
         self._open_italian()
         folder = cs.temp_dir()
