@@ -2047,6 +2047,109 @@ def suggested_export_name(json_path: Path, version: str, day: date, mode: str) -
     return f"{json_path.stem}{tag}_{day.isoformat()}.zip"
 
 
+IMPORT_MAX_BYTES = 10 * 1024 * 1024   # unpacked; a package of three text files is far smaller
+
+
+class PackageError(ValueError):
+    """A file that is not a translation package. The message is the reason, shown to the user."""
+
+
+@dataclass
+class IncomingPackage:
+    """A language file to import and whichever companions came with it. From a ZIP the files sit
+    in a temporary folder under names the app built; a loose .json is used where it is."""
+    json_path: Path
+    meta_path: Optional[Path]
+    glossary_path: Optional[Path]
+    is_zip: bool
+    has_manifest: bool
+    mismatches: List[str]   # files whose size or MD5 differ from export_info.json, or only one side has
+
+
+def same_language(a: str, b: str) -> bool:
+    """Language codes compared case-insensitively with '_' equal to '-'; an empty code matches none."""
+    return bool(a and b) and a.replace("_", "-").casefold() == b.replace("_", "-").casefold()
+
+
+def _is_plain_file_name(name: str) -> bool:
+    """No folder part, drive, illegal character, trailing dot or space, or Windows device name."""
+    if name in ("", ".", "..") or _WIN_ILLEGAL_PATH_CHARS_RE.search(name):
+        return False
+    if name != name.rstrip(". "):
+        return False
+    return name.split(".")[0].upper() not in _WIN_RESERVED_NAMES
+
+
+def _manifest_mismatches(raw: bytes, contents: Dict[str, bytes]) -> List[str]:
+    """The names whose size or MD5 differ from the manifest's, or that only one side has. A
+    manifest that cannot be read mismatches every file."""
+    try:
+        listed = {f["name"]: (f["size"], f["md5"])
+                  for f in json.loads(raw.decode("utf-8-sig"))["files"]}
+    except (ValueError, KeyError, TypeError):
+        return list(contents)
+    mismatches = [name for name, data in contents.items()
+                  if listed.get(name) != (len(data), hashlib.md5(data).hexdigest())]
+    return mismatches + [name for name in listed if name not in contents]
+
+
+def _read_package_zip(path: Path, temp_dir: Path) -> IncomingPackage:
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+            names = [info.filename for info in infos]
+            for name in names:
+                if not _is_plain_file_name(name):
+                    raise PackageError(f"{name} is not a plain file name at the top level")
+            repeated = sorted({name for name in names if names.count(name) > 1})
+            if repeated:
+                raise PackageError(f"{repeated[0]} appears more than once")
+            json_names = [n for n in names if n.lower().endswith(".json") and n != EXPORT_INFO_NAME]
+            if not json_names:
+                raise PackageError("no .json file")
+            if len(json_names) > 1:
+                raise PackageError("more than one .json file")
+            json_name = json_names[0]
+            stem = json_name[:-len(".json")]
+            meta_name, glossary_name = json_name + META_SUFFIX, f"{stem}.glossary.csv"
+            unexpected = [n for n in names
+                          if n not in (json_name, meta_name, glossary_name, EXPORT_INFO_NAME)]
+            if unexpected:
+                raise PackageError(f"unexpected file {unexpected[0]}")
+            # The directory's sizes bound what zipfile will decompress: it stops at the declared
+            # size and fails the CRC, so checking them here is checking before decompression.
+            if sum(info.file_size for info in infos) > IMPORT_MAX_BYTES:
+                raise PackageError(f"larger than {IMPORT_MAX_BYTES // (1024 * 1024)} MB unpacked")
+            contents = {info.filename: zf.read(info) for info in infos}
+    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as e:
+        _log_error(f"reading package {path}", e)
+        raise PackageError("the archive is damaged") from None
+    manifest = contents.pop(EXPORT_INFO_NAME, None)
+    mismatches = _manifest_mismatches(manifest, contents) if manifest is not None else []
+    json_path = temp_dir / f"{stem}.json"   # built from the stem, never the stored path
+    json_path.write_bytes(contents[json_name])
+    meta_path = glossary_path = None
+    if meta_name in contents:
+        meta_path = meta_path_for(json_path)
+        meta_path.write_bytes(contents[meta_name])
+    if glossary_name in contents:
+        glossary_path = glossary_path_for(json_path)
+        glossary_path.write_bytes(contents[glossary_name])
+    return IncomingPackage(json_path, meta_path, glossary_path, True, manifest is not None,
+                           mismatches)
+
+
+def read_translation_package(path: Path, temp_dir: Path) -> IncomingPackage:
+    """What to import from *path*: a package ZIP, checked and unpacked into *temp_dir*, or a loose
+    .json with the sidecar and glossary beside it. Raises PackageError for a ZIP that is not a
+    translation package; OSError when *path* cannot be read."""
+    if path.suffix.lower() == ".zip":
+        return _read_package_zip(path, temp_dir)
+    meta_path, glossary_path = meta_path_for(path), glossary_path_for(path)
+    return IncomingPackage(path, meta_path if meta_path.exists() else None,
+                           glossary_path if glossary_path.exists() else None, False, False, [])
+
+
 # ══════════════════════════════════════════════════════════════
 #  TABLE MODEL
 # ══════════════════════════════════════════════════════════════

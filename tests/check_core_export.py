@@ -129,5 +129,132 @@ class ExportNamingTests(unittest.TestCase):
                 self.assertEqual(jte.suggested_export_name(path, version, day, mode), want)
 
 
+def _zip_path(files: Dict[str, bytes], compression: int = zipfile.ZIP_DEFLATED) -> Path:
+    """A ZIP of *files* (name -> bytes, in order) in a folder of its own."""
+    path = cs.temp_dir() / "package.zip"
+    with zipfile.ZipFile(path, "w", compression) as zf:
+        for name, raw in files.items():
+            zf.writestr(name, raw)
+    return path
+
+
+def _exported_files() -> Dict[str, bytes]:
+    """The files of a real export of _source(), manifest included."""
+    return _unzip(jte.build_export_zip(_source(), HEADER, NOW)[0])
+
+
+def _read(path: Path) -> "jte.IncomingPackage":
+    return jte.read_translation_package(path, cs.temp_dir())
+
+
+class PackageRefusalTests(unittest.TestCase):
+    def test_refused_packages(self):
+        doc = cs.json_doc(PAIRS)
+        cases = [
+            ({"sub/es.json": doc}, "not a plain file name"),
+            ({"../es.json": doc}, "not a plain file name"),
+            ({"C:es.json": doc}, "not a plain file name"),
+            ({"/es.json": doc}, "not a plain file name"),
+            ({"CON.json": doc}, "not a plain file name"),
+            ({"es.json": doc, "readme.txt": b"x"}, "unexpected file readme.txt"),
+            ({"es.json": doc, "it.json": doc}, "more than one .json file"),
+            ({"es.json.meta": b"{}"}, "no .json file"),
+            ({"es.json": doc, "it.glossary.csv": b""}, "unexpected file it.glossary.csv"),
+        ]
+        for files, reason in cases:
+            with self.subTest(names=list(files)):
+                with self.assertRaisesRegex(jte.PackageError, reason):
+                    _read(_zip_path(files))
+
+    def test_over_the_size_limit_is_refused_before_reading(self):
+        path = _zip_path({"es.json": cs.json_doc(PAIRS)})
+        with mock.patch.object(jte, "IMPORT_MAX_BYTES", 10), \
+                mock.patch.object(zipfile.ZipFile, "read", side_effect=AssertionError("read")):
+            with self.assertRaisesRegex(jte.PackageError, "MB unpacked"):
+                _read(path)
+
+    def test_bad_crc_is_refused_as_damaged(self):
+        doc = cs.json_doc(PAIRS)
+        raw = _zip_path({"es.json": doc}, zipfile.ZIP_STORED).read_bytes()
+        at = raw.index(doc) + 3
+        broken = cs.write_exact(cs.temp_dir() / "broken.zip",
+                                raw[:at] + bytes([raw[at] ^ 0x01]) + raw[at + 1:])
+        with self.assertRaisesRegex(jte.PackageError, "damaged"):
+            _read(broken)
+
+    def test_not_a_zip_is_refused_as_damaged(self):
+        with self.assertRaisesRegex(jte.PackageError, "damaged"):
+            _read(cs.write_exact(cs.temp_dir() / "x.zip", b"not a zip"))
+
+
+class PackageReadTests(unittest.TestCase):
+    def test_files_are_unpacked_byte_for_byte(self):
+        files = _exported_files()
+        package = _read(_zip_path(files))
+        self.assertEqual([package.json_path.read_bytes(), package.meta_path.read_bytes(),
+                          package.glossary_path.read_bytes()],
+                         [files["es.json"], files["es.json.meta"], files["es.glossary.csv"]])
+
+    def test_files_land_in_the_temporary_folder_named_from_the_stem(self):
+        temp = cs.temp_dir()
+        package = jte.read_translation_package(_zip_path(_exported_files()), temp)
+        self.assertEqual([package.json_path, package.meta_path, package.glossary_path],
+                         [temp / "es.json", temp / "es.json.meta", temp / "es.glossary.csv"])
+
+    def test_missing_companions_are_none(self):
+        package = _read(_zip_path({"es.json": cs.json_doc(PAIRS)}))
+        self.assertEqual((package.meta_path, package.glossary_path), (None, None))
+
+    def test_exported_package_has_no_mismatches(self):
+        self.assertEqual(_read(_zip_path(_exported_files())).mismatches, [])
+
+    def test_changed_file_is_a_mismatch(self):
+        files = _exported_files()
+        files["es.json.meta"] = cs.sidecar_doc({})
+        self.assertEqual(_read(_zip_path(files)).mismatches, ["es.json.meta"])
+
+    def test_file_not_in_the_manifest_is_a_mismatch(self):
+        files = _unzip(jte.build_export_zip(_source(glossary=False), HEADER, NOW)[0])
+        files["es.glossary.csv"] = GLOSSARY
+        self.assertEqual(_read(_zip_path(files)).mismatches, ["es.glossary.csv"])
+
+    def test_listed_file_missing_from_the_zip_is_a_mismatch(self):
+        files = _exported_files()
+        del files["es.glossary.csv"]
+        self.assertEqual(_read(_zip_path(files)).mismatches, ["es.glossary.csv"])
+
+    def test_unreadable_manifest_mismatches_every_file(self):
+        files = _exported_files()
+        files[jte.EXPORT_INFO_NAME] = b"{"
+        self.assertEqual(sorted(_read(_zip_path(files)).mismatches),
+                         ["es.glossary.csv", "es.json", "es.json.meta"])
+
+    def test_package_without_a_manifest_is_unverified(self):
+        files = _exported_files()
+        del files[jte.EXPORT_INFO_NAME]
+        package = _read(_zip_path(files))
+        self.assertEqual((package.has_manifest, package.mismatches), (False, []))
+
+    def test_loose_json_brings_its_companions(self):
+        path = _source()
+        package = _read(path)
+        self.assertEqual((package.json_path, package.meta_path, package.glossary_path,
+                          package.is_zip),
+                         (path, jte.meta_path_for(path), jte.glossary_path_for(path), False))
+
+    def test_loose_json_without_companions(self):
+        package = _read(_source(meta=False, glossary=False))
+        self.assertEqual((package.meta_path, package.glossary_path), (None, None))
+
+
+class SameLanguageTests(unittest.TestCase):
+    def test_codes(self):
+        cases = [("pt-BR", "pt_br", True), ("es", "ES", True), ("es", "es-AR", False),
+                 ("", "", False), ("es", "", False)]
+        for a, b, want in cases:
+            with self.subTest(a=a, b=b):
+                self.assertEqual(jte.same_language(a, b), want)
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
