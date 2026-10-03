@@ -2150,6 +2150,60 @@ def read_translation_package(path: Path, temp_dir: Path) -> IncomingPackage:
                            glossary_path if glossary_path.exists() else None, False, False, [])
 
 
+@dataclass
+class GlossaryDiff:
+    """Incoming glossary against the open one. Terms only in the open glossary are kept, so they
+    are not listed; Import never deletes a term."""
+    additions: List[GlossaryEntry]
+    changes: List[Tuple[GlossaryEntry, GlossaryEntry]]   # (open_entry, incoming_entry)
+    warnings: List[str]
+
+
+def _first_by_term(entries: List[GlossaryEntry], side: str,
+                   warnings: List[str]) -> Dict[str, GlossaryEntry]:
+    """Entries by folded term; the first row of a repeated term counts and the rest are named."""
+    first: Dict[str, GlossaryEntry] = {}
+    repeats: List[str] = []
+    for entry in entries:
+        key = entry.term.strip().casefold()
+        if key in first:
+            repeats.append(entry.term.strip())
+        else:
+            first[key] = entry
+    if repeats:
+        warnings.append(f"the {side} glossary repeats {', '.join(repeats)} — the first row counts")
+    return first
+
+
+def compute_glossary_diff(open_entries: List[GlossaryEntry],
+                          incoming_entries: List[GlossaryEntry]) -> GlossaryDiff:
+    warnings: List[str] = []
+    open_by_term = _first_by_term(open_entries, "open", warnings)
+    incoming_by_term = _first_by_term(incoming_entries, "incoming", warnings)
+    additions: List[GlossaryEntry] = []
+    changes: List[Tuple[GlossaryEntry, GlossaryEntry]] = []
+    for key, incoming in incoming_by_term.items():
+        current = open_by_term.get(key)
+        if current is None:
+            additions.append(incoming)
+        elif ((current.translation.strip(), current.note.strip())
+              != (incoming.translation.strip(), incoming.note.strip())):
+            changes.append((current, incoming))
+    return GlossaryDiff(additions, changes, warnings)
+
+
+def apply_glossary_diff(open_entries: List[GlossaryEntry], additions: List[GlossaryEntry],
+                        changes: List[Tuple[GlossaryEntry, GlossaryEntry]]) -> List[GlossaryEntry]:
+    """A new list: each changed open entry replaced in place by its incoming one, then the
+    additions in incoming order. Matched by identity, so a repeated term changes only its first row."""
+    replaced = {id(current): incoming for current, incoming in changes}
+    return [replaced.get(id(entry), entry) for entry in open_entries] + list(additions)
+
+
+def glossary_cell_text(entry: GlossaryEntry) -> str:
+    return f"{entry.translation} — {entry.note}" if entry.note else entry.translation
+
+
 # ══════════════════════════════════════════════════════════════
 #  TABLE MODEL
 # ══════════════════════════════════════════════════════════════

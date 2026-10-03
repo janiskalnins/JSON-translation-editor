@@ -332,5 +332,69 @@ class PlainFileNameTests(unittest.TestCase):
                 self.assertEqual(jte._is_plain_file_name(name), want)
 
 
+G = jte.GlossaryEntry
+
+
+class GlossaryDiffTests(unittest.TestCase):
+    def test_term_only_in_incoming_is_an_addition(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril")], [G("Lane", "Carril"), G("Road", "Vía")])
+        self.assertEqual(diff.additions, [G("Road", "Vía")])
+
+    def test_different_translation_is_a_change(self):
+        open_lane, incoming_lane = G("Lane", "Carril"), G("Lane", "Calle")
+        diff = jte.compute_glossary_diff([open_lane], [incoming_lane])
+        self.assertEqual(diff.changes, [(open_lane, incoming_lane)])
+
+    def test_different_note_is_a_change(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril")], [G("Lane", "Carril", "road")])
+        self.assertEqual(len(diff.changes), 1)
+
+    def test_identical_rows_give_nothing(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril", "x")], [G("Lane", "Carril", "x")])
+        self.assertEqual((diff.additions, diff.changes), ([], []))
+
+    def test_terms_match_across_case_and_spaces(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril")], [G(" lane ", "Carril")])
+        self.assertEqual((diff.additions, diff.changes), ([], []))
+
+    def test_translations_are_compared_stripped(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril")], [G("Lane", " Carril ")])
+        self.assertEqual(diff.changes, [])
+
+    def test_open_only_term_is_not_listed(self):
+        diff = jte.compute_glossary_diff([G("Lane", "Carril"), G("Ball", "Bola")], [G("Lane", "Carril")])
+        self.assertEqual((diff.additions, diff.changes), ([], []))
+
+    def test_first_of_a_repeated_term_counts(self):
+        diff = jte.compute_glossary_diff([], [G("Road", "Vía"), G("road", "Camino")])
+        self.assertEqual(diff.additions, [G("Road", "Vía")])
+
+    def test_repeated_term_is_named_in_a_warning(self):
+        diff = jte.compute_glossary_diff([], [G("Road", "Vía"), G("road", "Camino")])
+        self.assertEqual(diff.warnings,
+                         ["the incoming glossary repeats road — the first row counts"])
+
+
+class ApplyGlossaryTests(unittest.TestCase):
+    def test_changes_replace_in_place_and_additions_append_in_order(self):
+        lane, ball = G("Lane", "Carril"), G("Ball", "Bola")
+        new_lane = G("Lane", "Calle")
+        result = jte.apply_glossary_diff([lane, ball], [G("Road", "Vía"), G("Net", "Red")],
+                                         [(lane, new_lane)])
+        self.assertEqual(result, [new_lane, ball, G("Road", "Vía"), G("Net", "Red")])
+
+    def test_open_list_is_not_changed(self):
+        lane = G("Lane", "Carril")
+        open_entries = [lane]
+        jte.apply_glossary_diff(open_entries, [G("Road", "Vía")], [(lane, G("Lane", "Calle"))])
+        self.assertEqual(open_entries, [G("Lane", "Carril")])
+
+    def test_cell_text(self):
+        cases = [(G("Lane", "Carril"), "Carril"), (G("Lane", "Carril", "road lane"), "Carril — road lane")]
+        for entry, want in cases:
+            with self.subTest(entry=entry):
+                self.assertEqual(jte.glossary_cell_text(entry), want)
+
+
 if __name__ == "__main__":
     sys.exit(cs.run_suite(sys.modules[__name__]))
