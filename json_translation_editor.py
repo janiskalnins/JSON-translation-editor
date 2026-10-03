@@ -1975,6 +1975,73 @@ def write_glossary(path: Path, entries: List[GlossaryEntry]):
 
 
 # ══════════════════════════════════════════════════════════════
+#  EXPORT AND IMPORT PACKAGES  (one ZIP: the language file, its sidecar, its glossary)
+# ══════════════════════════════════════════════════════════════
+
+EXPORT_INFO_NAME = "export_info.json"
+EXPORT_FORMAT = 1
+
+
+def _package_members(json_path: Path) -> List[Tuple[Path, str]]:
+    """The files a package carries for *json_path*, with their manifest roles, in package order."""
+    return [(json_path, "translation"), (meta_path_for(json_path), "metadata"),
+            (glossary_path_for(json_path), "glossary")]
+
+
+def export_manifest(json_path: Path, header: FileHeader, files: List[Tuple[str, str, bytes]],
+                    now: datetime) -> bytes:
+    """export_info.json for *files* ((name, role, bytes) in package order)."""
+    data = {
+        "format": EXPORT_FORMAT, "app": APP_NAME, "app_version": APP_VERSION,
+        "exported": now.isoformat(timespec="seconds"),
+        "language": effective_language(header, json_path),
+        "language_name": header.language_name, "version": header.version,
+        "files": [{"name": name, "role": role, "size": len(raw),
+                   "md5": hashlib.md5(raw).hexdigest()} for name, role, raw in files],
+    }
+    return (json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8")
+
+
+def build_export_zip(json_path: Path, header: FileHeader,
+                     now: Optional[datetime] = None) -> Tuple[bytes, List[str]]:
+    """The package for *json_path*: the language file and whichever of its sidecar and glossary
+    exist, read from disk byte for byte and stored flat, plus export_info.json. Returns the ZIP's
+    bytes and the names of the files packed (the manifest not counted). Raises OSError when the
+    language file cannot be read."""
+    files: List[Tuple[str, str, bytes]] = []
+    for path, role in _package_members(json_path):
+        try:
+            files.append((path.name, role, path.read_bytes()))
+        except FileNotFoundError:
+            if role == "translation":
+                raise
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, _role, raw in files:
+            zf.writestr(name, raw)
+        zf.writestr(EXPORT_INFO_NAME,
+                    export_manifest(json_path, header, files, now or datetime.now()))
+    return buffer.getvalue(), [name for name, _role, _raw in files]
+
+
+def export_summary(json_path: Path, names: List[str]) -> str:
+    """'(3 files)', or '(2 files, no glossary)' naming the companions a package lacks."""
+    missing = [label for path, label in ((meta_path_for(json_path), "metadata"),
+                                         (glossary_path_for(json_path), "glossary"))
+               if path.name not in names]
+    count = f"{len(names)} file{'' if len(names) == 1 else 's'}"
+    return f"({count}, no {' or '.join(missing)})" if missing else f"({count})"
+
+
+def suggested_export_name(json_path: Path, version: str, day: date, mode: str) -> str:
+    """es_v1.0.0_2026-10-02.zip (es_2026-10-02.zip without a version), or es.json for mode 'json'."""
+    if mode == "json":
+        return json_path.name
+    tag = f"_v{_sanitize_path_component(version)}" if version else ""
+    return f"{json_path.stem}{tag}_{day.isoformat()}.zip"
+
+
+# ══════════════════════════════════════════════════════════════
 #  TABLE MODEL
 # ══════════════════════════════════════════════════════════════
 
