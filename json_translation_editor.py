@@ -7683,6 +7683,12 @@ class MergeConflictDialog(QDialog):
     COL_INC_VALUE  = 3
     COL_RESOLUTION = 4
 
+    GL_COL_TYPE       = 0
+    GL_COL_TERM       = 1
+    GL_COL_OPEN       = 2
+    GL_COL_INC        = 3
+    GL_COL_RESOLUTION = 4
+
     # Row background tint alpha (0-255) per resolution-state theme color key,
     # tuned separately per theme so the tint reads at similar visual weight
     # against each theme's base surface color.
@@ -7704,6 +7710,7 @@ class MergeConflictDialog(QDialog):
         deletions: List[StringEntry],
         parent=None,
         sync_mode: bool = False,
+        glossary_diff: Optional["GlossaryDiff"] = None,
     ):
         super().__init__(parent)
         self._mw = parent
@@ -7719,6 +7726,13 @@ class MergeConflictDialog(QDialog):
         self._accepted_additions:  List[StringEntry] = []
         self._resolved_conflicts:  List[StringEntry] = []
         self._deletions_to_remove: List[StringEntry] = []
+        self._gl_additions = list(glossary_diff.additions) if glossary_diff else []
+        self._gl_changes   = list(glossary_diff.changes) if glossary_diff else []
+        self._gl_addition_combos: List[QComboBox] = []
+        self._gl_change_combos:   List[QComboBox] = []
+        self._gl_row_kind: List[str] = []   # "new_term" | "changed_term", per glossary row
+        self._accepted_glossary_additions: List[GlossaryEntry] = []
+        self._glossary_changes_to_apply:   List[Tuple[GlossaryEntry, GlossaryEntry]] = []
 
         # Column widths (Type, Resolution only -- Source/Open/Incoming are Stretch, same
         # convention as the main table's own text columns) -- debounced the same way as
@@ -7756,14 +7770,24 @@ class MergeConflictDialog(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self._build_ui()
         self._load_values()
+        if self._has_glossary():
+            self._load_glossary_values()
         self._apply_style()
         self._fit_to_content()
         # Defensive: with the default registered (see _build_ui) the dialog already starts on Apply &
-        # Close. Initial focus in the table keeps Enter on open applying even if that registration were
+        # Close. Initial focus in a table keeps Enter on open applying even if that registration were
         # ever broken (the autoDefault Select All button would otherwise take focus and become the
-        # default). It also starts keyboard focus in the table.
-        self._table.setTabKeyNavigation(False)   # the table is read-only; Tab must reach the toolbar and footer
-        self._table.setFocus()
+        # default). The tables are read-only; Tab must reach the toolbar and footer.
+        self._table.setTabKeyNavigation(False)
+        focus_table = self._table
+        if self._has_glossary():
+            self._gl_table.setTabKeyNavigation(False)
+            if not self.row_count():
+                focus_table = self._gl_table
+        focus_table.setFocus()
+
+    def _has_glossary(self) -> bool:
+        return bool(self._gl_additions or self._gl_changes)
 
     # Cap on a Stretch text column's contribution to _table_natural_width, matching the main
     # table's own Source/Translated default width (Settings.DEFAULTS["column_widths"]). Without
@@ -7771,14 +7795,12 @@ class MergeConflictDialog(QDialog):
     # cell still shows its full text via the existing tooltip (see _item()).
     _STRETCH_COL_WIDTH_CAP = 280
 
-    def _table_natural_width(self) -> int:
+    def _table_natural_width(self, table: QTableWidget, stretch_cols: Tuple[int, ...]) -> int:
         """Width the table needs to show every column's content, capping the three Stretch text
         columns (Source, Open value, Incoming value) so one long string can't blow up the dialog.
         Stretch columns are sized by Qt to the view rather than to their contents, so the contents
         are measured directly here instead of being read back from the header."""
-        table = self._table
         fm, header_fm = table.fontMetrics(), table.horizontalHeader().fontMetrics()
-        stretch_cols = (self.COL_SOURCE, self.COL_OPEN_VALUE, self.COL_INC_VALUE)
         total = table.verticalHeader().sizeHint().width() + 24   # row numbers + scrollbar allowance
         for col in range(table.columnCount()):
             widest = header_fm.horizontalAdvance(table.horizontalHeaderItem(col).text())
@@ -7795,12 +7817,19 @@ class MergeConflictDialog(QDialog):
         return total
 
     def _wanted_width(self) -> int:
-        """The wider of the toolbar (unwrapped, plus the header band's side margins) and the
-        table's natural width -- before the screen cap. With short button labels the toolbar
-        alone is much narrower than it used to be, so the table decides for long strings."""
-        margins = self._header_band.layout().contentsMargins()
-        toolbar_w = self._toolbar.unwrapped_width() + margins.left() + margins.right()
-        return max(toolbar_w, self._table_natural_width())
+        """The widest of each toolbar (unwrapped, plus its header band's side margins) and each
+        table's natural width -- before the screen cap."""
+        def band_width(band: QFrame, toolbar: "FlowLayout") -> int:
+            margins = band.layout().contentsMargins()
+            return toolbar.unwrapped_width() + margins.left() + margins.right()
+        widths = [band_width(self._header_band, self._toolbar),
+                  self._table_natural_width(self._table, (self.COL_SOURCE, self.COL_OPEN_VALUE,
+                                                          self.COL_INC_VALUE))]
+        if self._has_glossary():
+            widths += [band_width(self._gl_header_band, self._gl_toolbar),
+                       self._table_natural_width(self._gl_table, (self.GL_COL_TERM, self.GL_COL_OPEN,
+                                                                  self.GL_COL_INC))]
+        return max(widths)
 
     def _fit_to_content(self):
         """Resize once, right after the toolbar and table are first built. Width-first: pick the
@@ -7840,6 +7869,12 @@ class MergeConflictDialog(QDialog):
         self._deletions_to_remove = [
             entry for entry, combo in zip(self._deletions, self._deletion_combos)
             if combo.currentText() == "Delete"]
+        self._accepted_glossary_additions = [
+            entry for entry, combo in zip(self._gl_additions, self._gl_addition_combos)
+            if combo.currentText() == "Accept"]
+        self._glossary_changes_to_apply = [
+            pair for pair, combo in zip(self._gl_changes, self._gl_change_combos)
+            if combo.currentText() == "Keep incoming"]
         super().done(result)
 
     def accepted_additions(self) -> List[StringEntry]:
@@ -7853,6 +7888,14 @@ class MergeConflictDialog(QDialog):
     def deletions_to_remove(self) -> List[StringEntry]:
         """The deletion candidates set to "Delete" when the dialog closed."""
         return list(self._deletions_to_remove)
+
+    def accepted_glossary_additions(self) -> List[GlossaryEntry]:
+        """The new terms set to "Accept" when the dialog closed."""
+        return list(self._accepted_glossary_additions)
+
+    def glossary_changes_to_apply(self) -> List[Tuple[GlossaryEntry, GlossaryEntry]]:
+        """The (open, incoming) changed terms set to "Keep incoming" when the dialog closed."""
+        return list(self._glossary_changes_to_apply)
 
     def row_count(self) -> int:
         return len(self._row_kind)
@@ -7929,6 +7972,15 @@ class MergeConflictDialog(QDialog):
             QFrame#mergeCol, QFrame#mergeColFirst {{ background: transparent; border: none; }}
             QFrame#mergeCol {{ border-left: 1px solid {t['bar_border']}; }}
             {_merge_tint_qss(t, self._is_dark, pt_small)}
+            QWidget#mergePage {{ background: {t['dlg_bg']}; }}
+            QTabWidget::pane {{ border: none; }}
+            QTabBar {{ background: {t['dlg_bg']}; }}
+            QTabBar::tab {{ background: {t['bg3']}; color: {t['fg_dim']};
+                            border: 1px solid {t['border']}; border-bottom: none;
+                            padding: 5px 14px; margin-right: 2px; }}
+            QTabBar::tab:selected {{ background: {t['dlg_bg']}; color: {t['fg']};
+                                     border-top: 2px solid {t['accent']}; }}
+            QTabBar::tab:focus {{ color: {t['fg']}; border-color: {t['accent']}; }}
         """)
 
     def other_side_name(self) -> str:
@@ -7949,20 +8001,47 @@ class MergeConflictDialog(QDialog):
         setattr(self, attr, btn)
         return btn
 
+    def _toolbar_band(self, columns) -> Tuple[QFrame, "FlowLayout"]:
+        """A header band holding captioned button columns (caption over a button row) in a
+        FlowLayout, so they wrap if the dialog is made narrower than the toolbar."""
+        band = QFrame()
+        band.setObjectName("dlgHeaderBand")
+        band_lay = QVBoxLayout(band)
+        band_lay.setContentsMargins(12, 6, 12, 6)
+        toolbar = FlowLayout(spacing=0)
+        for object_name, caption, kind, buttons in columns:
+            column = QFrame()
+            column.setObjectName(object_name)
+            col_lay = QVBoxLayout(column)
+            col_lay.setContentsMargins(0 if object_name == "mergeColFirst" else 12, 4, 12, 4)
+            col_lay.setSpacing(3)
+            cap = QLabel(caption)
+            cap.setProperty("mergeCaption", kind)
+            col_lay.addWidget(cap)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            for btn in buttons:
+                row.addWidget(btn)
+            col_lay.addLayout(row)
+            toolbar.addWidget(column)
+        band_lay.addLayout(toolbar)
+        return band, toolbar
+
     def _build_ui(self):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         total = len(self._additions) + len(self._conflicts) + len(self._deletions)
-
-        # Header band: the toolbar only. Four columns (caption over a button row) in a
-        # FlowLayout so they wrap if the dialog is made narrower than the toolbar.
-        self._header_band = QFrame()
-        self._header_band.setObjectName("dlgHeaderBand")
-        header_lay = QVBoxLayout(self._header_band)
-        header_lay.setContentsMargins(12, 6, 12, 6)
-        toolbar = FlowLayout(spacing=0)
-        self._toolbar = toolbar  # exposed for _wanted_width()'s call to unwrapped_width()
+        has_glossary = self._has_glossary()
+        gl_total = len(self._gl_additions) + len(self._gl_changes)
+        if has_glossary:
+            strings_page = QWidget()
+            strings_page.setObjectName("mergePage")
+            strings_lay = QVBoxLayout(strings_page)
+            strings_lay.setContentsMargins(0, 0, 0, 0)
+            strings_lay.setSpacing(0)
+        else:
+            strings_lay = lay   # no glossary rows: the dialog is built exactly as before
 
         select_all = self._make_button("_btn_select_all", "Select All", "Select All",
                                        self._select_all, None)
@@ -7997,21 +8076,7 @@ class MergeConflictDialog(QDialog):
                 btn.setParent(self)
                 btn.hide()
             columns = [c for c in columns if c[1] != "Conflicts"]
-        for object_name, caption, kind, buttons in columns:
-            column = QFrame()
-            column.setObjectName(object_name)
-            col_lay = QVBoxLayout(column)
-            col_lay.setContentsMargins(0 if object_name == "mergeColFirst" else 12, 4, 12, 4)
-            col_lay.setSpacing(3)
-            cap = QLabel(caption)
-            cap.setProperty("mergeCaption", kind)
-            col_lay.addWidget(cap)
-            row = QHBoxLayout()
-            row.setSpacing(4)
-            for btn in buttons:
-                row.addWidget(btn)
-            col_lay.addLayout(row)
-            toolbar.addWidget(column)
+        self._header_band, self._toolbar = self._toolbar_band(columns)
 
         self._btn_select_additions.setEnabled(bool(self._additions))
         self._btn_select_conflicts.setEnabled(bool(self._conflicts))
@@ -8023,8 +8088,7 @@ class MergeConflictDialog(QDialog):
         self._btn_delete_selected.setEnabled(bool(self._deletions))
         self._btn_keep_selected.setEnabled(bool(self._deletions))
 
-        header_lay.addLayout(toolbar)
-        lay.addWidget(self._header_band)
+        strings_lay.addWidget(self._header_band)
 
         self._table = QTableWidget(total, 5)
         self._table.setHorizontalHeaderLabels(
@@ -8047,7 +8111,16 @@ class MergeConflictDialog(QDialog):
         # covered by its combo, so a double-click there still reaches the combo.
         self._table.cellDoubleClicked.connect(lambda row, _col: self._open_compare(row))
         self._table.verticalHeader().sectionDoubleClicked.connect(self._open_compare)
-        lay.addWidget(self._table, 1)
+        strings_lay.addWidget(self._table, 1)
+        if has_glossary:
+            self._tabs = QTabWidget()
+            self._tabs.setDocumentMode(True)
+            self._tabs.addTab(strings_page, f"Strings ({total})")
+            self._tabs.addTab(self._build_glossary_page(), f"Glossary ({gl_total})")
+            self._tabs.setTabVisible(0, total > 0)   # only tabs with rows are shown
+            if not total:
+                self._tabs.setCurrentIndex(1)
+            lay.addWidget(self._tabs, 1)
 
         # Footer band: the auto-resolve mode on the left, the actions on the right.
         footer = QFrame()
@@ -8091,9 +8164,13 @@ class MergeConflictDialog(QDialog):
                   if self._sync_mode else
                   f"{len(self._additions)} addition(s), {len(self._conflicts)} conflict(s), "
                   f"{len(self._deletions)} deletion(s)")
-        status_lay.addWidget(QLabel(
-            f"{counts} need your review ({total} row(s) total). Double-click a row to compare."
-        ))
+        if has_glossary:
+            counts += (f", {len(self._gl_additions)} new term(s), "
+                       f"{len(self._gl_changes)} changed term(s)")
+        hint = "Double-click a string to compare." if has_glossary else "Double-click a row to compare."
+        self._status_lbl = QLabel(
+            f"{counts} need your review ({total + gl_total} row(s) total). {hint}")
+        status_lay.addWidget(self._status_lbl)
         lay.addWidget(status)
 
     def _load_values(self):
@@ -8151,6 +8228,77 @@ class MergeConflictDialog(QDialog):
         self._apply_saved_column_widths()
         for r in range(row):
             self._recolor_row(r)
+
+    def _build_glossary_page(self) -> QWidget:
+        """The Glossary tab: its own toolbar and a table of new and changed terms. Auto-resolve and
+        the compare pop-up belong to the Strings tab only."""
+        page = QWidget()
+        page.setObjectName("mergePage")
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        page_lay.setSpacing(0)
+        select_all = self._make_button("_btn_gl_select_all", "Select All", "Select All Terms",
+                                       lambda: self._gl_table.selectAll(), None)
+        columns = [
+            ("mergeColFirst", "Selection", "neutral", [select_all]),
+            ("mergeCol", "New terms", "ok", [
+                self._make_button("_btn_gl_select_new", "Select", "Select New Terms",
+                                  lambda: self._select_gl_kind("new_term"), "ok"),
+                self._make_button("_btn_gl_accept", "Accept", "Accept Selected Terms",
+                                  lambda: self._set_selected_gl("new_term", "Accept"), "ok"),
+                self._make_button("_btn_gl_reject", "Reject", "Reject Selected Terms",
+                                  lambda: self._set_selected_gl("new_term", "Reject"), "ok")]),
+            ("mergeCol", "Changed", "warn", [
+                self._make_button("_btn_gl_select_changed", "Select", "Select Changed Terms",
+                                  lambda: self._select_gl_kind("changed_term"), "warn"),
+                self._make_button("_btn_gl_keep_open", "Keep open", "Keep Open",
+                                  lambda: self._set_selected_gl("changed_term", "Keep open"), "warn"),
+                self._make_button("_btn_gl_keep_incoming", "Keep incoming", "Keep Incoming",
+                                  lambda: self._set_selected_gl("changed_term", "Keep incoming"),
+                                  "warn")]),
+        ]
+        self._gl_header_band, self._gl_toolbar = self._toolbar_band(columns)
+        for btn in (self._btn_gl_select_new, self._btn_gl_accept, self._btn_gl_reject):
+            btn.setEnabled(bool(self._gl_additions))
+        for btn in (self._btn_gl_select_changed, self._btn_gl_keep_open, self._btn_gl_keep_incoming):
+            btn.setEnabled(bool(self._gl_changes))
+        page_lay.addWidget(self._gl_header_band)
+
+        self._gl_table = QTableWidget(len(self._gl_additions) + len(self._gl_changes), 5)
+        self._gl_table.setHorizontalHeaderLabels(["Type", "Term", "Open file", "Incoming", "Resolution"])
+        header = self._gl_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for col in (self.GL_COL_TERM, self.GL_COL_OPEN, self.GL_COL_INC):
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+        self._gl_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._gl_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._gl_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._gl_table.verticalHeader().setVisible(True)
+        self._gl_table.setAlternatingRowColors(True)
+        page_lay.addWidget(self._gl_table, 1)
+        return page
+
+    def _load_glossary_values(self):
+        rows = ([("new_term", "+ New term", entry.term, "", glossary_cell_text(entry),
+                  ["Accept", "Reject"], self._gl_addition_combos) for entry in self._gl_additions]
+                + [("changed_term", "⇄ Changed", current.term, glossary_cell_text(current),
+                    glossary_cell_text(incoming), ["Keep open", "Keep incoming"],
+                    self._gl_change_combos) for current, incoming in self._gl_changes])
+        for row, (kind, label, term, open_text, incoming_text, choices, combos) in enumerate(rows):
+            self._gl_table.setItem(row, self.GL_COL_TYPE, QTableWidgetItem(label))
+            self._gl_table.setItem(row, self.GL_COL_TERM, self._item(term))
+            self._gl_table.setItem(row, self.GL_COL_OPEN, self._item(open_text))
+            self._gl_table.setItem(row, self.GL_COL_INC, self._item(incoming_text))
+            self._gl_table.setItem(row, self.GL_COL_RESOLUTION, QTableWidgetItem(""))
+            combo = _WidePopupComboBox()
+            combo.addItems(choices)   # the first item is the default: Accept / Keep open
+            combo.currentTextChanged.connect(lambda _text, r=row: self._recolor_gl_row(r))
+            self._gl_table.setCellWidget(row, self.GL_COL_RESOLUTION, combo)
+            combos.append(combo)
+            self._gl_row_kind.append(kind)
+        self._gl_table.resizeColumnsToContents()
+        for row in range(len(rows)):
+            self._recolor_gl_row(row)
 
     # ── Column widths ────────────────────────────────────────
     # Only Type and Resolution are Interactive (Source/Open/Incoming are Stretch, same
@@ -8226,6 +8374,10 @@ class MergeConflictDialog(QDialog):
             color_key = "dlg_count_concern"
             faint = widget.currentText() != "Delete"
 
+        self._tint_row(self._table, row, color_key, faint)
+
+    def _tint_row(self, table: QTableWidget, row: int, color_key: Optional[str], faint: bool):
+        """Paint every item of *row* with the category colour (faint or full), or clear it."""
         if color_key:
             if faint:
                 alpha_map = self._TINT_ALPHA_DARK_FAINT if self._is_dark else self._TINT_ALPHA_LIGHT_FAINT
@@ -8236,12 +8388,19 @@ class MergeConflictDialog(QDialog):
             brush = QBrush(color)
         else:
             brush = QBrush()  # clears any custom background
-
-        for col in (self.COL_SOURCE, self.COL_TYPE, self.COL_OPEN_VALUE, self.COL_INC_VALUE,
-                    self.COL_RESOLUTION):
-            item = self._table.item(row, col)
+        for col in range(table.columnCount()):
+            item = table.item(row, col)
             if item is not None:
                 item.setBackground(brush)
+
+    def _recolor_gl_row(self, row: int):
+        """New term: full green while Accept, untinted when rejected. Changed term: amber, faint for
+        Keep open and full for Keep incoming -- the same rules as the Strings rows."""
+        choice = self._gl_table.cellWidget(row, self.GL_COL_RESOLUTION).currentText()
+        if self._gl_row_kind[row] == "new_term":
+            self._tint_row(self._gl_table, row, "dlg_count_ok" if choice == "Accept" else None, False)
+        else:
+            self._tint_row(self._gl_table, row, "dlg_count_warn", choice != "Keep incoming")
 
     # ── Selection ─────────────────────────────────────────────
 
@@ -8253,18 +8412,30 @@ class MergeConflictDialog(QDialog):
 
     def _select_kind(self, kind: str):
         rows = [row for row, row_kind in enumerate(self._row_kind) if row_kind == kind]
-        self._table.clearSelection()
+        self._select_rows(self._table, rows)
+
+    @staticmethod
+    def _select_rows(table: QTableWidget, rows: List[int]):
+        """Replace the selection with *rows*, in one QItemSelection (selectRow() in a loop keeps
+        only the last row)."""
+        table.clearSelection()
         if not rows:
             return
-        last_col = self._table.columnCount() - 1
+        last_col = table.columnCount() - 1
         selection = QItemSelection()
         for row in rows:
-            left = self._table.model().index(row, 0)
-            right = self._table.model().index(row, last_col)
-            selection.select(left, right)
-        self._table.selectionModel().select(
-            selection, QItemSelectionModel.Select | QItemSelectionModel.Rows
-        )
+            selection.select(table.model().index(row, 0), table.model().index(row, last_col))
+        table.selectionModel().select(selection, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+    def _select_gl_kind(self, kind: str):
+        self._select_rows(self._gl_table,
+                          [row for row, row_kind in enumerate(self._gl_row_kind) if row_kind == kind])
+
+    def _set_selected_gl(self, kind: str, choice: str):
+        for row in sorted({idx.row() for idx in self._gl_table.selectionModel().selectedRows()}):
+            if self._gl_row_kind[row] == kind:
+                self._gl_table.cellWidget(row, self.GL_COL_RESOLUTION).setCurrentText(choice)
+                self._recolor_gl_row(row)
 
     def _open_compare(self, row: int):
         """Compare *row* in MergeCompareDialog. Modal; it writes its choices straight into this

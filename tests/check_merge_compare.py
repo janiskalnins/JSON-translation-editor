@@ -13,6 +13,7 @@ ones are never touched), on a 1920 x 1080 offscreen screen:
   * the MergeConflictDialog row accessors and the shared tint rules;
   * the pop-up's header, panes, metadata, buttons, Back/Forward, auto-resolve;
   * keys, opening by double-click, and cleanup after Close;
+  * the Glossary tab: titles, cells, defaults, tints, toolbar, counts, no compare pop-up;
   * sizes in both themes at 10 and 14 pt.
 
 Run:  python tests/check_merge_compare.py      (exit code 0 = all passed)
@@ -26,6 +27,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 SCRATCH = Path(tempfile.mkdtemp(prefix="xte_merge_compare_"))
@@ -504,9 +506,82 @@ def check_sync_mode(failures, win):
     sync_dlg.reject()
 
 
+def _glossary_diff():
+    """One new term and one changed term (with a note on the open side)."""
+    return jte.GlossaryDiff(
+        [jte.GlossaryEntry("Road", "Vía")],
+        [(jte.GlossaryEntry("Lane", "Carril", "road lane"), jte.GlossaryEntry("Lane", "Calle"))], [])
+
+
+def _tint_alpha(table, row):
+    """0 for an untinted row (a cleared QBrush() still reports opaque black as its colour)."""
+    brush = table.item(row, 0).background()
+    return 0 if brush.style() == Qt.NoBrush else brush.color().alpha()
+
+
+def check_glossary_tab(failures, win):
+    plain, _ = _merge_dialog(win)
+    check(failures, "no glossary: no tabs (dialog as before)", not hasattr(plain, "_tabs"))
+    _close(plain)
+
+    additions, conflicts, deletions = _fixture()
+    mdlg = jte.MergeConflictDialog(additions, conflicts, deletions, parent=win,
+                                   glossary_diff=_glossary_diff())
+    mdlg.show()
+    QApplication.processEvents()
+    tabs = mdlg._tabs
+    check(failures, "tab titles", [tabs.tabText(i) for i in range(tabs.count())]
+          == ["Strings (4)", "Glossary (2)"], repr([tabs.tabText(i) for i in range(tabs.count())]))
+    check(failures, "both tabs visible", tabs.isTabVisible(0) and tabs.isTabVisible(1))
+    table = mdlg._gl_table
+    check(failures, "glossary columns",
+          [table.horizontalHeaderItem(c).text() for c in range(5)]
+          == ["Type", "Term", "Open file", "Incoming", "Resolution"])
+    check(failures, "open cell shows the note", table.item(1, 2).text() == "Carril — road lane",
+          table.item(1, 2).text())
+    check(failures, "cell tooltip is its full text", table.item(1, 2).toolTip() == "Carril — road lane")
+    check(failures, "new term defaults to Accept", mdlg._gl_addition_combos[0].currentText() == "Accept")
+    check(failures, "changed term defaults to Keep open",
+          mdlg._gl_change_combos[0].currentText() == "Keep open")
+    check(failures, "accepted new term is tinted", _tint_alpha(table, 0) > 0)
+    mdlg._gl_addition_combos[0].setCurrentText("Reject")
+    check(failures, "rejected new term is untinted", _tint_alpha(table, 0) == 0,
+          str(_tint_alpha(table, 0)))
+    faint = _tint_alpha(table, 1)
+    mdlg._gl_change_combos[0].setCurrentText("Keep incoming")
+    check(failures, "Keep incoming tints stronger than Keep open", _tint_alpha(table, 1) > faint > 0,
+          f"{faint} -> {_tint_alpha(table, 1)}")
+    mdlg._gl_change_combos[0].setCurrentText("Keep open")
+    mdlg._btn_gl_select_new.click()
+    rows = sorted({i.row() for i in table.selectionModel().selectedRows()})
+    check(failures, "Select (New terms) selects the new terms only", rows == [0], repr(rows))
+    table.selectAll()
+    mdlg._btn_gl_keep_incoming.click()
+    check(failures, "Keep incoming changes changed rows only",
+          (mdlg._gl_addition_combos[0].currentText(), mdlg._gl_change_combos[0].currentText())
+          == ("Reject", "Keep incoming"))
+    check(failures, "status strip counts terms",
+          "1 new term(s), 1 changed term(s)" in mdlg._status_lbl.text(), mdlg._status_lbl.text())
+    opened = []
+    with mock.patch.object(jte.MergeCompareDialog, "exec", lambda d: opened.append(d) or 0):
+        table.cellDoubleClicked.emit(0, 1)
+    check(failures, "double-click on a term opens no compare pop-up", not opened)
+    for btn in (mdlg._btn_gl_select_new, mdlg._btn_gl_keep_incoming):
+        check(failures, f"{btn.text()!r} fits", btn.width() >= btn.sizeHint().width(),
+              f"{btn.width()} < {btn.sizeHint().width()}")
+    _close(mdlg)
+
+    only_glossary = jte.MergeConflictDialog([], [], [], parent=win, glossary_diff=_glossary_diff())
+    only_glossary.show()
+    QApplication.processEvents()
+    check(failures, "no string rows: Strings tab hidden", not only_glossary._tabs.isTabVisible(0))
+    check(failures, "no string rows: Glossary tab current", only_glossary._tabs.currentIndex() == 1)
+    _close(only_glossary)
+
+
 WINDOW_STEPS = [check_row_accessors, check_show_row_single_selection,
                 check_last_row_focus_with_auto_resolve, check_content, check_keys_and_opening,
-                check_sizes, check_sync_mode]
+                check_sizes, check_sync_mode, check_glossary_tab]
 
 
 def main():

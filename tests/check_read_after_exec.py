@@ -7,6 +7,8 @@ closed by a zero-delay timer:
 
   * MergeConflictDialog: accepted_additions(), resolved_conflicts(), deletions_to_remove(), with a
     choice changed from its default in each category, after Apply & Close (accept);
+  * MergeConflictDialog with a glossary diff: accepted_glossary_additions() and
+    glossary_changes_to_apply();
   * RestoreFromBackupDialog: restore_glossary_requested() after accept, with the box ticked and
     with it cleared;
   * both dialogs are really deleted afterwards (the fix must not drop WA_DeleteOnClose).
@@ -79,6 +81,30 @@ def check_merge(failures, win):
         failures.append(f"merge: reading choices after exec(): {e}")
 
 
+def check_merge_glossary(failures, win):
+    lane, ball = jte.GlossaryEntry("Lane", "Carril"), jte.GlossaryEntry("Ball", "Bola")
+    road, net = jte.GlossaryEntry("Road", "Vía"), jte.GlossaryEntry("Net", "Red")
+    change = (lane, jte.GlossaryEntry("Lane", "Calle"))
+    kept_change = (ball, jte.GlossaryEntry("Ball", "Pelota"))
+    diff = jte.GlossaryDiff([road, net], [change, kept_change], [])
+    dlg = jte.MergeConflictDialog([_e("Add", "Pievieno")], [], [], parent=win, glossary_diff=diff)
+
+    def choose(d):
+        d._gl_addition_combos[1].setCurrentText("Reject")
+        d._gl_change_combos[0].setCurrentText("Keep incoming")
+
+    result = _exec_then(dlg, choose)
+    check(failures, "glossary: accepted", result == QDialog.Accepted, str(result))
+    check(failures, "glossary: dialog deleted after exec()", not isValid(dlg))
+    try:
+        check(failures, "glossary: accepted_glossary_additions",
+              dlg.accepted_glossary_additions() == [road], repr(dlg.accepted_glossary_additions()))
+        check(failures, "glossary: glossary_changes_to_apply",
+              dlg.glossary_changes_to_apply() == [change], repr(dlg.glossary_changes_to_apply()))
+    except RuntimeError as e:
+        failures.append(f"glossary: reading choices after exec(): {e}")
+
+
 def check_restore(failures, win):
     for ticked in (True, False):
         dlg = jte.RestoreFromBackupDialog(SCRATCH, parent=win)
@@ -103,7 +129,7 @@ def main():
     win.settings.data.setdefault("backup", {})["enabled"] = False
     win.show()
     app.processEvents()
-    for step in (check_merge, check_restore):
+    for step in (check_merge, check_merge_glossary, check_restore):
         try:
             step(failures, win)
         except Exception as e:
