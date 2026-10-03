@@ -7766,7 +7766,7 @@ class MergeConflictDialog(QDialog):
         # and MainWindow._apply_theme()'s stylesheet cascade reaches implicitly on every later
         # font or theme change. A large merge left uncleared turned a routine settings change
         # into a multi-second freeze. QDialog.exec() deletes the dialog, combos included, before
-        # it returns, so done() keeps the choices that MainWindow._merge_from_file() reads after.
+        # it returns, so done() keeps the choices that MainWindow._import_merge() reads after.
         self.setAttribute(Qt.WA_DeleteOnClose)
         self._build_ui()
         self._load_values()
@@ -9380,7 +9380,7 @@ class MainWindow(QMainWindow):
         self._act(fm, "Save As…",            self._save_as,            "Ctrl+Shift+S")
         self._act(fm, "Close File",          self._close_file,         "Ctrl+W")
         self._act(fm, "Restore from Backup…", self._open_restore_backup, "")
-        self._act(fm, "Merge from File…",     self._merge_from_file,     "")
+        self._act(fm, "Import…",              self._import,              "")
         self._act(fm, "Sync Keys from File…", self._sync_keys_from_file, "")
         self._act(fm, "Properties…",          self._open_file_properties, "")
         self._act(fm, "Export…",              self._export,              "")
@@ -10214,61 +10214,180 @@ class MainWindow(QMainWindow):
         summary = f"  {export_summary(self.current_file, names)}" if mode == "zip" else ""
         self._show_message(f"Exported: {target.name}{summary}", 5000)
 
-    def _merge_from_file(self):
-        """Reconcile the open file with a second language file (File → Merge from File…)."""
-        if not self.current_file:
-            QMessageBox.warning(self, "Merge from File",
-                                 "Open a file first before merging.")
-            return
-
-        start = self.settings.get("last_directory") or ""
+    def _import(self):
+        """File → Import…: a package ZIP or a loose .json with its companions. Merged into the open
+        file when it is the same language, else unpacked into (or merged in) a folder the user picks."""
+        start = (str(self.current_file.parent) if self.current_file
+                 else self.settings.get("last_directory") or "")
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select File to Merge From", start,
-            "JSON Files (*.json);;All Files (*)"
-        )
+            self, "Import Translation", start, "Translation packages (*.zip *.json)")
         if not path:
             return
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self._import_from(Path(path), Path(temp_dir))
 
+    def _import_from(self, source: Path, temp_dir: Path):
+        """Read, check and parse *source*; nothing outside *temp_dir* is written before this
+        decides where the translation goes."""
         try:
-            incoming = load_translation_file(Path(path), keep_damaged=False)
-        except Exception as e:
-            QMessageBox.critical(self, "Merge Error", f"Failed to read file:\n{e}")
+            package = read_translation_package(source, temp_dir)
+        except PackageError as e:
+            QMessageBox.critical(self, "Import Error", f"Not a translation package: {e}")
             return
-        incoming_culture = effective_language(incoming.header, Path(path))
-
-        if incoming_culture and self.target_culture and incoming_culture != self.target_culture:
-            r = QMessageBox.warning(
-                self, "Language Mismatch",
-                f"Open file is {self.target_culture}, selected file is "
-                f"{incoming_culture} — continue?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-            )
+        except OSError as e:
+            _log_error(f"reading {source}", e)
+            QMessageBox.critical(self, "Import Error", f"{source.name} could not be read.")
+            return
+        if package.mismatches:
+            r = QMessageBox.question(
+                self, "Checksum Mismatch",
+                f"These files do not match their checksums: {', '.join(package.mismatches)} — "
+                "Import anyway?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return
+        try:
+            incoming = load_translation_file(package.json_path, keep_damaged=False)
+        except JsonFormatError as e:
+            QMessageBox.critical(self, "Import Error",
+                                 f"{package.json_path.name} could not be read:\n{e}")
+            return
+        except OSError as e:
+            _log_error(f"reading {package.json_path}", e)
+            QMessageBox.critical(self, "Import Error", f"{package.json_path.name} could not be read.")
+            return
+        incoming_glossary, glossary_warnings = (parse_glossary(package.glossary_path)
+                                                if package.glossary_path else ([], []))
+        if package.is_zip and not package.has_manifest:
+            self._show_message("No checksums in this package — files not verified", 5000)
+        language = effective_language(incoming.header, package.json_path)
+        if self.current_file and same_language(self.target_culture, language):
+            self._import_merge(incoming, incoming_glossary, glossary_warnings, language)
+        else:
+            self._import_into_folder(package, incoming, incoming_glossary, glossary_warnings,
+                                     language)
 
+    def _import_into_folder(self, package: IncomingPackage, incoming: LoadedFile,
+                            incoming_glossary: List[GlossaryEntry], glossary_warnings: List[str],
+                            language: str):
+        """Another language, or no file open: open <folder>/<stem>.json and merge into it, or
+        unpack the package there when it does not exist yet."""
+        start = (str(self.current_file.parent) if self.current_file
+                 else self.settings.get("last_directory") or "")
+        folder = QFileDialog.getExistingDirectory(self, "Import Into Folder", start)
+        if not folder:
+            return
+        target = (Path(folder) / f"{package.json_path.stem}.json").resolve()
+        if target.exists():
+            if target != self.current_file:
+                if not self._confirm_close_file():
+                    return
+                self._load(target)
+                if self.current_file != target:
+                    return   # _load showed its Open Error
+            self._import_merge(incoming, incoming_glossary, glossary_warnings, language)
+            return
+        if not self._confirm_close_file():
+            return
+        if not self._unpack_package(package, target):
+            return
+        self._load(target)
+        if self.current_file == target:
+            self._show_message(f"Imported: {_file_label(target.name, self.file_version)}  "
+                               f"({len(self.entries)} strings) into {target.parent.name}", 5000)
+
+    def _unpack_package(self, package: IncomingPackage, target: Path) -> bool:
+        """Write the package as *target* (which does not exist yet): companions first and the .json
+        last, so a failure never leaves a .json without the sidecar that came with it. A stray
+        companion already there is replaced by the package's, or removed when the package has none,
+        so it cannot attach itself to the new file; one prompt names them first."""
+        companions = [(meta_path_for(target), package.meta_path),
+                      (glossary_path_for(target), package.glossary_path)]
+        replaced = [dest.name for dest, source in companions if dest.exists() and source is not None]
+        removed = [dest.name for dest, source in companions if dest.exists() and source is None]
+        if replaced or removed:
+            parts = ([f"{', '.join(replaced)} will be replaced"] if replaced else []) + \
+                    ([f"{', '.join(removed)} will be removed (the package has none)"] if removed else [])
+            r = QMessageBox.question(
+                self, "Replace Files",
+                f"Already in {target.parent.name}: {'; '.join(parts)}. Continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return False
+        try:
+            for dest, source in companions:
+                if source is not None:
+                    _atomic_write_bytes(dest, source.read_bytes())
+                elif dest.exists():
+                    dest.unlink()
+            _atomic_write_bytes(target, package.json_path.read_bytes())
+        except OSError as e:
+            _log_error(f"importing {target.name} into {target.parent}", e)
+            self._show_message(f"Import failed — could not write into {target.parent.name}",
+                               6000, "error")
+            return False
+        return True
+
+    def _import_merge(self, incoming: LoadedFile, incoming_glossary: List[GlossaryEntry],
+                      glossary_warnings: List[str], language: str):
+        """Merge *incoming*'s strings and glossary into the open file after review. Strings stay
+        in memory until Save; the glossary is written at once. The open file's header is kept."""
+        if language and self.target_culture and not same_language(language, self.target_culture):
+            r = QMessageBox.warning(
+                self, "Language Mismatch",
+                f"Open file is {self.target_culture}, imported file is {language} — continue?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if r != QMessageBox.Yes:
+                return
         try:
             diff = compute_merge_diff(self.entries, incoming.entries)
         except ValueError as e:
-            QMessageBox.critical(self, "Merge Error", str(e))
+            QMessageBox.critical(self, "Import Error", str(e))
             return
-
-        additions_to_add:     List[StringEntry] = diff.additions
-        conflict_resolutions: List[StringEntry] = []
-        deletions_to_remove:  List[StringEntry] = []
-        if diff.additions or diff.conflicts or diff.deletions:
-            dlg = MergeConflictDialog(
-                diff.additions, diff.conflicts, diff.deletions,
-                parent=self,
-            )
+        glossary_diff = compute_glossary_diff(self.glossary, incoming_glossary)
+        has_string_rows = bool(diff.additions or diff.conflicts or diff.deletions)
+        has_glossary_rows = bool(glossary_diff.additions or glossary_diff.changes)
+        if not (has_string_rows or has_glossary_rows or diff.auto_updated):
+            self._show_message(f"Nothing to import — {self.current_file.name} already matches", 4000)
+            return
+        additions, resolutions, deletions = diff.additions, [], []
+        glossary_additions: List[GlossaryEntry] = []
+        glossary_changes: List[Tuple[GlossaryEntry, GlossaryEntry]] = []
+        if has_string_rows or has_glossary_rows:
+            dlg = MergeConflictDialog(diff.additions, diff.conflicts, diff.deletions, parent=self,
+                                      glossary_diff=glossary_diff)
             if dlg.exec() != QDialog.Accepted:
                 return
-            additions_to_add     = dlg.accepted_additions()
-            conflict_resolutions = dlg.resolved_conflicts()
-            deletions_to_remove  = dlg.deletions_to_remove()
-
-        self._apply_merge_diff(diff, additions_to_add, conflict_resolutions, deletions_to_remove)
+            additions = dlg.accepted_additions()
+            resolutions = dlg.resolved_conflicts()
+            deletions = dlg.deletions_to_remove()
+            glossary_additions = dlg.accepted_glossary_additions()
+            glossary_changes = dlg.glossary_changes_to_apply()
+        if has_string_rows or diff.auto_updated:
+            self._apply_merge_diff(diff, additions, resolutions, deletions)
+        if glossary_additions or glossary_changes:
+            self._apply_glossary_import(glossary_additions, glossary_changes)
         for text, level in incoming.notices:
             self._show_message(f"Incoming file: {text}", 6000, level)
+        for text in glossary_warnings:
+            self._show_message(f"Incoming glossary: {text}", 6000, "warning")
+        for text in glossary_diff.warnings:
+            self._show_message(f"Glossary: {text}", 6000, "warning")
+
+    def _apply_glossary_import(self, additions: List[GlossaryEntry],
+                               changes: List[Tuple[GlossaryEntry, GlossaryEntry]]):
+        """Write the open glossary with *changes* replaced in place and *additions* appended, at
+        once, as View → Glossary's Save does. A failure leaves the strings merge applied."""
+        path = glossary_path_for(self.current_file)
+        try:
+            write_glossary(path, apply_glossary_diff(self.glossary, additions, changes))
+        except OSError as e:
+            _log_error(f"writing the imported glossary {path}", e)
+            self._show_message(f"Glossary: import failed — {path.name} could not be written",
+                               6000, "error")
+            return
+        self.glossary_path = path
+        self.glossary, self.glossary_load_warnings = parse_glossary(path)
+        self._show_message(f"Glossary: {len(additions)} added, {len(changes)} updated", 5000)
 
     def _sync_keys_from_file(self):
         """File → Sync Keys from File…: add the keys a reference file has (untranslated) and offer

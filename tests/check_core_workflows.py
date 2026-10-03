@@ -454,37 +454,235 @@ class MergeWorkflowTests(WindowTestCase):
                      "Cancel": ("Complete", "Jane", "2025-06-01"),
                      "New": ("Complete", "Jane", DEFAULT_ISO)}
 
-    def _merge_defaults(self, incoming_sidecar: Optional[bytes] = None) -> Path:
-        """Merge the incoming file with every default choice and save. *incoming_sidecar*
-        replaces the incoming file's sidecar bytes when given."""
+    def _merge_defaults(self, incoming_sidecar: Optional[bytes] = None) -> Tuple[Path, Path]:
+        """Import es.json from another folder with every default choice, and save. Returns the open
+        file and the incoming one. *incoming_sidecar* replaces the incoming sidecar's bytes."""
         path = self.load(self.OPEN_PAIRS, self.OPEN_META)
-        incoming = cs.write_pair(path.parent, "incoming", self.INCOMING_PAIRS,
-                                 meta=self.INCOMING_META)
+        incoming = cs.write_pair(cs.temp_dir(), "es", self.INCOMING_PAIRS, meta=self.INCOMING_META)
         if incoming_sidecar is not None:
             cs.write_exact(jte.meta_path_for(incoming), incoming_sidecar)
         self.modals.answers["open_path"] = str(incoming)
         with mock.patch.object(jte.MergeConflictDialog, "exec", _accept_merge_defaults):
-            self.win._merge_from_file()
+            self.win._import()
         self.win._save()
-        return path
+        return path, incoming
 
     def test_full_merge_saves_an_intact_file(self):
-        path = self._merge_defaults()
+        path, _ = self._merge_defaults()
         cs.assert_json_intact(self, path, ["Save", "Cancel", "Old", "New"])
 
     def test_full_merge_takes_the_newer_conflicting_text(self):
-        path = self._merge_defaults()
+        path, _ = self._merge_defaults()
         self.assertEqual(_reread(path)[1].text, "Anular")
 
     def test_damaged_incoming_sidecar_is_left_in_place(self):
-        path = self._merge_defaults(incoming_sidecar=b"{")
-        self.assertEqual(jte.meta_path_for(path.parent / "incoming.json").read_bytes(), b"{")
+        _, incoming = self._merge_defaults(incoming_sidecar=b"{")
+        self.assertEqual(jte.meta_path_for(incoming).read_bytes(), b"{")
 
     def test_damaged_incoming_sidecar_is_reported(self):
         self._merge_defaults(incoming_sidecar=b"{")
-        self.assertIn(("Incoming file: Metadata: incoming.json.meta is damaged — statuses shown as "
-                       "New", "error"),
+        self.assertIn(("Incoming file: Metadata: es.json.meta is damaged — statuses shown as New",
+                       "error"),
                       [(n.text, n.level) for n in self.win._notice_history])
+
+
+GLOSSARY_LANE = "term,translation,note\r\nLane,Carril,\r\n".encode("utf-8-sig")
+
+
+def _package(pairs: Dict[str, str] = PAIRS, meta=META, glossary: Optional[bytes] = None,
+             stem: str = "es") -> Path:
+    """A real export of <stem>.json (with *meta* and *glossary*) as a ZIP in a folder of its own."""
+    source = cs.write_pair(cs.temp_dir(), stem, pairs, meta=meta)
+    if glossary is not None:
+        cs.write_exact(jte.glossary_path_for(source), glossary)
+    data, _ = jte.build_export_zip(source, jte.read_file_header(source))
+    return cs.write_exact(cs.temp_dir() / f"{stem}_package.zip", data)
+
+
+def _choose_glossary(change_choice: str):
+    """MergeConflictDialog.exec() replaced: set every changed term to *change_choice*, apply."""
+    def fake_exec(dlg):
+        for combo in dlg._gl_change_combos:
+            combo.setCurrentText(change_choice)
+        dlg.done(QDialog.Accepted)
+        return QDialog.Accepted
+    return mock.patch.object(jte.MergeConflictDialog, "exec", fake_exec)
+
+
+class ImportWorkflowTests(WindowTestCase):
+    EXTRA = dict(PAIRS, New="Nuevo")
+
+    def _import(self, package: Path, exec_patch=None) -> None:
+        self.modals.answers["open_path"] = str(package)
+        with exec_patch or mock.patch.object(jte.MergeConflictDialog, "exec", _accept_merge_defaults):
+            self.win._import()
+
+    def _notices(self) -> List[Tuple[str, str]]:
+        return [(n.text, n.level) for n in self.win._notice_history]
+
+    def _open_italian(self) -> Path:
+        """Open it.json whose sidecar says "it", so an "es" package goes the folder route."""
+        path = cs.write_pair(cs.temp_dir(), "it", PAIRS, meta=META, header={"language": "it"})
+        self.win.is_modified = False
+        self.win._load(path)
+        return path
+
+    # into the open file
+    def test_same_language_merges_into_the_open_file(self):
+        path = self.load()
+        self._import(_package(self.EXTRA))
+        self.win._save()
+        cs.assert_json_intact(self, path, NAMES + ["New"])
+
+    def test_same_language_asks_for_no_folder(self):
+        self.load()
+        self._import(_package(self.EXTRA))
+        self.assertEqual(self.modals.titles("folder"), [])
+
+    def test_new_glossary_terms_are_appended(self):
+        path = self.load()
+        jte.write_glossary(jte.glossary_path_for(path), [jte.GlossaryEntry("Lane", "Carril")])
+        self.win._load(path)
+        self._import(_package(glossary="term,translation,note\r\nLane,Carril,\r\nRoad,Vía,\r\n"
+                                       .encode("utf-8-sig")))
+        self.assertEqual([g.term for g in jte.parse_glossary(jte.glossary_path_for(path))[0]],
+                         ["Lane", "Road"])
+
+    def test_changed_term_keeps_the_open_translation_by_default(self):
+        path = self.load()
+        jte.write_glossary(jte.glossary_path_for(path), [jte.GlossaryEntry("Lane", "Calle")])
+        self.win._load(path)
+        self._import(_package(glossary=GLOSSARY_LANE), _choose_glossary("Keep open"))
+        self.assertEqual(jte.parse_glossary(jte.glossary_path_for(path))[0][0].translation, "Calle")
+
+    def test_changed_term_takes_keep_incoming(self):
+        path = self.load()
+        jte.write_glossary(jte.glossary_path_for(path), [jte.GlossaryEntry("Lane", "Calle")])
+        self.win._load(path)
+        self._import(_package(glossary=GLOSSARY_LANE), _choose_glossary("Keep incoming"))
+        self.assertEqual(jte.parse_glossary(jte.glossary_path_for(path))[0][0].translation, "Carril")
+
+    def test_glossary_only_import_leaves_the_strings_saved(self):
+        self.load()
+        self._import(_package(glossary=GLOSSARY_LANE))
+        self.assertFalse(self.win.is_modified)
+
+    def test_glossary_message(self):
+        self.load()
+        self._import(_package(glossary=GLOSSARY_LANE))
+        self.assertIn(("Glossary: 1 added, 0 updated", "info"), self._notices())
+
+    def test_nothing_to_import(self):
+        path = self.load()
+        package = cs.write_exact(cs.temp_dir() / "same.zip",
+                                 jte.build_export_zip(path, jte.read_file_header(path))[0])
+        opened = []
+        with mock.patch.object(jte.MergeConflictDialog, "exec", lambda d: opened.append(d) or 0):
+            self.modals.answers["open_path"] = str(package)
+            self.win._import()
+        self.assertEqual((opened, self.win.is_modified,
+                          ("Nothing to import — es.json already matches", "info") in self._notices()),
+                         ([], False, True))
+
+    def test_plain_json_merges_into_the_open_file(self):
+        path = self.load()
+        loose = cs.write_pair(cs.temp_dir(), "es", self.EXTRA, meta=META)
+        self._import(loose)
+        self.win._save()
+        cs.assert_json_intact(self, path, NAMES + ["New"])
+
+    # into a folder
+    def test_other_language_into_a_folder_holding_the_file_merges_there(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        target = cs.write_pair(folder, "es", PAIRS, meta=META)
+        self.modals.answers["folder"] = str(folder)
+        self._import(_package(self.EXTRA))
+        self.win._save()
+        cs.assert_json_intact(self, target, NAMES + ["New"])
+
+    def test_into_an_empty_folder_unpacks_and_opens(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        self.modals.answers["folder"] = str(folder)
+        self._import(_package(self.EXTRA, glossary=GLOSSARY_LANE))
+        self.assertEqual(sorted(p.name for p in folder.iterdir()) + [self.win.current_file.name],
+                         ["es.glossary.csv", "es.json", "es.json.meta", "es.json"])
+
+    def test_unpacked_file_is_intact(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        self.modals.answers["folder"] = str(folder)
+        self._import(_package(self.EXTRA))
+        cs.assert_json_intact(self, folder / "es.json", NAMES + ["New"])
+
+    def test_unpack_message(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        self.modals.answers["folder"] = str(folder)
+        self._import(_package(self.EXTRA))
+        self.assertIn((f"Imported: es.json  v1.0.0  (4 strings) into {folder.name}", "info"),
+                      self._notices())
+
+    def test_stray_companions_are_replaced_or_removed_after_yes(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        cs.write_exact(folder / "es.json.meta", b"stray")
+        cs.write_exact(folder / "es.glossary.csv", b"stray")
+        self.modals.answers.update(folder=str(folder), question=QMessageBox.Yes)
+        package = _package(self.EXTRA)   # a sidecar, no glossary
+        self._import(package)
+        self.assertEqual(((folder / "es.json.meta").read_bytes() != b"stray",
+                          (folder / "es.glossary.csv").exists(), self.modals.titles("question")),
+                         (True, False, ["Replace Files"]))
+
+    def test_stray_companions_declined_writes_nothing(self):
+        self._open_italian()
+        folder = cs.temp_dir()
+        cs.write_exact(folder / "es.json.meta", b"stray")
+        self.modals.answers.update(folder=str(folder), question=QMessageBox.No)
+        self._import(_package(self.EXTRA))
+        self.assertEqual(((folder / "es.json").exists(), (folder / "es.json.meta").read_bytes()),
+                         (False, b"stray"))
+
+    def test_cancel_at_the_unsaved_prompt_writes_nothing(self):
+        self._open_italian()
+        _edit(self.win, 0, text="Salva")
+        folder = cs.temp_dir()
+        self.modals.answers.update(folder=str(folder), question=QMessageBox.Cancel)
+        self._import(_package(self.EXTRA))
+        self.assertEqual(list(folder.iterdir()), [])
+
+    # refusals
+    def test_checksum_mismatch_declined_changes_nothing(self):
+        path = self.load()
+        with zipfile.ZipFile(_package(self.EXTRA)) as zf:
+            files = {n: zf.read(n) for n in zf.namelist()}
+        files["es.json"] = cs.json_doc(dict(self.EXTRA, Extra="Más"))
+        bad = cs.temp_dir() / "bad.zip"
+        with zipfile.ZipFile(bad, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, raw in files.items():
+                zf.writestr(name, raw)
+        self.modals.answers["question"] = QMessageBox.No
+        self._import(bad)
+        self.assertEqual((self.modals.titles("question"), [e.name for e in self.win.entries]),
+                         (["Checksum Mismatch"], NAMES))
+
+    def test_not_a_package_is_an_import_error(self):
+        self.load()
+        bad = cs.temp_dir() / "bad.zip"
+        with zipfile.ZipFile(bad, "w") as zf:
+            zf.writestr("readme.txt", b"x")
+        self._import(bad)
+        self.assertEqual(self.modals.titles("critical"), ["Import Error"])
+
+    def test_package_without_checksums_says_so(self):
+        self.load()
+        bad = cs.temp_dir() / "plain.zip"
+        with zipfile.ZipFile(bad, "w") as zf:
+            zf.writestr("es.json", cs.json_doc(self.EXTRA))
+        self._import(bad)
+        self.assertIn(("No checksums in this package — files not verified", "info"), self._notices())
 
 
 def _backup_manifests(folder: Path) -> List[dict]:

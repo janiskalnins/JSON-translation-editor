@@ -155,7 +155,8 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
     """Answer every modal the app can open from *answers* and record it: the QMessageBox static
     helpers (question/warning/critical/information), a QMessageBox built by hand (exec() records
     its title, clickedButton() returns the button whose text is answers["button"]), both file
-    dialogs, QInputDialog.getText (answers["text"], answers["text_ok"]), and the startup
+    dialogs, QFileDialog.getExistingDirectory (answers["folder"]),
+    QInputDialog.getText (answers["text"], answers["text_ok"]), and the startup
     translator-name prompt (always rejected)."""
     modals = Modals(answers=dict(answers))
 
@@ -173,6 +174,10 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
         wanted = modals.answer("button", "")
         return next((b for b in box.buttons() if b.text() == wanted), None)
 
+    def fake_folder(parent, caption="", *args, **kwargs):
+        modals.shown.append(("folder", caption))
+        return modals.answer("folder", "")
+
     patches = [
         (QMessageBox, "question", static("question", QMessageBox.Yes)),
         (QMessageBox, "warning", static("warning", QMessageBox.Ok)),
@@ -182,6 +187,7 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
         (QMessageBox, "clickedButton", fake_clicked),
         (QFileDialog, "getOpenFileName",
          staticmethod(lambda *a, **k: (modals.answer("open_path", ""), ""))),
+        (QFileDialog, "getExistingDirectory", staticmethod(fake_folder)),
         (QFileDialog, "getSaveFileName",
          staticmethod(lambda *a, **k: (modals.answer("save_path", ""), ""))),
         (QInputDialog, "getText",
