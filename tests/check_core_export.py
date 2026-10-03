@@ -139,34 +139,37 @@ def _zip_path(files: Dict[str, bytes], compression: int = zipfile.ZIP_DEFLATED) 
 
 
 def _zip_path_with_raw_names(items: list) -> Path:
-    """A ZIP with entries where filenames may have backslashes or other characters.
-    Items are (name_to_write, bytes) tuples. If zipfile normalizes the name, patches
-    the archive bytes to restore it."""
+    """Build a ZIP with entries that have backslash or other raw filenames in the bytes.
+    Items are (name_to_write, bytes) tuples. On Windows, zipfile.ZipInfo normalizes
+    backslashes to forward slashes when reading the central directory, so this function
+    patches the archive bytes to embed the raw name. The resulting ZIP can be rejected
+    by the reader when it opens and reads the archive bytes (proving the refusal works),
+    even though zipfile's own API returns the normalized name. This tests the archive
+    validation, not which specific validation branch catches it."""
     path = cs.temp_dir() / "package.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, raw in items:
-            # Try using ZipInfo to preserve the exact name
             zi = zipfile.ZipInfo("placeholder.json")
             zi.filename = name
             zf.writestr(zi, raw)
 
-    # Verify what names are visible and patch if needed
-    with zipfile.ZipFile(path) as zf:
-        stored_names = zf.namelist()
+    # Patch the archive bytes to embed the original raw name
+    for orig_name, _ in items:
+        with open(path, "rb") as f:
+            data = bytearray(f.read())
 
-    # If any name was normalized (e.g., backslash -> forward slash),
-    # patch the archive bytes to restore the original
-    for i, (orig_name, _) in enumerate(items):
-        if orig_name not in stored_names and i < len(stored_names):
-            # Patch the archive bytes
-            stored_name = stored_names[i]
-            with open(path, "rb") as f:
-                data = bytearray(f.read())
+        # The filename appears in both the local header and central directory.
+        # Find the normalized name that zipfile stored and replace it with the original.
+        # We expect exactly 2 occurrences (local + central). Use a more specific pattern
+        # to avoid replacing unrelated bytes.
+        normalized = orig_name.replace("\\", "/")
+        name_bytes = normalized.encode("utf-8")
 
-            # Replace stored name with original in the ZIP file
-            # This happens in central directory and local file headers
-            data = data.replace(stored_name.encode("utf-8"), orig_name.encode("utf-8", errors="surrogateescape"))
-
+        # Count occurrences to ensure we're patching only the filename
+        count = data.count(name_bytes)
+        if count == 2:
+            # Safe to replace: only the two expected occurrences
+            data = data.replace(name_bytes, orig_name.encode("utf-8", errors="surrogateescape"), 2)
             with open(path, "wb") as f:
                 f.write(data)
 
@@ -300,6 +303,33 @@ class SameLanguageTests(unittest.TestCase):
         for a, b, want in cases:
             with self.subTest(a=a, b=b):
                 self.assertEqual(jte.same_language(a, b), want)
+
+
+class PlainFileNameTests(unittest.TestCase):
+    def test_plain_file_names(self):
+        cases = [
+            # Refused (False): invalid characters, paths, reserved names, trailing spaces/dots
+            ("a\\es.json", False),      # backslash (path separator)
+            ("a/es.json", False),       # forward slash (path separator)
+            ("../es.json", False),      # parent directory reference
+            ("..", False),              # parent directory only
+            (".", False),               # current directory
+            ("", False),                # empty
+            ("C:es.json", False),       # drive letter
+            ("/es.json", False),        # absolute path
+            ("CON.json", False),        # Windows reserved name
+            ("es.json.", False),        # trailing dot
+            ("es.json ", False),        # trailing space
+            # Accepted (True): plain names without path separators or illegal chars
+            ("es.json", True),
+            ("es.json.meta", True),
+            ("es.glossary.csv", True),
+            ("export_info.json", True),
+            ("pt-BR.json", True),
+        ]
+        for name, want in cases:
+            with self.subTest(name=name):
+                self.assertEqual(jte._is_plain_file_name(name), want)
 
 
 if __name__ == "__main__":
