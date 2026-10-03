@@ -5690,6 +5690,33 @@ class EditDialog(QDialog):
         if hasattr(self, "_char_count_label"):
             self._update_char_count()
 
+    # Text-box heights in lines of the dialog's font, so they hold the same text at 8 and 16 pt.
+    _SOURCE_MIN_LINES      = 2   # a one-line source never gets a cramped box
+    _SOURCE_FIT_MAX_LINES  = 6   # a longer source scrolls instead of pushing the window taller
+    _TRANSLATION_MIN_LINES = 4
+
+    def _text_box_height(self, lines: float) -> int:
+        """Outer height of a text box in this dialog that shows *lines* lines of text."""
+        doc_margin = self.src_view.document().documentMargin()
+        return round(QFontMetrics(self.app_font).lineSpacing() * lines + 2 * doc_margin
+                     + 2 * self.src_view.frameWidth())
+
+    def _fit_source_height(self):
+        """Give the source box a minimum height that shows the whole source at its current width,
+        between _SOURCE_MIN_LINES and _SOURCE_FIT_MAX_LINES lines; the layout's stretch then gives
+        it a share of any spare window height. Called on every entry and on every resize, since
+        the width decides where the text wraps."""
+        doc = self.src_view.document().clone()
+        doc.setTextWidth(self.src_view.viewport().width())
+        content = round(doc.size().height()) + 2 * self.src_view.frameWidth()
+        low = self._text_box_height(self._SOURCE_MIN_LINES)
+        high = self._text_box_height(self._SOURCE_FIT_MAX_LINES)
+        self.src_view.setMinimumHeight(min(max(content, low), high))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_source_height()
+
     def _build(self):
         main = QVBoxLayout(self)
         main.setSpacing(10)
@@ -5700,19 +5727,21 @@ class EditDialog(QDialog):
         self.src_view = QTextEdit()
         self.src_view.setReadOnly(True)
         self.src_view.setFont(self.app_font)
-        self.src_view.setMaximumHeight(100)
         # Read-only, it still takes Alt+Left/Alt+Right as cursor keys, and the
         # dialog opens with focus here.
         self.src_view.installEventFilter(self)
         sg.addWidget(self.src_view)
-        main.addWidget(src_grp)
+        # Source and translation share the window's spare height equally. The source box used to
+        # be capped at 100 px, so a large font cut a multi-line source mid-line and a taller window
+        # only added empty space around it; its minimum now fits the source (_fit_source_height).
+        main.addWidget(src_grp, 1)
 
         # Translation
         tr_grp = QGroupBox("Translated Text")
         tg = QVBoxLayout(tr_grp)
         self.trans_edit = PlainPasteTextEdit()
         self.trans_edit.setFont(self.app_font)
-        self.trans_edit.setMinimumHeight(120)
+        self.trans_edit.setMinimumHeight(self._text_box_height(self._TRANSLATION_MIN_LINES))
         # Tab must navigate between dialog elements, not insert a tab character.
         self.trans_edit.installEventFilter(self)
         tg.addWidget(self.trans_edit)
@@ -5759,7 +5788,7 @@ class EditDialog(QDialog):
         self._placeholder_label.setFont(self.app_font)
         self._placeholder_label.hide()
         tg.addWidget(self._placeholder_label)
-        main.addWidget(tr_grp)
+        main.addWidget(tr_grp, 1)
 
         # Meta row
         meta_grp = QGroupBox("Metadata")
@@ -5954,6 +5983,7 @@ class EditDialog(QDialog):
         self._transl_status.setText("")
         self._transl_status.setToolTip("")
         self.src_view.setPlainText(self.entry.name)
+        self._fit_source_height()
         self.trans_edit.setPlainText(self.entry.text)
         idx = STATUSES.index(self.entry.status) if self.entry.status in STATUSES else 0
         self.status_combo.setCurrentIndex(idx)

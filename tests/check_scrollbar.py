@@ -2,7 +2,8 @@
 
 Offscreen, no MainWindow. For both themes and several UI font sizes it builds a
 very long table (vertical bar), a very wide one (horizontal bar) and a short
-text box (the Edit dialog's 100 px source box) and checks, at scroll min/mid/max:
+text box (100 px, the height the Edit dialog's source box was once capped at) and
+checks, at scroll min/mid/max:
 
   * the handle never overlaps the arrow buttons (the original bug: at the ends
     the handle sat on top of the up/down arrow),

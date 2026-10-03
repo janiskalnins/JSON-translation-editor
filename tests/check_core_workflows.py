@@ -124,6 +124,39 @@ class EditTests(WindowTestCase):
         self.assertFalse(self.win.is_modified)
 
 
+MULTILINE_SOURCE = ("Line one of the source.\n\nLine three of the source.\nLine four of the source.\n"
+                    "Line five of the source.")
+
+
+class EditLayoutTests(WindowTestCase):
+    """The Edit window's source box shows a multi-line source whole and grows with the window.
+    It used to be capped at 100 px: at a large UI font a second paragraph was cut mid-line, and
+    a taller window only added empty space around the box."""
+
+    def _dialog(self, pt: int) -> "jte.EditDialog":
+        self.load({MULTILINE_SOURCE: "Texto"}, meta=None)
+        font = self.win.settings.get_font()
+        font.setPointSize(pt)
+        dlg = jte.EditDialog(self.win.model, 0, font, parent=self.win)
+        dlg.show()
+        cs.pump()
+        self.addCleanup(dlg.close)
+        return dlg
+
+    def test_multiline_source_is_shown_whole(self):
+        for pt in (8, 10, 16):
+            with self.subTest(pt=pt):
+                dlg = self._dialog(pt)
+                self.assertEqual(dlg.src_view.verticalScrollBar().maximum(), 0)
+
+    def test_source_box_grows_with_the_window(self):
+        dlg = self._dialog(10)
+        before = dlg.src_view.height()
+        dlg.resize(dlg.width(), dlg.height() + 300)
+        cs.pump()
+        self.assertGreater(dlg.src_view.height(), before + 100)
+
+
 class EditShortcutTests(WindowTestCase):
     """The read-only Source Text box takes Alt+Left/Alt+Right as its own cursor keys, and the
     dialog opens with focus in it, so Previous/Next did nothing until the translation box was
