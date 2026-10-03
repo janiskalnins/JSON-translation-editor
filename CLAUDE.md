@@ -228,6 +228,7 @@ The checks:
 - **`check_read_after_exec.py`** — offscreen check that `WA_DeleteOnClose` dialogs still hand
   over their results after a real `exec()`, which deletes them before it returns:
   `MergeConflictDialog`'s `accepted_additions()`/`resolved_conflicts()`/`deletions_to_remove()`
+  and the glossary results `accepted_glossary_additions()`/`glossary_changes_to_apply()`
   with a changed choice in each category, and `RestoreFromBackupDialog.restore_glossary_requested()`
   ticked and cleared; it also asserts both dialogs really are deleted, so the fix can't be to drop
   `WA_DeleteOnClose`. Runs from a throwaway folder with the startup modals patched.
@@ -276,7 +277,8 @@ The checks:
   language file byte for byte as it was), OK with none, Cancel, 0.0.0 saved as no version, an
   invalid stored version kept until a box is edited, and no file open. Runs
   from a throwaway folder with the startup modals patched, like `check_combobox.py`.
-- **`check_merge_compare.py`** — offscreen check for the Merge row compare pop-up:
+- **`check_merge_compare.py`** — offscreen check for the Merge row compare pop-up (and the Glossary tab
+  beside the Strings tab: its tabs, rows, tints, toolbar and results):
   `merge_row_reason()` (every phrase, an unparseable date, a tie) and `merge_diff_html()` (no tint
   on equal texts, changed word tinted on both sides, insertion on one, `<`/`>`/`&` escaped, `<br>`,
   double spaces), then through a real `MainWindow` + `MergeConflictDialog` (an addition, two
@@ -390,10 +392,11 @@ The checks:
   file moved aside, path and language guess), and `load_translation_file()` /
   `save_translation_file()` including the split failure (JSON written, sidecar not).
 - **`check_core_merge.py`**: `compute_merge_diff`, `_pick_newer_entry`, whole-file merges for every
-  choice combination through `MainWindow._apply_merge_diff()`, and Sync Keys (`compute_sync_diff`,
+  choice combination (Import's merge path) through `MainWindow._apply_merge_diff()`, and Sync Keys (`compute_sync_diff`,
   `insert_synced`, the dialog flow through `MainWindow._apply_sync()`).
 - **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, bulk status,
-  delete, Close File (Save/Discard/Cancel, failed save), Save, Save As, Merge from File, Restore
+  delete, Close File (Save/Discard/Cancel, failed save), Save, Save As, Export, Import (into the open file, a folder, over stray
+  companions, nothing to import, a plain .json), Restore
   (overwrite with its safety backup, copy, glossary, sidecar, MD5 mismatch), autosave, the reformat
   prompt, the Robo-Translate skip rule, the placeholder label, New Language and the trimmed-paste
   note.
@@ -412,8 +415,10 @@ The checks:
   strings and load/save time for the report. An empty folder passes with a "skipped" note, so a
   fresh clone runs as usual. Each file adds its own load/save time several times over to every
   run, the hook's included.
-- **`check_core_export.py`**: the export format: contents byte for byte, `export_info.json`,
-  `export_summary()` and `suggested_export_name()` (Tasks 3-4 of the Export/Import work extend it).
+- **`check_core_export.py`**: the export format, the package reader's refusals and checksums, the
+  glossary diff: contents byte for byte, `export_info.json`, `export_summary()` and
+  `suggested_export_name()`; `read_translation_package()`; `compute_glossary_diff()` and
+  `apply_glossary_diff()`.
 - **`check_run_all_report.py`**: `run_all.py`'s report from made-up results (header, summary,
   table row and test count, CRLF output, the Notes and Failures sections), `write_report()` (the file name,
   `latest.md`, pruning), and `main()` with the checks faked (report written, a failed write keeps
@@ -501,8 +506,11 @@ On save, `dump_json()` writes `(entry.name, entry.text)` for every entry through
 | `PlainPasteTextEdit` | `QTextEdit` subclass — strips formatting and trims whitespace on paste (the Edit window says so in its status line when a source with outer spaces would lose them) |
 | `StatusDelegate` | `QStyledItemDelegate` — draws the Status column as a pill and highlights the hovered row |
 | `FlowLayout` | Wrapping `QLayout` — used by `MergeConflictDialog`'s toolbar so its four captioned columns wrap onto new rows instead of truncating |
-| `MergeCompareDialog` | Merge dialog's row compare pop-up (double-click a row): source / open / incoming text side by side with changed words tinted, both sides' metadata, the row's two resolution buttons, Back/Forward. Keeps no state — writes into the row's Resolution combo (see [Merge from File](#merge-from-file)) |
+| `MergeCompareDialog` | Merge dialog's row compare pop-up (double-click a row): source / open / incoming text side by side with changed words tinted, both sides' metadata, the row's two resolution buttons, Back/Forward. Keeps no state — writes into the row's Resolution combo (see [Merge review window](#merge-review-window)) |
 | `SyncDiff` (dataclass) | Result of `compute_sync_diff()`: `additions` (untranslated new entries) and `deletions` (entries the reference lacks); reviewed in `MergeConflictDialog(sync_mode=True)` (see [Sync Keys from File](#sync-keys-from-file)) |
+| `IncomingPackage` (dataclass) | What Import reads (`read_translation_package()`): `json_path`, `meta_path` and `glossary_path` (each `None` when absent), `is_zip`, `has_manifest`, `mismatches` (files whose size or MD5 differ from `export_info.json`, or that only one side has). From a ZIP the files sit in a temporary folder under names built from the stem; a loose `.json` is used where it is |
+| `PackageError` | `ValueError` whose message is the reason a ZIP is not a translation package, shown after "Not a translation package: " |
+| `GlossaryDiff` (dataclass) | Result of `compute_glossary_diff()`: `additions` (incoming terms the open glossary lacks), `changes` as `(open, incoming)` pairs for the same term with a different translation or note, and `warnings` (repeated terms); terms only in the open glossary are not listed |
 | `MergeRowInfo` (dataclass) | One Merge row as `MergeConflictDialog.row_info()` returns it: `kind`, `open_entry`, `incoming_entry` (either may be `None`), `combo` |
 | `TranslatorNameDialog` | Startup dialog — collects session translator name → `MainWindow.session_translator` |
 | `FontSettingsDialog` | View → Choose UI Font… — family + size + live preview, replaces `QFontDialog.getFont()` |
@@ -686,7 +694,7 @@ configured UI font are defined once. `RestoreFromBackupDialog` and
 reads `pt` directly from `self.parent().settings.get_font()` each time it
 runs, falling back to `10`; `MergeConflictDialog` caches it once as
 `self._pt`, resolved in `__init__` alongside `self._theme`/`self._is_dark`
-(see [Merge from File](#merge-from-file)). Those two are the ones that must
+(see [Merge review window](#merge-review-window)). Those two are the ones that must
 exist early, because `_recolor_row()` runs while rows are still being built
 in `_load_values()`, before `_apply_style()`; `_pt` just follows them.
 
@@ -1907,14 +1915,63 @@ the file's language code, language name and version. It is JSON in a file whose 
 - Message: `Exported: <name>  (3 files)` or `(2 files, no glossary)`; `Exported: es.json` for the
   translation file only.
 
-### Merge from File
+### Import
 
-- Entry point: **File → Merge from File…** → `MainWindow._merge_from_file()`.
-- Before computing the diff, `_merge_from_file()` warns via `QMessageBox.warning` if
-  `incoming_culture` and `self.target_culture` are both non-empty and differ — Cancel
-  aborts with no changes made. Each side's code is `effective_language()`: the sidecar's
-  `language`, else the code guessed from the file name (`es.json` → `es`). If neither gives a
-  code the guard is silently skipped (no warning), since there's nothing to compare. The incoming
+- Entry point: **File → Import…** → `MainWindow._import()` → `_import_from(source, temp_dir)`, run
+  inside a `tempfile.TemporaryDirectory()`. It reads with `read_translation_package()` (a `.zip` is
+  validated and unpacked into the temp folder, anything else is a loose `.json` with the sidecar and
+  glossary beside it), asks the checksum question, then calls
+  `load_translation_file(package.json_path, keep_damaged=False)` and `parse_glossary()` on the
+  package's glossary. **Every refusal comes before anything outside the temp folder is written**: a
+  `PackageError` shows "Not a translation package: <reason>", a read failure names the file and logs
+  the detail with `_log_error()`, an invalid `.json` shows its `JsonFormatError`.
+- `IMPORT_MAX_BYTES` (10 MB) is checked against the sum of the ZIP directory's declared sizes before
+  any entry is read. Entry names are validated by `_is_plain_file_name()` (no folder part, drive,
+  illegal character, trailing dot or space, Windows device name) and never used as paths: the
+  unpacked files are named from the `.json`'s stem. Exactly one `.json`, optionally its `.json.meta`
+  and `<stem>.glossary.csv`, and `export_info.json`, nothing else; a name that appears twice is
+  refused (`zipfile` allows duplicates and the reader would take the last).
+- **Checksums.** With `export_info.json` present, `_manifest_mismatches()` compares each file's size
+  and MD5; a manifest that cannot be read mismatches every file. Any mismatch asks "These files do
+  not match their checksums: … — Import anyway?" (No is the default). A ZIP without a manifest shows
+  the info message "No checksums in this package — files not verified". A loose `.json` is never
+  checked.
+- **Where it goes.** `same_language(a, b)` compares codes ignoring case with `_` = `-`; an empty code
+  matches none, so an incoming file with no language code never merges automatically. When a file is
+  open and `same_language(self.target_culture, language)` (the incoming code is
+  `effective_language()`) the import goes to `_import_merge()`; otherwise to
+  `_import_into_folder()`: a folder picker, then `<folder>/<stem>.json`. If it exists and is not the
+  open file, `_confirm_close_file()` (Save/Discard/Cancel) runs, the target is opened with `_load()`
+  and `_import_merge()` follows, so the Language Mismatch prompt comes *after* the target is open:
+  answering No leaves it open. If it does not exist, the current file is closed the same way and
+  `_unpack_package()` writes the package there, then `_load()` opens it and "Imported: es.json
+  v1.0.0  (N strings) into <folder>" is shown.
+- `_unpack_package()` writes the companions first and the `.json` last, each through
+  `_atomic_write_bytes()`, so a failure never leaves a `.json` without the sidecar that came with it.
+  A stray `.json.meta` or `.glossary.csv` already beside the target is replaced by the package's, or
+  removed when the package has none (left in place it would attach itself to the new file); one
+  Yes/No prompt (No default) names both kinds first, and No writes nothing.
+- `_import_merge()` warns on a language mismatch (Cancel aborts), runs `compute_merge_diff()` and
+  `compute_glossary_diff()`, and shows "Nothing to import — es.json already matches" when there are
+  no rows and no metadata-only updates. Otherwise it opens `MergeConflictDialog` (with
+  `glossary_diff=`) only when there are string or glossary rows (metadata-only differences are
+  applied without a dialog), then `_apply_merge_diff()` and `_apply_glossary_import()`. The open
+  file's header is kept. `incoming.notices` and the glossary warnings follow as "Incoming file: …",
+  "Incoming glossary: …" and "Glossary: …" messages.
+- `_apply_glossary_import()` writes the open glossary at once with `write_glossary()` (canonical
+  CSV, like View → Glossary's Save: UTF-8 with BOM, comma, `term,translation,note` header) via
+  `apply_glossary_diff()` (changed terms replaced in place, additions appended), re-parses it into
+  `self.glossary`, and shows "Glossary: N added, M updated". It never marks `is_modified`; a write
+  failure is an error message and leaves the strings merge applied. Terms only in the open glossary
+  are never deleted.
+
+### Merge review window
+
+- Reached through Import's merge path (`_import_merge()`); Sync Keys uses it too.
+- The language guard is `_import_merge()`'s: it warns via `QMessageBox.warning` if the open and
+  incoming codes are both non-empty and differ — Cancel aborts with no changes made. Each side's
+  code is `effective_language()`: the sidecar's `language`, else the code guessed from the file
+  name (`es.json` → `es`). If neither gives a code the guard is silently skipped. The incoming
   file is read with `keep_damaged=False`, so merging never moves its sidecar aside; its metadata
   problems are shown as "Incoming file: …" messages.
 - Pure diff engine: `compute_merge_diff(open_entries, incoming_entries) -> MergeDiff`
@@ -2015,7 +2072,7 @@ the file's language code, language name and version. It is JSON in a file whose 
   footer band, with **Apply & Close** (`role="primary"`, default, `accept()`) and
   **Cancel** (`reject()`) on the right. There is no separate Close button: nothing
   is left to do in the dialog once the choices are applied
-  (`MainWindow._merge_from_file()` applies them after `exec()` returns). The counts
+  (`MainWindow._import_merge()` applies them after `exec()` returns). The counts
   sentence ("N addition(s), N conflict(s), N deletion(s) need your review (N
   row(s) total).") is the bottom-most strip (`QFrame#dlgStatusBar`), like the main
   window's info bar. In Qt source the label is `"Apply && Close"` — a lone `&`
@@ -2062,9 +2119,21 @@ the file's language code, language name and version. It is JSON in a file whose 
   Enter are `QDialog`'s own; Enter in a read-only pane reaches Close.
   Each move selects that row in the table (`show_row()`). `WA_DeleteOnClose`.
   `python tests/check_merge_compare.py` is the regression check.
+- **Glossary tab.** `MergeConflictDialog(..., glossary_diff=GlossaryDiff)` adds glossary rows
+  (`_gl_additions`, `_gl_changes`). `_tabs` (a `QTabWidget`, "Strings (N)" and "Glossary (N)") exists
+  only when there are glossary rows, so the Strings-only dialog (and Sync Keys) is built exactly as
+  before; the Strings tab is hidden when it has no rows. The Glossary table's columns are
+  `GL_COL_TYPE`, `GL_COL_TERM`, `GL_COL_OPEN`, `GL_COL_INC`, `GL_COL_RESOLUTION` (cells show
+  `glossary_cell_text()`: the translation, plus " — note"). Its toolbar is built by `_toolbar_band()`,
+  shared with the Strings one: Selection, New terms (Accept/Reject) and Changed (Keep open/Keep
+  incoming) columns, tinted like the Strings ones. Rows are tinted by `_tint_row()`: a new term is
+  green while Accept and untinted when rejected; a changed term is amber, faint for Keep open and
+  full for Keep incoming. There is no auto-resolve checkbox and no compare pop-up for glossary rows.
+  `done()` stores `accepted_glossary_additions()` and `glossary_changes_to_apply()` (the
+  `(open, incoming)` pairs set to Keep incoming) with the string results.
 - `MainWindow._apply_merge_diff()` appends the accepted additions to `self.entries`, in the
   incoming file's order, with `position` numbers following the open file's last (a new key goes at
-  the end of the JSON file). `MainWindow._merge_from_file()` calls
+  the end of the JSON file). `MainWindow._import_merge()` calls
   `MergeConflictDialog.accepted_additions()` to get just the Accept subset of `diff.additions`.
   Unaccepted additions are simply never added; there's no persisted record of the rejection, so
   they reappear as addition candidates if the same incoming file is merged again later. The
@@ -2403,7 +2472,11 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] In **File → Restore from Backup…**, select a filename or version group header — verify **Delete Selected** stays disabled; select a leaf slot — verify it enables. Click it, decline the confirmation — verify nothing is deleted. Click it again, confirm — verify the slot's folder is gone from disk, the dialog stays open, and the tree refreshes without it (showing the "only backup remaining" warning first if it was the last slot for that file+location)
 - [ ] Restore a backup choosing "Overwrite original" over a file that currently exists — verify a new `pre_restore_safety`-triggered backup of the pre-overwrite state appears first
 - [ ] Change only "Keep last N backups" in **View → Autosave & Backup…**, Save, restart — verify `known_next_to_file_dirs` (populated by any earlier next-to-file backup) was not wiped
-- [ ] Open **File → Merge from File…** on a file with only additions — verify the dialog now appears (additions are reviewable, not auto-applied), every addition row defaults to Accept and green-tinted, and switching one to Reject before clicking Apply & Close excludes exactly that string
+- [ ] Open **File → Import… (a loose .json of the same language)** on a file with only additions — verify the dialog now appears (additions are reviewable, not auto-applied), every addition row defaults to Accept and green-tinted, and switching one to Reject before clicking Apply & Close excludes exactly that string
+- [ ] Import an exported ZIP on a file of the same language — verify the review window opens, a **Glossary** tab appears only when the glossaries differ (new terms green, changed terms amber, Keep incoming full strength), its tabs and rows are readable in both themes at 10 and 14 pt, and **Apply & Close** writes the glossary at once with "Glossary: N added, M updated" while the strings stay unsaved
+- [ ] Import a ZIP while no file is open (or one of another language) into an empty folder — verify the `.json`, `.json.meta` and `.glossary.csv` are written, the file opens and "Imported: … into <folder>" appears
+- [ ] Import over a folder holding a stray `.json.meta` or `.glossary.csv` — verify one prompt names what is replaced or removed, Yes does it, and No writes nothing
+- [ ] Import a ZIP in which one file was edited after export — verify the checksum prompt names it with No as the default; import a ZIP with a subfolder — verify "Not a translation package" and nothing written
 - [ ] On the same additions-only merge, verify row coloring updates live: switching a row's Resolution combo between Accept and Reject immediately toggles its tint on/off in both dark and light theme
 - [ ] On a merge with a mix of additions/conflicts/deletions, Ctrl+click to select rows of different types, click a type-specific bulk button (e.g. `Keep incoming`) — verify it only changes the selected Conflict rows, leaving selected Addition/Deletion rows untouched
 - [ ] Click the `Select` button in the Additions, Conflicts and Deletions columns in turn — verify each replaces the current selection with only that row type, and is disabled when the table has zero rows of that type

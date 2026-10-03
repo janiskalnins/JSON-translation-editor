@@ -32,7 +32,7 @@ name.
   sidecar, never loses or merges an entry, and never creates a duplicate key. An unchanged save
   gives back the file byte for byte, and a change touches only the entries you edited, so a diff
   stays clean.
-- **The features.** Editing, bulk status, delete, Close File, Save As, Merge from File,
+- **The features.** Editing, bulk status, delete, Close File, Save As, Export, Import,
   Sync Keys, New Language, the placeholder check, Restore from Backup, autosave, backups, settings recovery, dates and filters, the glossary and
   every translation engine (with the network faked, so no request leaves your machine).
 - **The look.** Scrollbars, check boxes, spin boxes, drop-downs, date pickers, group-box titles
@@ -47,10 +47,10 @@ files.
 
 | Check | Tests | Time | What it covers |
 |---|---:|---:|---|
-| `check_core_json` | 55 | 0.4 s | Reading and saving language files: refused files, style detection (indent, line endings, BOM, escaped non-ASCII), byte-for-byte saves; the `.json.meta` sidecar (defaults, orphans, unknown status, bad dates, damaged or unreadable); the load/save pair, save order and a failed sidecar write |
-| `check_core_merge` | 35 | 1.0 s | Merge from File: what counts as an addition, conflict or deletion, which side wins, appending additions, and whole-file merges for every combination of choices; Sync Keys: the diff, where inserted keys land, deletions default to Keep, values untouched |
-| `check_core_workflows` | 84 | 4.0 s | A real main window: Edit dialog, bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Export, Merge from File, Restore from Backup (with its sidecar), autosave, the reformat prompt, the Robo-Translate skip rule, the placeholder line, New Language, the trimmed-paste note |
-| `check_core_export` | 12 | 0.3 s | Export packages: contents byte for byte, export_info.json, names |
+| `check_core_json` | 56 | 0.4 s | Reading and saving language files: refused files, style detection (indent, line endings, BOM, escaped non-ASCII), byte-for-byte saves; the `.json.meta` sidecar (defaults, orphans, unknown status, bad dates, damaged or unreadable); the load/save pair, save order and a failed sidecar write |
+| `check_core_merge` | 35 | 0.9 s | Merge (Import's merge path): what counts as an addition, conflict or deletion, which side wins, appending additions, and whole-file merges for every combination of choices; Sync Keys: the diff, where inserted keys land, deletions default to Keep, values untouched |
+| `check_core_workflows` | 103 | 4.7 s | A real main window: Edit dialog, bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Export, Import (into the open file, a folder, over stray companions, nothing to import, a plain .json), Restore from Backup (with its sidecar), autosave, the reformat prompt, the Robo-Translate skip rule, the placeholder line, New Language, the trimmed-paste note |
+| `check_core_export` | 42 | 0.4 s | Export packages (contents byte for byte, export_info.json, names), the package reader's refusals and checksums, the glossary diff |
 | `check_core_dates_filter` | 21 | 0.4 s | Date formats, every filter-bar option (the Check filter included) and placeholder detection |
 | `check_core_glossary` | 23 | 0.4 s | Glossary files in any encoding, separator and header layout; bad rows; writing; term matching incl. plurals |
 | `check_core_backup` | 30 | 0.6 s | Backup folders and their `backup_info.json`, pruning, the "skip if backed up within" interval, every backup location, the fallback to the app folder |
@@ -69,9 +69,9 @@ files.
 | `check_date_picker` | 2.2 s | The date fields and their scroll-wheel pop-up: keys, mouse, clamping, placement |
 | `check_file_properties` | 0.7 s | File → Properties: editing the sidecar header, the facts shown, the dialog, save and reopen |
 | `check_groupbox_title` | 3.4 s | Group-box borders run through the middle of their titles at every font size |
-| `check_merge_compare` | 1.6 s | The Merge row compare pop-up: highlighted differences, choices, keys, sizes |
+| `check_merge_compare` | 1.5 s | The Merge row compare pop-up: highlighted differences, choices, keys, sizes; the Glossary tab beside Strings |
 | `check_notifications` | 7.4 s | The info bar's message queue, colours, history pop-up and startup messages |
-| `check_read_after_exec` | 0.5 s | Merge and Restore dialogs still hand over their results after they close |
+| `check_read_after_exec` | 0.5 s | Merge (strings and glossary results) and Restore dialogs still hand over their results after they close |
 | `check_scrollbar` | 0.9 s | Scrollbar handle stays clear of the arrows, keeps a minimum length, arrows drawn |
 | `check_shortcuts_fit` | 1.9 s | Keyboard Shortcuts: buttons fit their text and the columns line up |
 | `check_spinbox_arrows` | 0.7 s | Spin-box arrows visible and large enough, enabled and disabled |

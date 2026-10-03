@@ -33,9 +33,9 @@ purpose, so a program that loads every `*.json` in a folder never sees it. Open 
   [Auto-Translation](docs/FEATURES.md#auto-translation)
 - **Start a new language.** Copy the open file's keys into a new `<code>.json`, every string
   untranslated. → [New Language](docs/FEATURES.md#new-language)
-- **Keep files in step.** Merge another translator's file, or sync a file's keys with a reference
+- **Keep files in step.** Import another translator's file or package, or sync a file's keys with a reference
   file of any language, and review every change side by side before anything is written. →
-  [Merge from File](docs/FEATURES.md#merge-from-file), [Sync Keys](docs/FEATURES.md#sync-keys-from-file)
+  [Import](docs/FEATURES.md#import), [Sync Keys](docs/FEATURES.md#sync-keys-from-file)
 - **Never lose work.** Autosave, a versioned backup every time a file opens, and a browser to
   restore any of them. → [Autosave](docs/FEATURES.md#autosave), [Backup](docs/FEATURES.md#backup)
 - **Keep the file's details right.** Edit the language code, language name and version, and see
@@ -48,11 +48,11 @@ purpose, so a program that loads every `*.json` in a folder never sees it. Open 
 <table>
   <tr>
     <td width="33%" align="center" valign="top">
-      <a href="docs/FEATURES.md#merge-from-file"><picture>
+      <a href="docs/FEATURES.md#import"><picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/images/merge_dark.png">
         <img src="docs/images/merge_light.png" width="100%" alt="Resolve Merge Conflicts window listing additions, conflicts and deletions">
       </picture></a><br>
-      <b>Merge from File</b>
+      <b>Import</b>
     </td>
     <td width="33%" align="center" valign="top">
       <a href="docs/FEATURES.md#setting-up-translation"><picture>

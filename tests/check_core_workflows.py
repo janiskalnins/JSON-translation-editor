@@ -1,6 +1,6 @@
 """Core tests: end-to-end workflows through a real, offscreen MainWindow. Editing through the Edit
-dialog, bulk status, delete, Close File, Save (sidecar failures included), Save As, Merge from
-File, Restore from Backup and autosave, each ending in a saved file judged by the oracle. Every
+dialog, bulk status, delete, Close File, Save (sidecar failures included), Save As, Export,
+Import, Restore from Backup and autosave, each ending in a saved file judged by the oracle. Every
 modal is answered by core_support.patched_modals().
 
 Run:  python tests/check_core_workflows.py      (exit code 0 = all passed)

@@ -18,7 +18,7 @@ Every feature of the app, the settings file, the JSON and `.json.meta` file form
   - [File Properties](#file-properties)
   - [New Language](#new-language)
   - [Export](#export)
-  - [Merge from File](#merge-from-file)
+  - [Import](#import)
   - [Sync Keys from File](#sync-keys-from-file)
   - [Keyboard Shortcuts](#keyboard-shortcuts)
   - [Column Widths](#column-widths)
@@ -468,7 +468,7 @@ When the number of slots for a given file+location exceeds the configured limit,
 
 **File → Properties…** shows the open file's language details and a few facts about it. The details are stored in the file's `.json.meta`.
 
-- **Language code**: e.g. `es-AR`, with the language in readable form (*Spanish (Argentina)*) beside it. It is the target language for auto-translation and the code Merge compares. A code the file's `.json.meta` does not hold yet is shown as guessed from the file name (`es.json` → `es`), and is only stored if you change it. Use letters such as `es`, `es-AR` or `zh-Hant-TW`; an invalid code shows a warning and disables OK.
+- **Language code**: e.g. `es-AR`, with the language in readable form (*Spanish (Argentina)*) beside it. It is the target language for auto-translation and the code Import compares. A code the file's `.json.meta` does not hold yet is shown as guessed from the file name (`es.json` → `es`), and is only stored if you change it. Use letters such as `es`, `es-AR` or `zh-Hant-TW`; an invalid code shows a warning and disables OK.
 - **Language name**: the human-readable name, e.g. *Español (Argentina)*. Required, up to 64 characters. When the `.json.meta` has none, it is filled in from the code in the language's own words (`it` → *Italiano*, `es-AR` → *Español (Argentina)*) and follows the code as you edit it, until you type a name of your own. A stored name is never replaced. For a code with no region Qt picks the wording, so `es` gives *Español de España*; type over it if you prefer.
 - **Version**: three boxes, e.g. `4` . `1` . `1140`. Use the arrows or the mouse wheel, or type the numbers; pressing `.` moves to the next box. The first two parts go up to 99 and the last up to 99999. Numbers are never padded, so `4.1.1220` is saved as `4.1.1220`. The version is optional: 0.0.0 means no version, and is what a file without one shows. If the stored version isn't in this format, the boxes start at 0.0.0 with a warning naming it, and it is kept as it is unless you change a box.
 - **About this file**: file name, folder, size, last modified, number of strings, New / Review / Complete with percentages, and untranslated strings (translation still equals the source). The counts include unsaved changes.
@@ -502,9 +502,24 @@ The files are taken from disk, so unsaved changes are saved first (**Save** / **
 choice and the folder are remembered. The info bar reports `Exported: <name>  (3 files)`, or names
 the missing companion: `(2 files, no glossary)`.
 
-### Merge from File
+### Import
 
-Use **File → Merge from File…** to reconcile the currently open file with a second JSON file (e.g. a copy synced from another device). Strings are matched by their exact source (English) text.
+**File → Import…** brings in a package made by [Export](#export) — or a loose `.json` with the
+`.json.meta` and `.glossary.csv` beside it — and replaces the old File → Merge from File….
+
+- **Checks first.** A ZIP may hold only the one `<name>.json`, its `.json.meta`, its
+  `.glossary.csv` and `export_info.json`, all at the top level, at most 10 MB unpacked; anything
+  else is refused as "Not a translation package". When `export_info.json` is present every file's
+  size and MD5 must match it, or you are asked whether to import anyway (No is the default). A ZIP
+  without it is imported with the note "No checksums in this package — files not verified".
+- **Where it goes.** If the open file has the same language (codes compare ignoring case, `_` =
+  `-`), the import is merged into it. Otherwise you pick a folder: if `<name>.json` is there it is
+  opened (Save / Discard / Cancel for the current file first) and merged; if not, the package is
+  unpacked there and opened ("Imported: es.json  v1.0.0  (N strings) into <folder>"). A stray
+  `.json.meta` or `.glossary.csv` already in that folder is named in one prompt before it is
+  replaced, or removed when the package has none.
+- **Merging** opens the review window below. The open file keeps its language code, name and
+  version. Strings are matched by their exact source (English) text. When nothing differs: "Nothing to import — es.json already matches".
 
 - **New strings** in the incoming file are shown as Addition rows, set to Accept by default — switch any you don't want to Reject before clicking **Apply & Close**. Accepted strings are added at the end of the file.
 - **Metadata-only differences** (translator/status/date changed but the translation itself didn't) are auto-resolved using whichever side has the newer modify date; ties default to the open file — no review needed.
@@ -515,8 +530,15 @@ Use **File → Merge from File…** to reconcile the currently open file with a 
 - **Double-click a row** to compare it in a pop-up: the source text, the open file's text and the incoming file's text side by side (wrapped, with the words that differ highlighted), plus translator, status, modify date and length for both sides, and a short reason in the header (e.g. "incoming is newer"). The texts are read-only. The two buttons at the bottom resolve the row (Accept/Reject, Keep open/Keep incoming, Keep/Delete) and move on to the next row; the current choice is marked with ✓, so pressing **Enter** keeps it and moves on. **◀ / ▶** step through every row, and the table's selection follows the pop-up. Keys: `Alt+Left` / `Alt+Right` (the Edit window's Previous/Next shortcuts), `Alt+1` / `Alt+2` for the two buttons, `Escape` to close.
 - The counts of additions, conflicts and deletions are shown in a status bar at the bottom of the dialog. **Apply & Close** applies your choices and closes the dialog; **Cancel** closes it without changing anything.
 - The dialog window can be maximized via its title bar for reviewing long lists.
-- If the two files have different language codes (each from its `.json.meta`, or guessed from its file name), you're warned before anything is compared. A damaged `.json.meta` on the incoming file is reported but never moved aside, since you are only reading from it.
-- The merge only changes in-memory state — save (`Ctrl+S`) afterward to persist it, same as any other edit.
+- If the imported file has a different language code (each from its `.json.meta`, or guessed from its file name) — which happens when you picked a folder that already holds `<name>.json` — you're warned before anything is compared; answering No leaves that file open and unchanged. A damaged `.json.meta` on the incoming file is reported but never moved aside, since you are only reading from it.
+- The strings only change in memory — save (`Ctrl+S`) afterward to persist them, same as any other edit.
+- **Glossary tab.** When the incoming glossary has terms yours lacks, or the same term with a
+  different translation or note, a **Glossary** tab sits beside **Strings**. New terms default to
+  Accept (green), changed terms to Keep open (amber, full strength for Keep incoming); its toolbar
+  works like the Strings one. Terms only in your glossary are kept, never deleted. On **Apply &
+  Close** the glossary is written at once ("Glossary: N added, M updated"), in the same canonical
+  CSV form as View → Glossary's Save (UTF-8 with BOM, comma-separated, `term,translation,note`
+  header); the strings, as before, wait for Save.
 
 ---
 
@@ -526,7 +548,7 @@ Use **File → Sync Keys from File…** to bring the open file's *keys* in line 
 
 - **Additions** are keys the reference has and your file lacks. Each is inserted right after the nearest preceding reference key that your file already has (at the start if there is none), so the two files keep the same order and their diffs line up. It comes in untranslated: its value is the key itself and its status is `New`.
 - **Deletions** are keys your file has and the reference lacks. They default to Keep; a deletion row shows the current translation, so you can copy it to a renamed key by hand before deleting.
-- Review happens in the same table as Merge, titled **Sync Keys**, with only the Additions and Deletions columns and no auto-resolve checkbox. Additions default to Accept, deletions to Keep. Double-click a row to compare it.
+- Review happens in the same review window as Import, titled **Sync Keys**, with only the Additions and Deletions columns and no auto-resolve checkbox. Additions default to Accept, deletions to Keep. Double-click a row to compare it.
 - If the keys already match, a message says so and no dialog opens.
 - Applying changes only the in-memory state — save (`Ctrl+S`) afterward.
 
@@ -571,7 +593,7 @@ Delete Selected** or right-click → Delete Selected when focus is elsewhere.
 | Robo-Translate (toggle) | `Shift+Alt+A` | ✓ |
 | Tab between fields | `Tab` / `Shift+Tab` | — |
 
-The Merge and Sync Keys dialogs (File → Merge from File…, File → Sync Keys from File…) are mouse/click-driven — its
+The Merge and Sync Keys dialogs (File → Import…, File → Sync Keys from File…) are mouse/click-driven — its
 toolbar buttons have no keyboard shortcuts. Its row compare pop-up (double-click a
 row) uses the Edit window's Previous/Next shortcuts, `Alt+1` / `Alt+2` for its two
 resolution buttons, and `Escape` to close.
@@ -786,7 +808,7 @@ One flat JSON object. Each key is the English source text and each value is its 
 - **Refused when invalid.** A file that is not UTF-8 text, is not valid JSON, is not one object (for example an array), has a value that is not text, or repeats a key is not opened. The message names the problem: the line and column of a syntax error, the key with the non-text value, or the duplicated key. Fix the file in a text editor and open it again.
 - **Layout is kept.** The indent, line endings (LF or CRLF), byte-order mark, trailing newline and whether accented letters are written as themselves or as `\uXXXX` escapes are detected when the file opens and used when it is saved. An unchanged file is saved byte for byte; an edit changes only that entry's line; a deleted entry removes its line. Line breaks inside a value stay `\n`.
 - **Unusual layouts** that cannot be reproduced exactly trigger the one-time "Reformat File" question before the first save.
-- Keys are never renamed or re-sorted by an edit. New keys arrive only through [Merge](#merge-from-file), [New Language](#new-language) (a whole new file in the same order) and [Sync Keys](#sync-keys-from-file) (inserted next to their neighbours in the reference file).
+- Keys are never renamed or re-sorted by an edit. New keys arrive only through [Import](#import), [New Language](#new-language) (a whole new file in the same order) and [Sync Keys](#sync-keys-from-file) (inserted next to their neighbours in the reference file).
 
 ### The metadata file (`es.json.meta`)
 
@@ -807,7 +829,7 @@ JSON cannot hold a status, translator or date without changing what your program
 | Field | Description |
 |-------|-------------|
 | `format` | Always `1` |
-| `language` | BCP-47 code (e.g. `es-AR`) — the target language for auto-translation and the code Merge compares. When empty or missing, the code is guessed from the file name (`pt-BR.json` → `pt-BR`) |
+| `language` | BCP-47 code (e.g. `es-AR`) — the target language for auto-translation and the code Import compares. When empty or missing, the code is guessed from the file name (`pt-BR.json` → `pt-BR`) |
 | `language_name` | Human-readable name shown in the info bar |
 | `version` | `major.minor.build` (up to 99.99.99999), shown with a `v` in the info bar and used to group backups; empty means no version |
 | `entries` | One object per string that is **not** in its default state — status other than `New`, or a translator, or a date — in the language file's key order. A key that is not listed is `New` with no translator and no date |
@@ -859,6 +881,9 @@ The open file would be reformatted by saving (see the previous entry). Press **C
 
 **Sync Keys shows a renamed key as an addition plus a deletion**
 That is the known limitation: nothing pairs the two. Copy the translation from the deletion row's value into the new key by hand, then delete the old one.
+
+**Import says "Not a translation package"**
+The ZIP holds a subfolder, a file other than the one `.json`, its `.json.meta`, its `.glossary.csv` and `export_info.json`, two `.json` files, or is over 10 MB unpacked, or it is damaged. Export it again with **File → Export…**.
 
 **Settings file is corrupt or causing errors**  
 A settings file whose content is damaged (not valid JSON) is restored from the newest snapshot automatically at startup (see [Settings backup](#settings-backup)). If the file reads fine but holds a value that causes errors, restore an older snapshot by hand as described there, or delete `json_translation_editor_settings.json` — a fresh file with defaults will be created on next launch.
