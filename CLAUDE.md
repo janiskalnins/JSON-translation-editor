@@ -240,9 +240,13 @@ The checks:
   arrow cache at a throwaway folder so a run never touches the real one.
   `python tests/check_scrollbar.py` → exit code 0 means pass.
 - **`check_checkbox_mark.py`** — the same kind of offscreen check for the prominent
-  checkbox's tick (white tick when checked, dimmed tick when checked and
-  disabled, none when unchecked, plain-square fallback when the glyph folder is
-  unusable), both themes. Isolates the glyph cache like `check_scrollbar.py`.
+  check box's tick and radio button's dot (white mark when checked, dimmed mark when
+  checked and disabled, none when unchecked, plain-fill fallback when the glyph folder
+  is unusable), both themes, plus the indicator's size: `_indicator_px(pt)` plus its
+  border at 8, 10, 12 and 16 pt, growing with the font. The mark checks run at 14 pt,
+  because offscreen Qt measures a point size smaller than Windows (10 pt gives an 18 px
+  indicator offscreen, 24 px natively) and the thresholds were tuned for 24 px.
+  Isolates the glyph cache like `check_scrollbar.py`.
 - **`check_spinbox_arrows.py`** — offscreen check, under the same Fusion style and theme
   palette `main()` sets, that the real Choose UI Font and Autosave & Backup dialogs draw
   a usable arrow (≥ 8 × 4 px, ≥ 4.5:1 contrast when enabled, the dimmed `dlg_btn_dis_fg`
@@ -1286,15 +1290,33 @@ closes the dialog if it was the last one.
   transparent; }` after the helper (see "Transparent labels").
   `python tests/check_groupbox_title.py` is the regression check.
 
-- **Prominent checkbox style for standalone toggles.** Any new checkbox that
-  represents a standalone option (not a row inside a dense table/list) must
+- **Sizes come from the UI font, never fixed pixels.** The UI font runs from 8 to 16 pt in
+  practice (View → Choose UI Font…), so a size that holds text or sits beside it is measured
+  from `QFontMetrics` at the configured `pt` (`_groupbox_qss()`, `_indicator_px()`,
+  `_width_for_text()`, `MergeConflictDialog._tab_qss()`) or derived from `pt`
+  (`scrollbar_px = max(12, pt + 5)`, the spin-box and combo arrows), with a floor where a
+  tiny font would make it unusable. A fixed pixel size looks right at one font size only:
+  the 24 px check box indicator was oversized next to 8 pt text and undersized next to
+  16 pt text, and the fixed group-box margins hung the title into the first row from 12 pt.
+  Borders, corner radii and layout margins/spacing stay fixed. Check new UI at 8 and 16 pt
+  in both themes, and remember that offscreen Qt measures fonts smaller than Windows does,
+  so an offscreen check compares against the helper (`_indicator_px(pt)`), not a pixel
+  count.
+
+- **Prominent checkbox style for standalone toggles.** Any new checkbox — or radio
+  button — that represents a standalone option (not a row inside a dense table/list) must
   opt into the app's shared "prominent" style: `setProperty("filterChk",
-  True)` on the widget, and `{_prominent_checkbox_qss(t)}` included in the
+  True)` on the widget, and `{_prominent_checkbox_qss(t, pt)}` included in the
   dialog's `_apply_style()` stylesheet (see `_prominent_checkbox_qss()`'s
   definition and its existing uses in `FilterPanel`,
   `TranslationSettingsDialog`, `EditDialog`'s Override checkbox,
-  `RestoreFromBackupDialog`, `AutosaveBackupDialog`, and
-  `MergeConflictDialog`'s "Auto-resolve..." checkbox for the pattern). A
+  `RestoreFromBackupDialog`, `AutosaveBackupDialog`,
+  `MergeConflictDialog`'s "Auto-resolve..." checkbox, and `ExportDialog`'s two radio
+  buttons for the pattern). The indicator is `_indicator_px(pt)` square inside a
+  2 px border (`_INDICATOR_BORDER_PX`): 1.4 line heights of the UI font, never under
+  16 px — 24 px at the default 10 pt Segoe UI (the fixed size it replaced), ~21 px at 8 pt
+  and ~39 px at 16 pt. A check box's corners are `px / 6`; a radio button is a full
+  circle. A
   per-row control inside a dense table/list (e.g. `MergeConflictDialog`'s
   Resolution-column combos) is the deliberate exception — those stay
   default-styled so table rows don't grow oversized, relying on the row's
@@ -1312,13 +1334,15 @@ closes the dialog if it was the last one.
   a dimmed (`dlg_btn_dis_fg`) one with `QPainter` (a three-point polyline on a
   16-unit grid, drawn at 4× and scaled down; it is 1.4 units wide, about the
   stroke of the filter bar's ✕ — the 2.5 units of the SVG it replaced read as
-  heavy next to it; 1.1 was tried and looked faint on the disabled grey), writes both through
+  heavy next to it; 1.1 was tried and looked faint on the disabled grey), and a radio
+  button's dot the same way (`_render_radio_dot_png()`: a filled circle 0.42 of the
+  indicator across), each in white and dimmed, writes all four through
   `_write_glyph_pngs()` — the same cache folder and failure handling as the
   scrollbar arrows — and adds the `::indicator:checked` and
   `::indicator:checked:disabled` `image:` rules at the *end* of the helper. The
-  dimmed variant exists because the white tick would otherwise persist on the
-  grey disabled fill and make the box look enabled. If the files can't be
-  written the box degrades to the plain accent square and the app still starts.
+  dimmed variant exists because the white mark would otherwise persist on the
+  grey disabled fill and make the indicator look enabled. If the files can't be
+  written the indicator degrades to the plain accent fill and the app still starts.
   A text glyph (`✓`) was considered and rejected: a style sheet cannot draw text
   in an indicator, so it too would have to be rendered into a PNG, it would
   depend on the font (U+2714 can fall back to a colour emoji) and it could not
@@ -2161,6 +2185,13 @@ the file's language code, language name and version. It is JSON in a file whose 
   incoming) columns, tinted like the Strings ones. Rows are tinted by `_tint_row()`: a new term is
   green while Accept and untinted when rejected; a changed term is amber, faint for Keep open and
   full for Keep incoming. There is no auto-resolve checkbox and no compare pop-up for glossary rows.
+  The tabs are styled by `_tab_qss()`: the selected tab in the selection colours (`sel_bg` fill,
+  `sel_fg` text, as a selected table row), the others on the field surface (`bg4`, `fg` text,
+  `border2` outline) so they read as clickable rather than disabled, an accent border on hover,
+  an `fg` border on the focused selected tab, and a 2 px accent line along the pane's top that
+  the selected tab sits on. Padding is measured from the UI font. The look it replaced (`bg3`
+  against `dlg_bg`, `fg_dim` text, a 2 px top line on the selected tab) left the two tabs about
+  3 % apart in lightness in both themes.
   `done()` stores `accepted_glossary_additions()` and `glossary_changes_to_apply()` (the
   `(open, incoming)` pairs set to Keep incoming) with the string results.
 - `MainWindow._apply_merge_diff()` appends the accepted additions to `self.entries`, in the
@@ -2423,7 +2454,11 @@ can neither execute nor crash the batch parser, it is simply rejected.
    _load_values()` pattern.  Wire Save button to write `settings.data[key]` and
    call `settings.save()` then `self.accept()`.
 3. **Menu entry**: add to `_build_menu()` under the appropriate menu.  Use the
-   `self._act(menu, label, slot, shortcut)` helper.
+   `self._act(menu, label, slot, shortcut)` helper. The File menu is grouped by separators the
+   usual way (Windows desktop guidelines, Apple HIG, Office, VS Code): Open / New Language;
+   Save / Save As / Restore from Backup (this app's "revert"); Import / Export / Sync Keys
+   (content in and out); Properties; Close File / Exit last. Put a new File command in its
+   group, and update `FileMenuTests` in `tests/check_core_workflows.py`, which pins the order.
 4. **Logic**: add methods to `MainWindow`.  Keep them focused — one method per
    concern.
 5. **docs/FEATURES.md**: update Features, Settings JSON example, Settings key table, and
@@ -2579,6 +2614,9 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Create a *file* (not a folder) named `JSONTranslationEditor` in `%LOCALAPPDATA%\cache` (deleting any existing `JSONTranslationEditor` folder there first), then launch — verify the app starts normally, scrollbars still work with the handle clear of the (blank) buttons, checked prominent checkboxes show a plain accent square instead of a tick, and `error_log.txt` gains a "glyph images" line; delete the file afterwards
 - [ ] Look at every prominent checkbox that is checked (the filter bar's From/To dates, Translation Settings, Autosave & Backup, Restore, Edit's Override, Merge's auto-resolve) in both themes — verify a fine, crisp white tick on the accent fill (about as light a stroke as the ✕ in the filter bar's clear button, not a heavy check) and no tick when unchecked; then make one checked box disabled (in Autosave & Backup, untick "Create backup when a file is opened" so the still-checked "Compress backups" greys out) — verify a dimmed tick on the grey fill, not a white one
 - [ ] Run `python tests/check_checkbox_mark.py` — verify `PASSED: 0 failure(s)`
+- [ ] At 8 pt and at 16 pt UI fonts, in both themes, look at the prominent check boxes (filter bar From/To, Autosave & Backup, Translation Settings) and **File → Export…**'s two radio buttons — verify each indicator is in proportion to its label (not a large box next to 8 pt text, not a small one next to 16 pt text), a checked radio button shows a white dot on the accent fill, an unchecked one an empty circle, and the focused one a text-coloured ring
+- [ ] Open the **File** menu — verify the groups, top to bottom: Open… / New Language…; Save / Save As… / Restore from Backup…; Import… / Export… / Sync Keys from File…; Properties…; Close File / Exit, with a separator between groups and the shortcuts unchanged
+- [ ] Import a package whose glossary differs, in both themes at 8 and 16 pt — verify the selected tab (Strings or Glossary) is solid blue with white text, the other one is on the light field surface with normal text, clicking switches the colours, an accent line runs under the tabs, and the labels are not clipped
 - [ ] Run `python tests/check_scrollbar.py` — verify `PASSED: 0 failure(s)`
 - [ ] Open **View → Choose UI Font…** in both themes — verify the Size box's up/down arrows are clearly visible triangles in a button strip that differs from the field, each click steps the size by 1 pt, and the strip lightens/darkens under the pointer
 - [ ] Open **View → Autosave & Backup…** in both themes — verify all three spin boxes show the same arrows, dimmed on Interval while autosave is off (and on the two backup ones after unticking "Create backup when a file is opened"), and set "Skip if backed up within" to 0 — verify "Always back up" is not clipped at the default UI font

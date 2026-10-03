@@ -115,6 +115,10 @@ The title bar shows a bullet (`●`) when there are unsaved changes. You are pro
 
 #### Closing a file
 
+The **File** menu is grouped: **Open…** and **New Language…**; **Save**, **Save As…** and
+**Restore from Backup…**; **Import…**, **Export…** and **Sync Keys from File…**; **Properties…**;
+then **Close File** and **Exit**.
+
 **File → Close File** (`Ctrl+W`) closes the current file and returns the application to its empty startup state, without quitting. Use it to discard a file's changes mid-session — previously this meant closing the whole application.
 
 If there are unsaved changes you are asked whether to **Save**, **Discard**, or **Cancel**. Choosing Save writes the file and then closes it; if that write fails (for example the file is locked by another application), the error is shown and the file stays open with your changes intact. Autosave stops once the file is closed.
@@ -533,7 +537,8 @@ the missing companion: `(2 files, no glossary)`.
 - If the imported file has a different language code (each from its `.json.meta`, or guessed from its file name) — which happens when you picked a folder that already holds `<name>.json` — you're warned before anything is compared; answering No leaves that file open and unchanged. A damaged `.json.meta` on the incoming file is reported but never moved aside, since you are only reading from it.
 - The strings only change in memory — save (`Ctrl+S`) afterward to persist them, same as any other edit.
 - **Glossary tab.** When the incoming glossary has terms yours lacks, or the same term with a
-  different translation or note, a **Glossary** tab sits beside **Strings**. New terms default to
+  different translation or note, a **Glossary** tab sits beside **Strings** (the open tab is the
+  blue one). New terms default to
   Accept (green), changed terms to Keep open (amber, full strength for Keep incoming); its toolbar
   works like the Strings one. Terms only in your glossary are kept, never deleted. On **Apply &
   Close** the glossary is written at once ("Glossary: N added, M updated"), in the same canonical
