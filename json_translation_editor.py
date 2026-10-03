@@ -409,28 +409,35 @@ THEMES = {
 
 
 _INDICATOR_BORDER_PX = 2
+# Indicator side in line heights of the UI font. Dialogs: one line height (17 px at the default
+# 10 pt Segoe UI, ~15 px at 8 pt, ~28 px at 16 pt) -- 1.4 there looked too big next to the
+# option labels. The filter bar keeps 1.4 (24 px at 10 pt, the fixed size it replaced), where
+# the From/To boxes stand alone in a row of tall fields.
+_DIALOG_INDICATOR_SCALE = 1.0
+_FILTER_BAR_INDICATOR_SCALE = 1.4
 
 
-def _indicator_px(pt: int) -> int:
+def _indicator_px(pt: int, scale: float = _DIALOG_INDICATOR_SCALE) -> int:
     """Side of a prominent check box or radio button indicator (inside its border) for the UI
-    font at *pt*: 1.4 line heights -- 24 px at the default 10 pt Segoe UI, as the fixed size it
-    replaced, ~21 px at 8 pt and ~39 px at 16 pt -- never under 16 px. A fixed 24 px was
-    oversized next to 8 pt text and undersized next to 16 pt text."""
+    font at *pt*: *scale* line heights, never under 12 px. A fixed 24 px was oversized next to
+    8 pt text and undersized next to 16 pt text."""
     font = QFont(QApplication.font())
     font.setPointSize(pt)
-    return max(16, round(QFontMetrics(font).height() * 1.4))
+    return max(12, round(QFontMetrics(font).height() * scale))
 
 
-def _prominent_checkbox_qss(t: dict, pt: int) -> str:
-    """QSS for the large accent-colored 'prominent' check box and radio button indicators,
-    selected via the filterChk dynamic property and sized from the UI font at *pt*
-    (_indicator_px). Shared by MainWindow and every dialog that opts a check box or radio button
-    into this style. The tick and the radio dot are PNG files (see _write_glyph_pngs): the inline
+def _prominent_checkbox_qss(t: dict, pt: int, scale: float = _DIALOG_INDICATOR_SCALE) -> str:
+    """QSS for the accent-colored 'prominent' check box and radio button indicators, selected via
+    the filterChk dynamic property and sized from the UI font at *pt* (_indicator_px; dialogs use
+    the default scale, MainWindow passes _FILTER_BAR_INDICATOR_SCALE). Shared by MainWindow and
+    every dialog that opts a check box or radio button into this style. A dialog's own rules beat
+    the ones it inherits from MainWindow, so its indicators take the dialog scale. The tick and
+    the radio dot are PNG files (see _write_glyph_pngs): the inline
     SVG data: URI the tick used to be renders nothing in a style sheet, which left a checked box a
     plain accent square. A checked, disabled indicator gets its own dimmed mark, or the white one
     would persist on the grey disabled fill and make it look enabled. If the files can't be
     written the indicator degrades to that plain accent fill."""
-    px = _indicator_px(pt)
+    px = _indicator_px(pt, scale)
     border = _INDICATOR_BORDER_PX
     glyph_px = px * _GLYPH_SUPERSAMPLE
     marks = _write_glyph_pngs(lambda: {
@@ -9645,7 +9652,7 @@ class MainWindow(QMainWindow):
                                           background: transparent; }}
             QCheckBox::indicator       {{ width: 14px; height: 14px; }}
             QCheckBox[filterChk="true"]              {{ font-size: {pt}pt; }}
-            {_prominent_checkbox_qss(t, pt)}
+            {_prominent_checkbox_qss(t, pt, _FILTER_BAR_INDICATOR_SCALE)}
             QLabel#welcomeNameLbl      {{ color: {t['header_fg']}; font-size: {pt + 10}pt;
                                           font-weight: bold; }}
             QLabel#welcomeVersionLbl   {{ color: {t['fg_dim']}; font-size: {pt + 2}pt; }}

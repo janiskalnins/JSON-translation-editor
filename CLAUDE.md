@@ -242,10 +242,11 @@ The checks:
 - **`check_checkbox_mark.py`** — the same kind of offscreen check for the prominent
   check box's tick and radio button's dot (white mark when checked, dimmed mark when
   checked and disabled, none when unchecked, plain-fill fallback when the glyph folder
-  is unusable), both themes, plus the indicator's size: `_indicator_px(pt)` plus its
-  border at 8, 10, 12 and 16 pt, growing with the font. The mark checks run at 14 pt,
-  because offscreen Qt measures a point size smaller than Windows (10 pt gives an 18 px
-  indicator offscreen, 24 px natively) and the thresholds were tuned for 24 px.
+  is unusable), both themes, plus the indicator's size: `_indicator_px(pt, scale)` plus
+  its border at 8, 10, 12 and 16 pt for both the dialog and the filter-bar scale, growing
+  with the font, the dialog one always the smaller. The mark checks run at the filter-bar
+  scale and 14 pt, because offscreen Qt measures a point size smaller than Windows (10 pt
+  is 13 px high offscreen, 17 px natively) and the thresholds were tuned for a 24 px box.
   Isolates the glyph cache like `check_scrollbar.py`.
 - **`check_spinbox_arrows.py`** — offscreen check, under the same Fusion style and theme
   palette `main()` sets, that the real Choose UI Font and Autosave & Backup dialogs draw
@@ -1312,11 +1313,18 @@ closes the dialog if it was the last one.
   `TranslationSettingsDialog`, `EditDialog`'s Override checkbox,
   `RestoreFromBackupDialog`, `AutosaveBackupDialog`,
   `MergeConflictDialog`'s "Auto-resolve..." checkbox, and `ExportDialog`'s two radio
-  buttons for the pattern). The indicator is `_indicator_px(pt)` square inside a
-  2 px border (`_INDICATOR_BORDER_PX`): 1.4 line heights of the UI font, never under
-  16 px — 24 px at the default 10 pt Segoe UI (the fixed size it replaced), ~21 px at 8 pt
-  and ~39 px at 16 pt. A check box's corners are `px / 6`; a radio button is a full
-  circle. A
+  buttons for the pattern). The indicator is `_indicator_px(pt, scale)` square inside a
+  2 px border (`_INDICATOR_BORDER_PX`), never under 12 px, in two sizes: dialogs use
+  `_DIALOG_INDICATOR_SCALE` (one line height of the UI font: 17 px at the default 10 pt
+  Segoe UI, ~15 px at 8 pt, ~28 px at 16 pt), the filter bar `_FILTER_BAR_INDICATOR_SCALE`
+  (1.4 line heights: 24 px at 10 pt — the fixed size it replaced — ~21 px at 8 pt, ~39 px at
+  16 pt). 1.4 was tried in the dialogs first and looked too big next to the option labels;
+  the user chose one line height from side-by-side renders of 0.85×, 1.0×, 1.15× and 1.4×.
+  Only `MainWindow._apply_theme()` passes the filter-bar scale; a dialog's own
+  `_prominent_checkbox_qss(t, pt)` beats the rule it inherits from the main window, so its
+  indicators take the dialog scale (`FilterBarIndicatorTests` and the Export radio test in
+  `check_core_workflows.py` pin both). A check box's corners are `px / 6`; a radio button is
+  a full circle. A
   per-row control inside a dense table/list (e.g. `MergeConflictDialog`'s
   Resolution-column combos) is the deliberate exception — those stay
   default-styled so table rows don't grow oversized, relying on the row's
@@ -2614,7 +2622,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Create a *file* (not a folder) named `JSONTranslationEditor` in `%LOCALAPPDATA%\cache` (deleting any existing `JSONTranslationEditor` folder there first), then launch — verify the app starts normally, scrollbars still work with the handle clear of the (blank) buttons, checked prominent checkboxes show a plain accent square instead of a tick, and `error_log.txt` gains a "glyph images" line; delete the file afterwards
 - [ ] Look at every prominent checkbox that is checked (the filter bar's From/To dates, Translation Settings, Autosave & Backup, Restore, Edit's Override, Merge's auto-resolve) in both themes — verify a fine, crisp white tick on the accent fill (about as light a stroke as the ✕ in the filter bar's clear button, not a heavy check) and no tick when unchecked; then make one checked box disabled (in Autosave & Backup, untick "Create backup when a file is opened" so the still-checked "Compress backups" greys out) — verify a dimmed tick on the grey fill, not a white one
 - [ ] Run `python tests/check_checkbox_mark.py` — verify `PASSED: 0 failure(s)`
-- [ ] At 8 pt and at 16 pt UI fonts, in both themes, look at the prominent check boxes (filter bar From/To, Autosave & Backup, Translation Settings) and **File → Export…**'s two radio buttons — verify each indicator is in proportion to its label (not a large box next to 8 pt text, not a small one next to 16 pt text), a checked radio button shows a white dot on the accent fill, an unchecked one an empty circle, and the focused one a text-coloured ring
+- [ ] At 8 pt and at 16 pt UI fonts, in both themes, look at the prominent check boxes (filter bar From/To, Autosave & Backup, Translation Settings) and **File → Export…**'s two radio buttons — verify each indicator is in proportion to its label (not a large box next to 8 pt text, not a small one next to 16 pt text) — about one line of text tall in the dialogs and larger (1.4×) in the filter bar — a checked radio button shows a white dot on the accent fill, an unchecked one an empty circle, and the focused one a text-coloured ring
 - [ ] Open the **File** menu — verify the groups, top to bottom: Open… / New Language…; Save / Save As… / Restore from Backup…; Import… / Export… / Sync Keys from File…; Properties…; Close File / Exit, with a separator between groups and the shortcuts unchanged
 - [ ] Import a package whose glossary differs, in both themes at 8 and 16 pt — verify the selected tab (Strings or Glossary) is solid blue with white text, the other one is on the light field surface with normal text, clicking switches the colours, an accent line runs under the tabs, and the labels are not clipped
 - [ ] Run `python tests/check_scrollbar.py` — verify `PASSED: 0 failure(s)`

@@ -453,6 +453,19 @@ class ExportWorkflowTests(WindowTestCase):
         self.assertEqual(sizes, [want, want])
 
 
+class FilterBarIndicatorTests(WindowTestCase):
+    def test_filter_bar_check_boxes_keep_the_larger_indicator(self):
+        pt = self.win.settings.get_font().pointSize()
+        sizes = []
+        for box in (self.win.filter_panel.date_from_chk, self.win.filter_panel.date_to_chk):
+            opt = QStyleOptionButton()
+            box.initStyleOption(opt)
+            sizes.append(box.style().subElementRect(QStyle.SE_CheckBoxIndicator, opt, box).width())
+        want = (jte._indicator_px(pt, jte._FILTER_BAR_INDICATOR_SCALE)
+                + 2 * jte._INDICATOR_BORDER_PX)
+        self.assertEqual(sizes, [want, want])
+
+
 class FileMenuTests(WindowTestCase):
     def test_file_menu_is_grouped(self):
         menu = next(a.menu() for a in self.win.menuBar().actions() if a.text() == "&File")

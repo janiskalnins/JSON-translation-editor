@@ -11,8 +11,10 @@ indicator for:
                         indicator would look enabled,
   * unchecked:          one flat colour, no mark.
 
-The indicator's side is `_indicator_px(pt)` plus its 2 px border each side, and it
-grows with the font from 8 to 16 pt; it used to be a fixed 24 px at every size.
+The indicator's side is `_indicator_px(pt, scale)` plus its 2 px border each side, and
+it grows with the font from 8 to 16 pt (it used to be a fixed 24 px at every size). Two
+scales: one line height in dialogs (the default), 1.4 line heights in the filter bar; the
+dialog indicator is the smaller one at every size.
 
 Also checks the fallback: with the glyph cache folder unusable the style sheet
 must carry no image rule, must not raise, and a checked box must still fill.
@@ -41,10 +43,13 @@ DIMMED_TOLERANCE = 30  # summed |dR|+|dG|+|dB|
 BORDER_PX = 2          # the indicator's border, each side
 KINDS = (QCheckBox, QRadioButton)
 SIZES_PT = (8, 10, 12, 16)
-# Offscreen Qt has no fonts and measures a point size smaller than Windows does (10 pt gives an
-# 18 px indicator, not 24), so the mark checks run at the size whose offscreen indicator matches
-# the 24 px the thresholds above were tuned for.
+# Offscreen Qt has no fonts and measures a point size smaller than Windows does (10 pt is 13 px
+# high, not 17), so the mark checks run at the filter bar's scale and the size whose offscreen
+# indicator matches the 24 px the thresholds above were tuned for. The mark is the same drawing
+# at every size; check_size_tracks_font covers the dialog scale.
 STATE_PT = 14
+STATE_SCALE = jte._FILTER_BAR_INDICATOR_SCALE
+SCALES = {"dialog": jte._DIALOG_INDICATOR_SCALE, "filter bar": jte._FILTER_BAR_INDICATOR_SCALE}
 
 
 def _indicator_rect(button):
@@ -76,13 +81,13 @@ def _is_close(color, other, tolerance):
             + abs(color.blue() - other.blue())) < tolerance
 
 
-def _box(app, t, checked, enabled, kind=QCheckBox, pt=STATE_PT):
+def _box(app, t, checked, enabled, kind=QCheckBox, pt=STATE_PT, scale=STATE_SCALE):
     button = kind("Option")
     button.setProperty("filterChk", True)
     button.setChecked(checked)
     button.setEnabled(enabled)
     button.setStyleSheet(f"{kind.__name__} {{ background: {t['bg']}; color: {t['fg']}; "
-                         f"font-size: {pt}pt; }}\n" + jte._prominent_checkbox_qss(t, pt))
+                         f"font-size: {pt}pt; }}\n" + jte._prominent_checkbox_qss(t, pt, scale))
     button.show()
     app.processEvents()
     return button
@@ -111,20 +116,27 @@ def check_states(app):
 
 
 def check_size_tracks_font(app):
-    """The indicator is _indicator_px(pt) plus its border, and grows with the font."""
+    """The indicator is _indicator_px(pt, scale) plus its border, grows with the font, and the
+    dialog one is smaller than the filter bar's at every size."""
     failures = []
     t = jte.THEMES["dark"]
     for kind in KINDS:
-        widths = []
-        for pt in SIZES_PT:
-            rect = _indicator_rect(_box(app, t, False, True, kind, pt))
-            want = jte._indicator_px(pt) + 2 * BORDER_PX
-            if (rect.width(), rect.height()) != (want, want):
-                failures.append(f"{kind.__name__} {pt}pt: indicator {rect.width()}x{rect.height()}, "
-                                f"want {want}x{want}")
-            widths.append(rect.width())
-        if widths != sorted(set(widths)):
-            failures.append(f"{kind.__name__}: indicator does not grow with the font {widths}")
+        by_scale = {}
+        for name, scale in SCALES.items():
+            widths = []
+            for pt in SIZES_PT:
+                rect = _indicator_rect(_box(app, t, False, True, kind, pt, scale))
+                want = jte._indicator_px(pt, scale) + 2 * BORDER_PX
+                if (rect.width(), rect.height()) != (want, want):
+                    failures.append(f"{kind.__name__} {name} {pt}pt: indicator "
+                                    f"{rect.width()}x{rect.height()}, want {want}x{want}")
+                widths.append(rect.width())
+            if widths != sorted(set(widths)):
+                failures.append(f"{kind.__name__} {name}: indicator does not grow with the font {widths}")
+            by_scale[name] = widths
+        if not all(d < f for d, f in zip(by_scale["dialog"], by_scale["filter bar"])):
+            failures.append(f"{kind.__name__}: dialog indicator not smaller than the filter bar's "
+                            f"{by_scale}")
     return failures
 
 
