@@ -7857,6 +7857,13 @@ class MergeConflictDialog(QDialog):
         work once height depends on width, which it does while the toolbar can wrap. Only called
         from __init__; nothing later changes the toolbar's or table's shape.
         """
+        if self._has_glossary():
+            # The tab widget asked its pages for size hints in _build_ui(), before _apply_style()
+            # set the dialog's stylesheet, and the restyle does not clear the toolbar columns'
+            # cached hints: measured from them, the Strings toolbar came out ~150 px narrower and
+            # wrapped onto two rows.
+            for layout in self.findChildren(QLayout):
+                layout.invalidate()
         wanted_w = self._wanted_width()
 
         screen = self.screen() or QApplication.primaryScreen()

@@ -14,6 +14,7 @@ ones are never touched), on a 1920 x 1080 offscreen screen:
   * the pop-up's header, panes, metadata, buttons, Back/Forward, auto-resolve;
   * keys, opening by double-click, and cleanup after Close;
   * the Glossary tab: titles, cells, defaults, tints, toolbar, counts, no compare pop-up;
+  * the Strings toolbar on as few rows with a Glossary tab as without, both themes, 10 and 14 pt;
   * sizes in both themes at 10 and 14 pt.
 
 Run:  python tests/check_merge_compare.py      (exit code 0 = all passed)
@@ -579,9 +580,34 @@ def check_glossary_tab(failures, win):
     _close(only_glossary)
 
 
+def _header_band_height(win, glossary_diff):
+    additions, conflicts, deletions = _fixture()
+    mdlg = jte.MergeConflictDialog(additions, conflicts, deletions, parent=win,
+                                   glossary_diff=glossary_diff)
+    mdlg.show()
+    QApplication.processEvents()
+    height = mdlg._header_band.height()
+    _close(mdlg)
+    return height
+
+
+def check_glossary_tab_toolbar_rows(failures, win):
+    """The Strings toolbar wraps no more with a Glossary tab than without one: the tab widget
+    sizes its pages before the dialog's stylesheet exists, and the toolbar was then measured
+    from those stale (narrower) column sizes, so the dialog opened too narrow for one row."""
+    for theme in ("dark", "light"):
+        for pt in (10, 14):
+            _set_look(win, theme, pt)
+            plain = _header_band_height(win, None)
+            with_glossary = _header_band_height(win, _glossary_diff())
+            check(failures, f"{theme} {pt}pt: Strings toolbar rows with a Glossary tab",
+                  with_glossary == plain, f"header band {with_glossary} px, without glossary {plain} px")
+    _set_look(win, "dark", 10)
+
+
 WINDOW_STEPS = [check_row_accessors, check_show_row_single_selection,
                 check_last_row_focus_with_auto_resolve, check_content, check_keys_and_opening,
-                check_sizes, check_sync_mode, check_glossary_tab]
+                check_sizes, check_sync_mode, check_glossary_tab, check_glossary_tab_toolbar_rows]
 
 
 def main():
