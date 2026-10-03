@@ -138,6 +138,41 @@ def _zip_path(files: Dict[str, bytes], compression: int = zipfile.ZIP_DEFLATED) 
     return path
 
 
+def _zip_path_with_raw_names(items: list) -> Path:
+    """A ZIP with entries where filenames may have backslashes or other characters.
+    Items are (name_to_write, bytes) tuples. If zipfile normalizes the name, patches
+    the archive bytes to restore it."""
+    path = cs.temp_dir() / "package.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, raw in items:
+            # Try using ZipInfo to preserve the exact name
+            zi = zipfile.ZipInfo("placeholder.json")
+            zi.filename = name
+            zf.writestr(zi, raw)
+
+    # Verify what names are visible and patch if needed
+    with zipfile.ZipFile(path) as zf:
+        stored_names = zf.namelist()
+
+    # If any name was normalized (e.g., backslash -> forward slash),
+    # patch the archive bytes to restore the original
+    for i, (orig_name, _) in enumerate(items):
+        if orig_name not in stored_names and i < len(stored_names):
+            # Patch the archive bytes
+            stored_name = stored_names[i]
+            with open(path, "rb") as f:
+                data = bytearray(f.read())
+
+            # Replace stored name with original in the ZIP file
+            # This happens in central directory and local file headers
+            data = data.replace(stored_name.encode("utf-8"), orig_name.encode("utf-8", errors="surrogateescape"))
+
+            with open(path, "wb") as f:
+                f.write(data)
+
+    return path
+
+
 def _exported_files() -> Dict[str, bytes]:
     """The files of a real export of _source(), manifest included."""
     return _unzip(jte.build_export_zip(_source(), HEADER, NOW)[0])
@@ -165,6 +200,17 @@ class PackageRefusalTests(unittest.TestCase):
             with self.subTest(names=list(files)):
                 with self.assertRaisesRegex(jte.PackageError, reason):
                     _read(_zip_path(files))
+
+    def test_refused_packages_with_backslash_and_dotted_paths(self):
+        doc = cs.json_doc(PAIRS)
+        cases = [
+            ([("a\\es.json", doc)], "not a plain file name"),
+            ([("a/../es.json", doc)], "not a plain file name"),
+        ]
+        for items, reason in cases:
+            with self.subTest(names=[name for name, _ in items]):
+                with self.assertRaisesRegex(jte.PackageError, reason):
+                    _read(_zip_path_with_raw_names(items))
 
     def test_over_the_size_limit_is_refused_before_reading(self):
         path = _zip_path({"es.json": cs.json_doc(PAIRS)})
