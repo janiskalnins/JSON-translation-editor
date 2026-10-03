@@ -412,6 +412,8 @@ The checks:
   strings and load/save time for the report. An empty folder passes with a "skipped" note, so a
   fresh clone runs as usual. Each file adds its own load/save time several times over to every
   run, the hook's included.
+- **`check_core_export.py`**: the export format: contents byte for byte, `export_info.json`,
+  `export_summary()` and `suggested_export_name()` (Tasks 3-4 of the Export/Import work extend it).
 - **`check_run_all_report.py`**: `run_all.py`'s report from made-up results (header, summary,
   table row and test count, CRLF output, the Notes and Failures sections), `write_report()` (the file name,
   `latest.md`, pruning), and `main()` with the checks faked (report written, a failed write keeps
@@ -505,6 +507,7 @@ On save, `dump_json()` writes `(entry.name, entry.text)` for every entry through
 | `TranslatorNameDialog` | Startup dialog — collects session translator name → `MainWindow.session_translator` |
 | `FontSettingsDialog` | View → Choose UI Font… — family + size + live preview, replaces `QFontDialog.getFont()` |
 | `FilePropertiesDialog` | File → Properties… — edits the sidecar header's language code, language name and version, and shows read-only file facts (see [File Properties](#file-properties)) |
+| `ExportDialog` | File → Export… — ZIP package or translation file only; `mode()` after `exec()` (stored in `done()`) |
 | `FileFacts` (dataclass) | Read-only facts for File Properties, built by `compute_file_facts()` |
 | `_WidePopupComboBox` | `QComboBox` whose popup is at least as wide as its widest item — every combo in the app is one (see "Combo box drop-downs and popups") |
 | `_DatePickerField` | Every date field (filter bar From/To, Edit's Date): a read-only `QDateEdit` that opens `_DateDrumPopup`; the wheel, other keys and typing do nothing (see "Date pickers") |
@@ -1884,6 +1887,26 @@ the file's language code, language name and version. It is JSON in a file whose 
   the next backup starts a new key folder (and the min-interval throttle, being per key, does not
   skip it). Older backups stay under the old version in Restore from Backup.
 
+### Export
+
+- Entry point: **File → Export…** → `MainWindow._export()` → `ExportDialog`. With no file open it
+  shows a warning, like Merge.
+- Export reads the files on disk, so with unsaved changes it first asks Save / Cancel. After
+  `_save()` it checks `is_modified` again and stops if it is still set: the save failed or its
+  Reformat prompt was declined. Cancel writes nothing and keeps the changes.
+- `ExportDialog` offers two radio buttons, ZIP package (default) and Translation file only. It is
+  `WA_DeleteOnClose`, so `done()` stores the choice for `mode()`. The choice and the folder last
+  exported to are kept in `Settings.DEFAULTS["export"]` (`mode`, `last_directory`).
+- The save dialog opens in `export.last_directory` (the open file's folder when that is gone) with
+  `suggested_export_name()`. Exporting over the open file itself is refused with a warning.
+- ZIP: `build_export_zip()` packs the `.json`, its `.json.meta` and its `.glossary.csv`, whichever
+  exist, plus the `export_info.json` that `export_manifest()` builds; `export_summary()` words the
+  file count for the info bar. JSON only: the `.json` bytes are copied as they are. Both go through
+  `_atomic_write_bytes()`; an `OSError` is logged with `_log_error()` and shown as
+  "Export failed — <name> could not be written" (error).
+- Message: `Exported: <name>  (3 files)` or `(2 files, no glossary)`; `Exported: es.json` for the
+  translation file only.
+
 ### Merge from File
 
 - Entry point: **File → Merge from File…** → `MainWindow._merge_from_file()`.
@@ -2568,6 +2591,7 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Edit an entry whose source holds `{name}`: remove it from the translation — verify an amber "Missing: {name}" line under the box that disappears when it is typed back, and that Save still works; add `{nme}` — verify "Extra: {nme}"
 - [ ] Set the filter bar's Check combo to **Placeholders** — verify only entries whose `{…}` sets differ remain, the combo gets the active border and dot, F5 behaviour matches the other filters, and Reset All clears it
 - [ ] Start Robo-Translate on a New entry followed by a New entry whose translation was typed in (text differs from the key) and one still equal to its key — verify the typed one is skipped and the untranslated one is translated
+- [ ] File → Export… with unsaved changes — verify Save / Cancel; Save, pick ZIP, accept the suggested `es_v1.0.0_<date>.zip` — verify it holds es.json, es.json.meta, es.glossary.csv and export_info.json, and the info bar says `(3 files)`; export Translation file only — verify the copy is byte-identical; check the dialog's radio buttons in both themes
 - [ ] File → Properties: change the language code to `es-AR` — verify "Spanish (Argentina)" beside the field, an invalid code (`x`, `es--AR`) shows the amber line and disables OK, and after Save the sidecar holds `"language": "es-AR"`
 - [ ] Paste text with leading/trailing spaces into the translation of an entry whose source starts or ends with a space — verify the status line says the paste was trimmed
 - [ ] Back up a file that has a sidecar, then restore the slot over the original — verify the slot folder holds `es.json(.gz)` and `es.json.meta(.gz)`, `backup_info.json` has `meta_backed_up: true` with `meta_file`/`meta_md5_checksum`, and the restore writes both and reloads with the same statuses; restore a slot made before the sidecar existed — verify only the JSON is written

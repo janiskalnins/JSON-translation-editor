@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import unittest
+import zipfile
 from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
@@ -351,6 +352,90 @@ class SaveAsTests(WindowTestCase):
         self.modals.answers["save_path"] = str(copy)
         self.win._save_as()
         cs.assert_json_intact(self, copy, NAMES)
+
+
+def _export_as(mode: str):
+    """ExportDialog.exec() replaced: pick *mode* and press Export."""
+    def fake_exec(dlg):
+        (dlg._json_radio if mode == "json" else dlg._zip_radio).setChecked(True)
+        dlg.done(QDialog.Accepted)
+        return QDialog.Accepted
+    return mock.patch.object(jte.ExportDialog, "exec", fake_exec)
+
+
+class ExportWorkflowTests(WindowTestCase):
+    def _export(self, path: Path, mode: str = "zip", target: Optional[Path] = None) -> Path:
+        target = target or cs.temp_dir() / ("out.zip" if mode == "zip" else "out.json")
+        self.modals.answers["save_path"] = str(target)
+        with _export_as(mode):
+            self.win._export()
+        return target
+
+    def _edit_and_export(self, answer) -> Tuple[Path, Path]:
+        path = self.load()
+        _edit(self.win, 0, text="Guardar ya")
+        self.modals.answers["question"] = answer
+        return path, self._export(path)
+
+    def test_zip_holds_the_language_file_as_on_disk(self):
+        path = self.load()
+        target = self._export(path)
+        with zipfile.ZipFile(target) as zf:
+            self.assertEqual(zf.read("es.json"), path.read_bytes())
+
+    def test_json_export_is_the_language_file(self):
+        path = self.load()
+        target = self._export(path, mode="json")
+        self.assertEqual(target.read_bytes(), path.read_bytes())
+
+    def test_unsaved_changes_are_saved_into_the_package(self):
+        _path, target = self._edit_and_export(QMessageBox.Save)
+        with zipfile.ZipFile(target) as zf:
+            pairs, _style = jte.parse_json_bytes(zf.read("es.json"))
+        self.assertEqual(pairs[0], ("Save", "Guardar ya"))
+
+    def test_file_saved_before_export_is_intact(self):
+        path, _target = self._edit_and_export(QMessageBox.Save)
+        cs.assert_json_intact(self, path, NAMES)
+
+    def test_cancel_at_the_save_prompt_writes_nothing(self):
+        _path, target = self._edit_and_export(QMessageBox.Cancel)
+        self.assertFalse(target.exists())
+
+    def test_cancel_at_the_save_prompt_keeps_the_changes(self):
+        self._edit_and_export(QMessageBox.Cancel)
+        self.assertTrue(self.win.is_modified)
+
+    def test_export_over_the_open_file_is_refused(self):
+        path = self.load()
+        before = path.read_bytes()
+        self._export(path, mode="json", target=path)
+        self.assertEqual((self.modals.titles("warning"), path.read_bytes()), (["Export"], before))
+
+    def test_choice_is_remembered(self):
+        path = self.load()
+        self._export(path, mode="json")
+        self.assertEqual(self.win.settings.get("export", {}).get("mode"), "json")
+
+    def test_message_counts_the_files(self):
+        path = self.load()   # a sidecar, no glossary
+        self._export(path)
+        self.assertIn(("Exported: out.zip  (2 files, no glossary)", "info"),
+                      [(n.text, n.level) for n in self.win._notice_history])
+
+    def test_failed_write_is_an_error_message(self):
+        path = self.load()
+        with mock.patch.object(jte, "_atomic_write_bytes", side_effect=OSError("disk full")):
+            self._export(path)
+        self.assertIn(("Export failed — out.zip could not be written", "error"),
+                      [(n.text, n.level) for n in self.win._notice_history])
+
+    def test_no_file_open_warns(self):
+        self.load()
+        self.win._close_file()
+        with _export_as("zip"):
+            self.win._export()
+        self.assertEqual(self.modals.titles("warning"), ["Export"])
 
 
 def _accept_merge_defaults(dlg) -> int:

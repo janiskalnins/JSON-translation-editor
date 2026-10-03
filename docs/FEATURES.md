@@ -17,6 +17,7 @@ Every feature of the app, the settings file, the JSON and `.json.meta` file form
   - [Backup](#backup)
   - [File Properties](#file-properties)
   - [New Language](#new-language)
+  - [Export](#export)
   - [Merge from File](#merge-from-file)
   - [Sync Keys from File](#sync-keys-from-file)
   - [Keyboard Shortcuts](#keyboard-shortcuts)
@@ -486,6 +487,21 @@ If the open file has unsaved changes you are first asked to **Save**, **Discard*
 
 ---
 
+### Export
+
+**File → Export…** takes the open translation to another computer or to the program that uses it.
+A small window asks which:
+
+- **Package for another computer (ZIP)** (the default) — the language file, its `.json.meta` and
+  its `.glossary.csv`, whichever exist, in one ZIP named like `es_v1.0.0_2026-10-02.zip`, with an
+  `export_info.json` holding each file's size and MD5 so Import can check nothing changed on the
+  way. Open it on the other computer with **File → Import…**.
+- **Translation file only** — just `es.json`, for the program that reads it.
+
+The files are taken from disk, so unsaved changes are saved first (**Save** / **Cancel**). The
+choice and the folder are remembered. The info bar reports `Exported: <name>  (3 files)`, or names
+the missing companion: `(2 files, no glossary)`.
+
 ### Merge from File
 
 Use **File → Merge from File…** to reconcile the currently open file with a second JSON file (e.g. a copy synced from another device). Strings are matched by their exact source (English) text.
@@ -691,6 +707,10 @@ Settings are saved automatically to `json_translation_editor_settings.json` in t
     "min_interval_minutes": 5,
     "known_next_to_file_dirs": [],
     "restore_glossary_default": false
+  },
+  "export": {
+    "mode": "zip",
+    "last_directory": ""
   }
 }
 ```
@@ -728,6 +748,8 @@ Settings are saved automatically to `json_translation_editor_settings.json` in t
 | `backup.min_interval_minutes` | Skip the file-open backup when this file was already backed up less than this many minutes ago, so re-opening a file doesn't consume (and prune out) a slot. Checked per location. `0` backs up on every open. Default `5`, matching the autosave interval default. The `pre_restore_safety` backup taken before an overwrite-restore is never skipped |
 | `backup.known_next_to_file_dirs` | Internal, auto-maintained list of folders that have ever received a next-to-file backup, used by **File → Restore from Backup…** to discover them. Not user-editable via any dialog |
 | `backup.restore_glossary_default` | Default checked state of the "Also restore glossary" checkbox in **File → Restore from Backup…**. Default `false` |
+| `export.mode` | The last choice in **File → Export…**: `"zip"` (package for another computer) or `"json"` (translation file only). Default `"zip"` |
+| `export.last_directory` | The folder last exported to; the Export save dialog starts there |
 
 The **translator session name** is never saved — it is discarded when the application closes.
 

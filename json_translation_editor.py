@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QFrame, QSizePolicy, QDateEdit,
     QCheckBox, QSpinBox, QFontComboBox, QMenu, QScrollArea,
     QStyledItemDelegate, QStyleOptionViewItem, QStyle,
+    QRadioButton, QButtonGroup, QTabWidget,
     QStyleOptionComboBox, QStyleOptionSpinBox,
     QTreeWidget, QTreeWidgetItem,
     QTableWidget, QTableWidgetItem, QStackedWidget, QToolButton, QTextBrowser
@@ -1054,6 +1055,11 @@ class Settings:
             "location_mode":            "both",  # "next_to_file" | "root" | "both"
             "known_next_to_file_dirs":  [],       # discoverability only; see _remember_next_to_file_backup_dir
             "min_interval_minutes":     5,        # 0 = back up on every open
+        },
+        # File → Export…: the last choice in ExportDialog and the folder last exported to.
+        "export": {
+            "mode":           "zip",   # "zip" | "json"
+            "last_directory": "",
         },
     }
 
@@ -4574,6 +4580,71 @@ class FilePropertiesDialog(QDialog):
 
     def version_edited(self) -> bool:
         return self._version_touched
+
+
+class ExportDialog(QDialog):
+    """File → Export…: a package for another computer (ZIP) or the language file alone."""
+
+    MODES = ("zip", "json")
+
+    def __init__(self, mode: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Export")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        # exec() deletes the dialog before it returns; done() keeps the choice for mode().
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self._mode = mode if mode in self.MODES else "zip"
+        self._build_ui()
+        self._load_values()
+        self._apply_style()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+        lay.setContentsMargins(20, 20, 20, 16)
+        self._zip_radio = QRadioButton("Package for another computer (ZIP)")
+        self._zip_radio.setToolTip("The language file, its .json.meta and its .glossary.csv, with "
+                                   "checksums, in one ZIP")
+        self._json_radio = QRadioButton("Translation file only")
+        self._json_radio.setToolTip("Just the .json, for the program that uses it")
+        group = QButtonGroup(self)
+        for radio in (self._zip_radio, self._json_radio):
+            group.addButton(radio)
+            lay.addWidget(radio)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        ok_btn = QPushButton("Export…")
+        ok_btn.setProperty("role", "primary")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        lay.addLayout(btn_row)
+        ok_btn.setDefault(True)   # after the row joins the dialog (default-button pitfall)
+
+    def _load_values(self):
+        (self._json_radio if self._mode == "json" else self._zip_radio).setChecked(True)
+
+    def _apply_style(self):
+        mw = self.parent()
+        t  = mw._get_theme() if mw and hasattr(mw, "_get_theme") else THEMES["dark"]
+        pt = (mw.settings.get_font().pointSize() if mw and hasattr(mw, "settings") else 0) or 10
+        self.setStyleSheet(f"""
+            QDialog      {{ background: {t['dlg_bg']}; }}
+            QRadioButton {{ color: {t['fg']}; background: transparent; }}
+            {_button_qss(t, pt)}
+            {_field_state_qss(t)}
+        """)
+
+    def done(self, result: int):
+        """Keep the choice: exec() deletes this dialog, radio buttons included, before it returns."""
+        self._mode = "json" if self._json_radio.isChecked() else "zip"
+        super().done(result)
+
+    def mode(self) -> str:
+        return self._mode
 
 
 # ══════════════════════════════════════════════════════════════
@@ -8984,6 +9055,7 @@ class MainWindow(QMainWindow):
         self._act(fm, "Merge from File…",     self._merge_from_file,     "")
         self._act(fm, "Sync Keys from File…", self._sync_keys_from_file, "")
         self._act(fm, "Properties…",          self._open_file_properties, "")
+        self._act(fm, "Export…",              self._export,              "")
         fm.addSeparator()
         self._act(fm, "Exit",                self.close,               "Ctrl+Q")
 
@@ -9761,6 +9833,58 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._update_file_meta_labels()
         self._show_message("File properties updated", 4000)
+
+    def _export(self):
+        """File → Export…: the open file with its sidecar and glossary as one ZIP, or the .json
+        alone. Reads the files on disk, so unsaved changes are saved first."""
+        if not self.current_file:
+            QMessageBox.warning(self, "Export", "Open a file first before exporting it.")
+            return
+        if self.is_modified:
+            r = QMessageBox.question(
+                self, "Unsaved Changes", "Export uses the files on disk. Save your changes first?",
+                QMessageBox.Save | QMessageBox.Cancel, QMessageBox.Save)
+            if r != QMessageBox.Save:
+                return
+            self._save()
+            if self.is_modified:   # the save failed, or its Reformat prompt was declined
+                return
+        export_cfg = dict(self.settings.get("export", {}))
+        dlg = ExportDialog(export_cfg.get("mode", "zip"), parent=self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        mode = dlg.mode()
+        export_cfg["mode"] = mode
+        self.settings.set("export", export_cfg)
+        self.settings.save()
+        start_dir = Path(export_cfg.get("last_directory") or self.current_file.parent)
+        if not start_dir.is_dir():
+            start_dir = self.current_file.parent
+        name = suggested_export_name(self.current_file, self.file_version, date.today(), mode)
+        file_filter = "ZIP packages (*.zip)" if mode == "zip" else "JSON Files (*.json)"
+        path, _ = QFileDialog.getSaveFileName(self, "Export", str(start_dir / name), file_filter)
+        if not path:
+            return
+        target = Path(path).resolve()
+        if target == self.current_file:
+            QMessageBox.warning(self, "Export", "Choose another file name: the open file cannot be "
+                                "exported over itself.")
+            return
+        try:
+            if mode == "zip":
+                data, names = build_export_zip(self.current_file, self.header)
+            else:
+                data, names = self.current_file.read_bytes(), [self.current_file.name]
+            _atomic_write_bytes(target, data)
+        except OSError as e:
+            _log_error(f"exporting {self.current_file} to {target}", e)
+            self._show_message(f"Export failed — {target.name} could not be written", 6000, "error")
+            return
+        export_cfg["last_directory"] = str(target.parent)
+        self.settings.set("export", export_cfg)
+        self.settings.save()
+        summary = f"  {export_summary(self.current_file, names)}" if mode == "zip" else ""
+        self._show_message(f"Exported: {target.name}{summary}", 5000)
 
     def _merge_from_file(self):
         """Reconcile the open file with a second language file (File → Merge from File…)."""
