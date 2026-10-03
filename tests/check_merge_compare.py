@@ -605,9 +605,68 @@ def check_glossary_tab_toolbar_rows(failures, win):
     _set_look(win, "dark", 10)
 
 
+def _contrast(fg_hex, bg_hex):
+    def luminance(hex_color):
+        c = QColor(hex_color)
+        channels = []
+        for v in (c.redF(), c.greenF(), c.blueF()):
+            channels.append(v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4)
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    light, dark = sorted((luminance(fg_hex), luminance(bg_hex)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _tab_fill(tabs, index):
+    """A tab's fill: a pixel in its left padding, clear of the border and of the label."""
+    bar = tabs.tabBar()
+    rect = bar.tabRect(index)
+    return QColor(bar.grab().toImage().pixel(rect.left() + 4, rect.center().y()))
+
+
+def _near(color, hex_color, tolerance=12):
+    want = QColor(hex_color)
+    return (abs(color.red() - want.red()) + abs(color.green() - want.green())
+            + abs(color.blue() - want.blue())) <= tolerance
+
+
+def check_tab_colors(failures, win):
+    """The Strings / Glossary tabs are told apart by colour, not by a 2 px line: the selected tab
+    is filled with the selection colour (sel_bg, sel_fg text), an unselected one with the field
+    surface (bg4, fg text), both pairs at least 4.5:1, and the tab bar grows with the UI font."""
+    for theme in ("dark", "light"):
+        t = jte.THEMES[theme]
+        check(failures, f"{theme}: selected tab text contrast", _contrast(t["sel_fg"], t["sel_bg"]) >= 4.5,
+              f"{_contrast(t['sel_fg'], t['sel_bg']):.2f}")
+        check(failures, f"{theme}: unselected tab text contrast", _contrast(t["fg"], t["bg4"]) >= 4.5,
+              f"{_contrast(t['fg'], t['bg4']):.2f}")
+        heights = []
+        for pt in (8, 16):
+            _set_look(win, theme, pt)
+            additions, conflicts, deletions = _fixture()
+            mdlg = jte.MergeConflictDialog(additions, conflicts, deletions, parent=win,
+                                           glossary_diff=_glossary_diff())
+            mdlg.show()
+            QApplication.processEvents()
+            tabs = mdlg._tabs
+            for current in (0, 1):
+                tabs.setCurrentIndex(current)
+                QApplication.processEvents()
+                selected, other = _tab_fill(tabs, current), _tab_fill(tabs, 1 - current)
+                tag = f"{theme} {pt}pt tab {current} selected"
+                check(failures, f"{tag}: selected tab filled with sel_bg", _near(selected, t["sel_bg"]),
+                      selected.name())
+                check(failures, f"{tag}: unselected tab filled with bg4", _near(other, t["bg4"]),
+                      other.name())
+            heights.append(tabs.tabBar().height())
+            _close(mdlg)
+        check(failures, f"{theme}: tab bar grows with the font", heights[1] > heights[0], str(heights))
+    _set_look(win, "dark", 10)
+
+
 WINDOW_STEPS = [check_row_accessors, check_show_row_single_selection,
                 check_last_row_focus_with_auto_resolve, check_content, check_keys_and_opening,
-                check_sizes, check_sync_mode, check_glossary_tab, check_glossary_tab_toolbar_rows]
+                check_sizes, check_sync_mode, check_glossary_tab, check_glossary_tab_toolbar_rows,
+                check_tab_colors]
 
 
 def main():

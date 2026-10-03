@@ -408,46 +408,63 @@ THEMES = {
 }
 
 
-_CHECKBOX_INDICATOR_PX = 24
+_INDICATOR_BORDER_PX = 2
 
 
-def _prominent_checkbox_qss(t: dict) -> str:
-    """QSS for the large accent-colored 'prominent' checkbox indicator,
-    selected via the filterChk dynamic property. Shared by MainWindow and
-    every dialog that opts a checkbox into this style. The tick is a PNG file
-    (see _write_glyph_pngs): the inline SVG data: URI it used to be renders
-    nothing in a style sheet, which left a checked box a plain accent square. A
-    checked, disabled box gets its own dimmed tick, or the white one would
-    persist on the grey disabled fill and make the box look enabled. If the
-    files can't be written the box degrades to that plain square."""
-    px = _CHECKBOX_INDICATOR_PX
+def _indicator_px(pt: int) -> int:
+    """Side of a prominent check box or radio button indicator (inside its border) for the UI
+    font at *pt*: 1.4 line heights -- 24 px at the default 10 pt Segoe UI, as the fixed size it
+    replaced, ~21 px at 8 pt and ~39 px at 16 pt -- never under 16 px. A fixed 24 px was
+    oversized next to 8 pt text and undersized next to 16 pt text."""
+    font = QFont(QApplication.font())
+    font.setPointSize(pt)
+    return max(16, round(QFontMetrics(font).height() * 1.4))
+
+
+def _prominent_checkbox_qss(t: dict, pt: int) -> str:
+    """QSS for the large accent-colored 'prominent' check box and radio button indicators,
+    selected via the filterChk dynamic property and sized from the UI font at *pt*
+    (_indicator_px). Shared by MainWindow and every dialog that opts a check box or radio button
+    into this style. The tick and the radio dot are PNG files (see _write_glyph_pngs): the inline
+    SVG data: URI the tick used to be renders nothing in a style sheet, which left a checked box a
+    plain accent square. A checked, disabled indicator gets its own dimmed mark, or the white one
+    would persist on the grey disabled fill and make it look enabled. If the files can't be
+    written the indicator degrades to that plain accent fill."""
+    px = _indicator_px(pt)
+    border = _INDICATOR_BORDER_PX
+    glyph_px = px * _GLYPH_SUPERSAMPLE
     marks = _write_glyph_pngs(lambda: {
-        "check": _render_check_mark_png(t["sel_fg"], px * _GLYPH_SUPERSAMPLE),
-        "check_disabled": _render_check_mark_png(t["dlg_btn_dis_fg"], px * _GLYPH_SUPERSAMPLE)})
+        "check": _render_check_mark_png(t["sel_fg"], glyph_px),
+        "check_disabled": _render_check_mark_png(t["dlg_btn_dis_fg"], glyph_px),
+        "radio_dot": _render_radio_dot_png(t["sel_fg"], glyph_px),
+        "radio_dot_disabled": _render_radio_dot_png(t["dlg_btn_dis_fg"], glyph_px)})
+    chk = 'QCheckBox[filterChk="true"]::indicator'
+    rad = 'QRadioButton[filterChk="true"]::indicator'
     mark_rules = "" if marks is None else f"""
-        QCheckBox[filterChk="true"]::indicator:checked {{ image: url("{marks['check']}"); }}
-        QCheckBox[filterChk="true"]::indicator:checked:disabled {{
-            image: url("{marks['check_disabled']}"); }}
+        {chk}:checked {{ image: url("{marks['check']}"); }}
+        {chk}:checked:disabled {{ image: url("{marks['check_disabled']}"); }}
+        {rad}:checked {{ image: url("{marks['radio_dot']}"); }}
+        {rad}:checked:disabled {{ image: url("{marks['radio_dot_disabled']}"); }}
     """
     return f"""
-        QCheckBox[filterChk="true"]::indicator {{
+        {chk}, {rad} {{
             width: {px}px; height: {px}px;
-            border: 2px solid {t['border2']};
-            border-radius: 4px;
+            border: {border}px solid {t['border2']};
             background: {t['bg4']};
         }}
-        QCheckBox[filterChk="true"]::indicator:hover,
-        QCheckBox[filterChk="true"]::indicator:focus {{
+        {chk} {{ border-radius: {round(px / 6)}px; }}
+        {rad} {{ border-radius: {(px + 2 * border) // 2}px; }}
+        {chk}:hover, {chk}:focus, {rad}:hover, {rad}:focus {{
             border-color: {t['accent']};
         }}
-        QCheckBox[filterChk="true"]::indicator:checked {{
+        {chk}:checked, {rad}:checked {{
             background: {t['accent']};
             border-color: {t['accent']};
         }}
-        QCheckBox[filterChk="true"]::indicator:checked:focus {{
+        {chk}:checked:focus, {rad}:checked:focus {{
             border-color: {t['fg']};
         }}
-        QCheckBox[filterChk="true"]::indicator:disabled {{
+        {chk}:disabled, {rad}:disabled {{
             background: {t['dlg_btn_dis']}; border-color: {t['border']};
         }}
         {mark_rules}
@@ -624,6 +641,21 @@ def _render_check_mark_png(color: str, px: int) -> bytes:
     painter.setPen(pen)
     painter.drawPolyline(QPolygonF([QPointF(3 * scale, 8.5 * scale), QPointF(6.5 * scale, 12 * scale),
                                     QPointF(13 * scale, 4 * scale)]))
+    painter.end()
+    return _encode_png(image)
+
+
+def _render_radio_dot_png(color: str, px: int) -> bytes:
+    """One px x px PNG of a radio button's dot: a filled circle 0.42 of the indicator across,
+    centred -- large enough to read at 8 pt, with a ring of accent fill around it."""
+    image = QImage(px, px, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    radius = px * 0.21
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(QPointF(px / 2, px / 2), radius, radius)
     painter.end()
     return _encode_png(image)
 
@@ -3915,7 +3947,7 @@ class TranslationSettingsDialog(QDialog):
                                            selection-color: {t['sel_fg']}; }}
             {_combobox_qss(t, pt)}
             QCheckBox {{ color: {t['fg']}; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, pt)}
             {_button_qss(t, pt)}
             {_field_state_qss(t)}
         """)
@@ -4785,6 +4817,7 @@ class ExportDialog(QDialog):
         self._json_radio.setToolTip("Just the .json, for the program that uses it")
         group = QButtonGroup(self)
         for radio in (self._zip_radio, self._json_radio):
+            radio.setProperty("filterChk", True)   # the prominent indicator, like the check boxes
             group.addButton(radio)
             lay.addWidget(radio)
         btn_row = QHBoxLayout()
@@ -4809,7 +4842,8 @@ class ExportDialog(QDialog):
         pt = (mw.settings.get_font().pointSize() if mw and hasattr(mw, "settings") else 0) or 10
         self.setStyleSheet(f"""
             QDialog      {{ background: {t['dlg_bg']}; }}
-            QRadioButton {{ color: {t['fg']}; background: transparent; }}
+            QRadioButton {{ color: {t['fg']}; background: transparent; font-size: {pt}pt; }}
+            {_prominent_checkbox_qss(t, pt)}
             {_button_qss(t, pt)}
             {_field_state_qss(t)}
         """)
@@ -5607,7 +5641,7 @@ class EditDialog(QDialog):
             QLabel  {{ color: {t['fg']}; }}
             {_groupbox_qss(t, pt)}
             QCheckBox {{ color: {t['fg']}; font-size: {pt}pt; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, pt)}
             QTextEdit, QPlainTextEdit, QLineEdit {{
                 background: {t['dlg_edit_bg']}; color: {t['fg']};
                 border: 1px solid {t['border']}; border-radius: 3px; padding: 4px;
@@ -6799,7 +6833,7 @@ class RestoreFromBackupDialog(QDialog):
             QLabel       {{ color: {t['fg']}; }}
             {_table_qss(t, pt, gridline=t['border'])}
             QCheckBox    {{ color: {t['fg']}; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, pt)}
             {_button_qss(t, pt)}
             {_band_qss(t, pt_small)}
         """)
@@ -7193,7 +7227,7 @@ class AutosaveBackupDialog(QDialog):
                                            selection-color: {t['sel_fg']}; }}
             {_combobox_qss(t, pt)}
             QCheckBox {{ color: {t['fg']}; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, pt)}
             {_button_qss(t, pt)}
             {_field_state_qss(t)}
         """)
@@ -7986,7 +8020,7 @@ class MergeConflictDialog(QDialog):
             QLabel        {{ color: {t['fg']}; }}
             QLabel[mergeCaption="neutral"] {{ color: {t['header_fg']}; font-size: {pt_small}pt; }}
             QCheckBox     {{ color: {t['fg']}; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, self._pt)}
             {_table_qss(t, self._pt, gridline=t['border'])}
             QComboBox     {{ background: {t['bg4']}; color: {t['fg']};
                               border: 1px solid {t['border2']}; border-radius: 3px;
@@ -7999,15 +8033,33 @@ class MergeConflictDialog(QDialog):
             QFrame#mergeCol {{ border-left: 1px solid {t['bar_border']}; }}
             {_merge_tint_qss(t, self._is_dark, pt_small)}
             QWidget#mergePage {{ background: {t['dlg_bg']}; }}
-            QTabWidget::pane {{ border: none; }}
-            QTabBar {{ background: {t['dlg_bg']}; }}
-            QTabBar::tab {{ background: {t['bg3']}; color: {t['fg_dim']};
-                            border: 1px solid {t['border']}; border-bottom: none;
-                            padding: 5px 14px; margin-right: 2px; }}
-            QTabBar::tab:selected {{ background: {t['dlg_bg']}; color: {t['fg']};
-                                     border-top: 2px solid {t['accent']}; }}
-            QTabBar::tab:focus {{ color: {t['fg']}; border-color: {t['accent']}; }}
+            {self._tab_qss(t)}
         """)
+
+    def _tab_qss(self, t: dict) -> str:
+        """The Strings / Glossary tabs, told apart by colour: the selected one in the selection
+        colours (sel_bg / sel_fg, as a selected table row), the others on the field surface
+        (bg4 / fg) so they read as clickable rather than disabled, and an accent line under the
+        bar that the selected tab sits on. Padding comes from the UI font, so the tabs fit from
+        8 to 16 pt. The look it replaced (bg3 against dlg_bg, dim text, a 2 px top line) left the
+        two tabs about 3 % apart in lightness in both themes."""
+        font = QFont(QApplication.font())
+        font.setPointSize(self._pt)
+        line = QFontMetrics(font).height()
+        pad_v, pad_h = max(3, round(line * 0.3)), max(8, round(line * 0.8))
+        return f"""
+            QTabWidget::pane {{ border: none; border-top: 2px solid {t['accent']}; }}
+            QTabBar {{ background: {t['dlg_bg']}; }}
+            QTabBar::tab {{ background: {t['bg4']}; color: {t['fg']};
+                            border: 1px solid {t['border2']}; border-bottom: none;
+                            border-top-left-radius: 4px; border-top-right-radius: 4px;
+                            padding: {pad_v}px {pad_h}px; margin-right: 2px;
+                            font-size: {self._pt}pt; }}
+            QTabBar::tab:hover {{ border-color: {t['accent']}; }}
+            QTabBar::tab:selected {{ background: {t['sel_bg']}; color: {t['sel_fg']};
+                                     border-color: {t['sel_bg']}; }}
+            QTabBar::tab:selected:focus {{ border-color: {t['fg']}; }}
+        """
 
     def other_side_name(self) -> str:
         """What the second file is called in row texts: 'reference' when syncing keys."""
@@ -9400,18 +9452,24 @@ class MainWindow(QMainWindow):
 
         # File
         fm = mb.addMenu("&File")
-        self._act(fm, "Open…",               self._open,               "Ctrl+O")
-        self._act(fm, "New Language…",       self._new_language,       "")
-        self._act(fm, "Save",                self._save,               "Ctrl+S")
-        self._act(fm, "Save As…",            self._save_as,            "Ctrl+Shift+S")
-        self._act(fm, "Close File",          self._close_file,         "Ctrl+W")
-        self._act(fm, "Restore from Backup…", self._open_restore_backup, "")
-        self._act(fm, "Import…",              self._import,              "")
-        self._act(fm, "Sync Keys from File…", self._sync_keys_from_file, "")
-        self._act(fm, "Properties…",          self._open_file_properties, "")
-        self._act(fm, "Export…",              self._export,              "")
+        # Grouped the usual way (Windows desktop guidelines, Apple HIG, Office, VS Code): open and
+        # create; save, plus Restore from Backup as this app's "revert"; bring content in or send it
+        # out; the file's properties; close and exit last.
+        self._act(fm, "Open…",                self._open,                 "Ctrl+O")
+        self._act(fm, "New Language…",        self._new_language,         "")
         fm.addSeparator()
-        self._act(fm, "Exit",                self.close,               "Ctrl+Q")
+        self._act(fm, "Save",                 self._save,                 "Ctrl+S")
+        self._act(fm, "Save As…",             self._save_as,              "Ctrl+Shift+S")
+        self._act(fm, "Restore from Backup…", self._open_restore_backup,  "")
+        fm.addSeparator()
+        self._act(fm, "Import…",              self._import,               "")
+        self._act(fm, "Export…",              self._export,               "")
+        self._act(fm, "Sync Keys from File…", self._sync_keys_from_file,  "")
+        fm.addSeparator()
+        self._act(fm, "Properties…",          self._open_file_properties, "")
+        fm.addSeparator()
+        self._act(fm, "Close File",           self._close_file,           "Ctrl+W")
+        self._act(fm, "Exit",                 self.close,                 "Ctrl+Q")
 
         # Edit
         em = mb.addMenu("&Edit")
@@ -9587,7 +9645,7 @@ class MainWindow(QMainWindow):
                                           background: transparent; }}
             QCheckBox::indicator       {{ width: 14px; height: 14px; }}
             QCheckBox[filterChk="true"]              {{ font-size: {pt}pt; }}
-            {_prominent_checkbox_qss(t)}
+            {_prominent_checkbox_qss(t, pt)}
             QLabel#welcomeNameLbl      {{ color: {t['header_fg']}; font-size: {pt + 10}pt;
                                           font-weight: bold; }}
             QLabel#welcomeVersionLbl   {{ color: {t['fg_dim']}; font-size: {pt + 2}pt; }}

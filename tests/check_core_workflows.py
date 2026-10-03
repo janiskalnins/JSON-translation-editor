@@ -22,7 +22,7 @@ from unittest import mock
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QMimeData, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox, QStyle, QStyleOptionButton
 
 jte = cs.jte
 
@@ -436,6 +436,32 @@ class ExportWorkflowTests(WindowTestCase):
         with _export_as("zip"):
             self.win._export()
         self.assertEqual(self.modals.titles("warning"), ["Export"])
+
+    def test_choice_radios_use_the_prominent_font_sized_indicator(self):
+        dlg = jte.ExportDialog("zip", parent=self.win)
+        dlg.show()
+        cs.pump()
+        pt = self.win.settings.get_font().pointSize()
+        sizes = []
+        for radio in (dlg._zip_radio, dlg._json_radio):
+            opt = QStyleOptionButton()
+            radio.initStyleOption(opt)
+            sizes.append(radio.style().subElementRect(QStyle.SE_RadioButtonIndicator, opt,
+                                                      radio).width())
+        dlg.close()
+        want = jte._indicator_px(pt) + 2 * jte._INDICATOR_BORDER_PX
+        self.assertEqual(sizes, [want, want])
+
+
+class FileMenuTests(WindowTestCase):
+    def test_file_menu_is_grouped(self):
+        menu = next(a.menu() for a in self.win.menuBar().actions() if a.text() == "&File")
+        labels = ["-" if a.isSeparator() else a.text() for a in menu.actions()]
+        self.assertEqual(labels, ["Open…", "New Language…", "-",
+                                  "Save", "Save As…", "Restore from Backup…", "-",
+                                  "Import…", "Export…", "Sync Keys from File…", "-",
+                                  "Properties…", "-",
+                                  "Close File", "Exit"])
 
 
 def _accept_merge_defaults(dlg) -> int:
