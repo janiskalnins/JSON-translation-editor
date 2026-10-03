@@ -176,6 +176,23 @@ def _zip_path_with_raw_names(items: list) -> Path:
     return path
 
 
+def _zip_with_invalid_utf8_name() -> Path:
+    """"é.json" makes zipfile set the UTF-8 name flag; its two bytes become invalid UTF-8, which
+    zipfile.ZipFile() fails to decode with UnicodeDecodeError."""
+    raw = _zip_path({"é.json": cs.json_doc(PAIRS)}).read_bytes()
+    return cs.write_exact(cs.temp_dir() / "names.zip",
+                          raw.replace("é".encode("utf-8"), b"\xff\xfe"))
+
+
+def _zip_with_corrupt_lzma_data() -> Path:
+    """An LZMA entry whose compressed bytes are scrambled, which zipfile reads as lzma.LZMAError."""
+    raw = bytearray(_zip_path({"es.json": cs.json_doc(PAIRS)}, zipfile.ZIP_LZMA).read_bytes())
+    start = 30 + len("es.json")   # the local header and the name; writestr adds no extra field
+    for i in range(start + 4, start + 20):
+        raw[i] ^= 0x5A
+    return cs.write_exact(cs.temp_dir() / "lzma.zip", bytes(raw))
+
+
 def _exported_files() -> Dict[str, bytes]:
     """The files of a real export of _source(), manifest included."""
     return _unzip(jte.build_export_zip(_source(), HEADER, NOW)[0])
@@ -234,6 +251,14 @@ class PackageRefusalTests(unittest.TestCase):
     def test_not_a_zip_is_refused_as_damaged(self):
         with self.assertRaisesRegex(jte.PackageError, "damaged"):
             _read(cs.write_exact(cs.temp_dir() / "x.zip", b"not a zip"))
+
+    def test_undecodable_archives_are_refused_as_damaged(self):
+        cases = [("invalid UTF-8 name", _zip_with_invalid_utf8_name()),
+                 ("corrupt LZMA data", _zip_with_corrupt_lzma_data())]
+        for label, broken in cases:
+            with self.subTest(label):
+                with self.assertRaisesRegex(jte.PackageError, "damaged"):
+                    _read(broken)
 
 
 class PackageReadTests(unittest.TestCase):
@@ -318,6 +343,7 @@ class PlainFileNameTests(unittest.TestCase):
             ("C:es.json", False),       # drive letter
             ("/es.json", False),        # absolute path
             ("CON.json", False),        # Windows reserved name
+            ("CON .json", False),       # reserved name: Windows drops the space before the dot
             ("es.json.", False),        # trailing dot
             ("es.json ", False),        # trailing space
             # Accepted (True): plain names without path separators or illegal chars
@@ -330,6 +356,14 @@ class PlainFileNameTests(unittest.TestCase):
         for name, want in cases:
             with self.subTest(name=name):
                 self.assertEqual(jte._is_plain_file_name(name), want)
+
+
+class FolderLabelTests(unittest.TestCase):
+    def test_folder_labels(self):
+        cases = [(Path("C:/work/es"), "es"), (Path("D:/"), str(Path("D:/")))]
+        for folder, want in cases:
+            with self.subTest(folder=str(folder)):
+                self.assertEqual(jte._folder_label(folder), want)
 
 
 G = jte.GlossaryEntry

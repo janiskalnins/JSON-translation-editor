@@ -19,6 +19,7 @@ import subprocess
 import csv
 import difflib
 import io
+import lzma
 import tempfile
 import time
 import zipfile
@@ -2066,6 +2067,11 @@ class IncomingPackage:
     mismatches: List[str]   # files whose size or MD5 differ from export_info.json, or only one side has
 
 
+def _folder_label(folder: Path) -> str:
+    """The folder's name for a message, or the whole path for a drive root, which has no name."""
+    return folder.name or str(folder)
+
+
 def same_language(a: str, b: str) -> bool:
     """Language codes compared case-insensitively with '_' equal to '-'; an empty code matches none."""
     return bool(a and b) and a.replace("_", "-").casefold() == b.replace("_", "-").casefold()
@@ -2077,7 +2083,7 @@ def _is_plain_file_name(name: str) -> bool:
         return False
     if name != name.rstrip(". "):
         return False
-    return name.split(".")[0].upper() not in _WIN_RESERVED_NAMES
+    return name.split(".")[0].rstrip().upper() not in _WIN_RESERVED_NAMES
 
 
 def _manifest_mismatches(raw: bytes, contents: Dict[str, bytes]) -> List[str]:
@@ -2091,6 +2097,17 @@ def _manifest_mismatches(raw: bytes, contents: Dict[str, bytes]) -> List[str]:
     mismatches = [name for name, data in contents.items()
                   if listed.get(name) != (len(data), hashlib.md5(data).hexdigest())]
     return mismatches + [name for name in listed if name not in contents]
+
+
+# What zipfile raises for an archive it cannot decode: ValueError covers an entry name that is
+# flagged UTF-8 but is not (UnicodeDecodeError); the decompressors raise their own errors.
+_ZIP_DAMAGE_ERRORS = (zipfile.BadZipFile, zlib.error, lzma.LZMAError, EOFError, RuntimeError,
+                      NotImplementedError, ValueError)
+try:
+    from compression import zstd   # Python 3.14+, whose zipfile also reads Zstandard entries
+    _ZIP_DAMAGE_ERRORS += (zstd.ZstdError,)
+except ImportError:
+    pass
 
 
 def _read_package_zip(path: Path, temp_dir: Path) -> IncomingPackage:
@@ -2121,7 +2138,9 @@ def _read_package_zip(path: Path, temp_dir: Path) -> IncomingPackage:
             if sum(info.file_size for info in infos) > IMPORT_MAX_BYTES:
                 raise PackageError(f"larger than {IMPORT_MAX_BYTES // (1024 * 1024)} MB unpacked")
             contents = {info.filename: zf.read(info) for info in infos}
-    except (zipfile.BadZipFile, zlib.error, EOFError, RuntimeError, NotImplementedError) as e:
+    except PackageError:
+        raise   # a ValueError too: keep its reason rather than call it damaged
+    except _ZIP_DAMAGE_ERRORS as e:
         _log_error(f"reading package {path}", e)
         raise PackageError("the archive is damaged") from None
     manifest = contents.pop(EXPORT_INFO_NAME, None)
@@ -10223,8 +10242,19 @@ class MainWindow(QMainWindow):
             self, "Import Translation", start, "Translation packages (*.zip *.json)")
         if not path:
             return
-        with tempfile.TemporaryDirectory() as temp_dir:
+        # mkdtemp + rmtree(ignore_errors) rather than TemporaryDirectory: on Windows a virus
+        # scanner holding an unpacked file makes its cleanup raise, and Python 3.9 has no
+        # ignore_cleanup_errors.
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="jte_import_")
+        except OSError as e:
+            _log_error("creating the import temporary folder", e)
+            self._show_message("Import failed — no temporary folder could be created", 6000, "error")
+            return
+        try:
             self._import_from(Path(path), Path(temp_dir))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _import_from(self, source: Path, temp_dir: Path):
         """Read, check and parse *source*; nothing outside *temp_dir* is written before this
@@ -10232,7 +10262,11 @@ class MainWindow(QMainWindow):
         try:
             package = read_translation_package(source, temp_dir)
         except PackageError as e:
-            QMessageBox.critical(self, "Import Error", f"Not a translation package: {e}")
+            # The reason can quote an entry name from the ZIP. Escaped inside <p> so it shows as
+            # typed: a message box renders text with a tag as rich text, and without one an
+            # escaped "&" would show as "&amp;".
+            QMessageBox.critical(self, "Import Error",
+                                 f"<p>Not a translation package: {html.escape(str(e))}</p>")
             return
         except OSError as e:
             _log_error(f"reading {source}", e)
@@ -10241,8 +10275,9 @@ class MainWindow(QMainWindow):
         if package.mismatches:
             r = QMessageBox.question(
                 self, "Checksum Mismatch",
-                f"These files do not match their checksums: {', '.join(package.mismatches)} — "
-                "Import anyway?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                f"<p>These files do not match their checksums: "
+                f"{html.escape(', '.join(package.mismatches))} — Import anyway?</p>",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return
         try:
@@ -10293,7 +10328,8 @@ class MainWindow(QMainWindow):
         self._load(target)
         if self.current_file == target:
             self._show_message(f"Imported: {_file_label(target.name, self.file_version)}  "
-                               f"({len(self.entries)} strings) into {target.parent.name}", 5000)
+                               f"({len(self.entries)} strings) into {_folder_label(target.parent)}",
+                               5000)
 
     def _unpack_package(self, package: IncomingPackage, target: Path) -> bool:
         """Write the package as *target* (which does not exist yet): companions first and the .json
@@ -10309,7 +10345,7 @@ class MainWindow(QMainWindow):
                     ([f"{', '.join(removed)} will be removed (the package has none)"] if removed else [])
             r = QMessageBox.question(
                 self, "Replace Files",
-                f"Already in {target.parent.name}: {'; '.join(parts)}. Continue?",
+                f"Already in {_folder_label(target.parent)}: {'; '.join(parts)}. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if r != QMessageBox.Yes:
                 return False
@@ -10322,8 +10358,8 @@ class MainWindow(QMainWindow):
             _atomic_write_bytes(target, package.json_path.read_bytes())
         except OSError as e:
             _log_error(f"importing {target.name} into {target.parent}", e)
-            self._show_message(f"Import failed — could not write into {target.parent.name}",
-                               6000, "error")
+            self._show_message(
+                f"Import failed — could not write into {_folder_label(target.parent)}", 6000, "error")
             return False
         return True
 
@@ -10348,6 +10384,7 @@ class MainWindow(QMainWindow):
         has_glossary_rows = bool(glossary_diff.additions or glossary_diff.changes)
         if not (has_string_rows or has_glossary_rows or diff.auto_updated):
             self._show_message(f"Nothing to import — {self.current_file.name} already matches", 4000)
+            self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff)
             return
         additions, resolutions, deletions = diff.additions, [], []
         glossary_additions: List[GlossaryEntry] = []
@@ -10366,6 +10403,10 @@ class MainWindow(QMainWindow):
             self._apply_merge_diff(diff, additions, resolutions, deletions)
         if glossary_additions or glossary_changes:
             self._apply_glossary_import(glossary_additions, glossary_changes)
+        self._show_incoming_warnings(incoming, glossary_warnings, glossary_diff)
+
+    def _show_incoming_warnings(self, incoming: LoadedFile, glossary_warnings: List[str],
+                                glossary_diff: GlossaryDiff):
         for text, level in incoming.notices:
             self._show_message(f"Incoming file: {text}", 6000, level)
         for text in glossary_warnings:

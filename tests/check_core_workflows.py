@@ -584,6 +584,17 @@ class ImportWorkflowTests(WindowTestCase):
                           ("Nothing to import — es.json already matches", "info") in self._notices()),
                          ([], False, True))
 
+    def test_nothing_to_import_still_reports_the_incoming_sidecar(self):
+        self.load()
+        loose = cs.write_pair(cs.temp_dir(), "es", PAIRS)
+        cs.write_exact(jte.meta_path_for(loose), b"{")
+        self._import(loose)
+        notices = self._notices()
+        self.assertEqual(
+            [("Incoming file: Metadata: es.json.meta is damaged — statuses shown as New", "error")
+             in notices, ("Nothing to import — es.json already matches", "info") in notices],
+            [True, True])
+
     def test_plain_json_merges_into_the_open_file(self):
         path = self.load()
         loose = cs.write_pair(cs.temp_dir(), "es", self.EXTRA, meta=META)
@@ -675,6 +686,14 @@ class ImportWorkflowTests(WindowTestCase):
             zf.writestr("readme.txt", b"x")
         self._import(bad)
         self.assertEqual(self.modals.titles("critical"), ["Import Error"])
+
+    def test_no_temporary_folder_is_an_error_message(self):
+        self.load()
+        package = _package(self.EXTRA)
+        with mock.patch.object(jte.tempfile, "mkdtemp", side_effect=OSError("no space")):
+            self._import(package)
+        self.assertIn(("Import failed — no temporary folder could be created", "error"),
+                      self._notices())
 
     def test_package_without_checksums_says_so(self):
         self.load()
