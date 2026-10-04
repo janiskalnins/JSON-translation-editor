@@ -32,15 +32,15 @@ from pathlib import Path
 from typing import Callable, Optional, List, Tuple, Dict, Deque
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QSplitter,
+    QApplication, QMainWindow, QWidget,
     QTableView, QHeaderView, QAbstractItemView,
-    QToolBar, QStatusBar, QFileDialog, QMessageBox, QInputDialog,
+    QFileDialog, QMessageBox, QInputDialog,
     QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
     QLayout, QLayoutItem,
     QLabel, QLineEdit, QPushButton, QComboBox,
-    QDialog, QDialogButtonBox, QTextEdit, QPlainTextEdit,
+    QDialog, QDialogButtonBox, QTextEdit,
     QGroupBox, QFrame, QSizePolicy, QDateEdit,
-    QCheckBox, QSpinBox, QFontComboBox, QMenu, QScrollArea,
+    QCheckBox, QSpinBox, QFontComboBox, QMenu,
     QStyledItemDelegate, QStyleOptionViewItem, QStyle,
     QRadioButton, QButtonGroup, QTabWidget,
     QStyleOptionComboBox, QStyleOptionSpinBox,
@@ -49,8 +49,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import (
     QAction, QFont, QColor, QPainter, QPen, QBrush,
-    QPalette, QIcon, QKeySequence, QPixmap, QLinearGradient,
-    QTextCharFormat, QTextCursor, QFontMetrics, QShortcut,
+    QPalette, QIcon, QKeySequence, QPixmap,
+    QFontMetrics, QShortcut,
     QImage, QPolygonF
 )
 from PySide6.QtCore import (
@@ -3113,7 +3113,6 @@ class ShortcutsDialog(QDialog):
             return
 
         key  = event.key()
-        mods = event.modifiers()
 
         # Ignore bare modifier keypresses — wait for the actual key
         if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift,

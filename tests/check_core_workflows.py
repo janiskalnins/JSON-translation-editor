@@ -1050,7 +1050,7 @@ class ImportWorkflowTests(WindowTestCase):
 
     # refusals
     def test_checksum_mismatch_declined_changes_nothing(self):
-        path = self.load()
+        self.load()
         with zipfile.ZipFile(_package(self.EXTRA)) as zf:
             files = {n: zf.read(n) for n in zf.namelist()}
         files["es.json"] = cs.json_doc(dict(self.EXTRA, Extra="Más"))
