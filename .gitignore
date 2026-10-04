@@ -36,9 +36,12 @@ CLAUDE.local.md
 # Brainstorming visual companion (session-local mockups)
 .superpowers/
 
-# Reusable dev-only scripts (screenshot capture, doc builds, etc.) -- not part
-# of the shipped app, never committed. See "Tools/" in CLAUDE.md.
-Tools/
+# Dev-only scripts (screenshot capture, doc builds, etc.) are tracked; what they
+# generate is not: the scratch working folder (sample copies, settings, backups),
+# the screenshots (python Tools/take_screenshots.py dark|light) and temporary PDFs.
+Tools/_scratch/
+Tools/screenshots/
+Tools/_*.pdf
 
 # Test-run reports written by tests/run_all.py (local history, never committed)
 tests/reports/
