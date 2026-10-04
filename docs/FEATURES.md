@@ -202,7 +202,7 @@ When the **Translated Text** content is modified:
 - **Date** is automatically set to today.
 - **Translator** is automatically set to the session name (if one was entered on startup and the Override checkbox is unchecked).
 
-When only metadata is changed (status, translator, date) without touching the translation text, those fields are saved exactly as you set them — the date is not automatically updated.
+When only metadata is changed (status, translator, date) without touching the translation text, those fields are saved exactly as you set them — the date is not automatically updated. A string with no date shows today in the Date field (the field cannot be blank), but that date is only stored if you pick one; moving to the next string or changing only the status leaves it undated, and the file is not marked as changed just by browsing.
 
 When **nothing is changed**, clicking Save (or navigating away) writes nothing — the entry remains completely untouched.
 

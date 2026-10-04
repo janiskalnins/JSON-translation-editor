@@ -5404,8 +5404,8 @@ class _DatePickerField(QDateEdit):
     and typing do nothing, so a stray scroll or key press can never change a date.
     setCalendarPopup(True) is only for the drop-down arrow Qt then draws; the events that would open
     Qt's own calendar never reach QDateEdit. No minimum date: the Edit dialog writes the date back
-    whenever its text differs from the stored one, so clamping an old (pre-2000) date would rewrite
-    it on an unrelated Save."""
+    whenever the field's date differs from the one it showed on load, so clamping an old (pre-2000)
+    date would rewrite it on an unrelated Save."""
 
     _WIDEST_DATE = QDate(2088, 12, 28).toString(DATE_FMT_QT)
     _OPEN_KEYS = (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_F4)
@@ -6062,14 +6062,9 @@ class EditDialog(QDialog):
         self._original_text       = self.trans_edit.toPlainText()
         self._original_status     = self.status_combo.currentText()
         self._original_translator = self.user_edit.text()
-        # Normalise to system format so comparison with new_date is consistent.
-        # A date held in another format is converted to the current DATE_FMT.
-        _parsed_orig = parse_date(src_entry.modify_date)
-        self._original_date = (
-            format_date_for_storage(_parsed_orig)
-            if _parsed_orig is not None
-            else src_entry.modify_date  # keep raw if unparseable
-        )
+        # The date the field shows, not the stored text: the field cannot be blank, so an undated
+        # or unreadable date shows today, and only a date the user picks may replace it.
+        self._shown_date = self.date_edit.date()
 
         # Reset override checkbox for each new row so it reflects the session
         # state freshly rather than carrying over the previous row's state.
@@ -6099,14 +6094,13 @@ class EditDialog(QDialog):
         new_text       = self.trans_edit.toPlainText()
         new_status     = self.status_combo.currentText()
         new_translator = self.user_edit.text().strip()
-        d              = self.date_edit.date()
-        new_date       = format_date_for_storage(d)  # uses system DATE_FMT
+        date_picked    = self.date_edit.date() != self._shown_date
 
         text_changed = new_text != self._original_text
         meta_changed = (
             new_status     != self._original_status
             or new_translator != self._original_translator.strip()
-            or new_date       != self._original_date
+            or date_picked
         )
 
         if not text_changed and not meta_changed:
@@ -6129,9 +6123,11 @@ class EditDialog(QDialog):
                 self.user_edit.setText(session_name)  # reflect in the UI too
                 self.user_edit.blockSignals(False)
         else:
-            # Only metadata changed: respect whatever the user set in the fields
-            src_entry.status      = new_status
-            src_entry.modify_date = new_date
+            # Only metadata changed: respect whatever the user set in the fields. The stored date
+            # (empty, or one that cannot be read) is kept unless a date was picked.
+            src_entry.status = new_status
+            if date_picked:
+                src_entry.modify_date = format_date_for_storage(self.date_edit.date())
 
         # Notify the table view that this row changed
         tl = self._model.index(self._row, 0)

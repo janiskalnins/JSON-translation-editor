@@ -124,7 +124,60 @@ class EditTests(WindowTestCase):
         self.assertFalse(self.win.is_modified)
 
 
-MIXED = {"Save": "Guardar", "Cancel": "Cancel", "Open": "Abrir"}   # Cancel untranslated
+def _browse(win, row: int, change=None) -> None:
+    """Open the Edit dialog on visible *row* with exec() replaced: apply *change(dlg)* if given,
+    move to the next entry and press Save there without touching it."""
+    def fake_exec(dlg):
+        if change is not None:
+            change(dlg)
+        dlg._navigate(1)
+        dlg._save()
+        return QDialog.Accepted
+    with mock.patch.object(jte.EditDialog, "exec", fake_exec):
+        win._edit_row(win.model.index(row, 0))
+
+
+class EditDateTests(WindowTestCase):
+    """The date field cannot be blank, so an undated entry shows today: only a date the user
+    picks may be stored, never the one the field merely shows."""
+
+    def _load_undated(self, meta: Optional[Dict[str, Tuple[str, str, str]]] = None) -> Path:
+        return self.load(meta=meta if meta is not None else {})
+
+    def test_browsing_past_an_undated_entry_keeps_it_undated(self):
+        self._load_undated()
+        _browse(self.win, 0)
+        self.assertEqual(self.win.entries[0].modify_date, "")
+
+    def test_browsing_past_an_undated_entry_leaves_the_file_unmodified(self):
+        self._load_undated()
+        _browse(self.win, 0)
+        self.assertFalse(self.win.is_modified)
+
+    def test_browsing_past_an_unreadable_date_keeps_it(self):
+        self._load_undated({"Save": ("Review", "Jo", "foo")})
+        _browse(self.win, 0)
+        self.assertEqual(self.win.entries[0].modify_date, "foo")
+
+    def test_picked_date_on_an_undated_entry_is_stored(self):
+        picked = jte.QDate.currentDate().addDays(-3)   # not today: the field already shows today
+        self._load_undated()
+        _browse(self.win, 0, lambda dlg: dlg.date_edit.setDate(picked))
+        self.assertEqual(self.win.entries[0].modify_date, jte.format_date_for_storage(picked))
+
+    def test_status_change_on_an_undated_entry_keeps_it_undated(self):
+        self._load_undated()
+        _browse(self.win, 0, lambda dlg: dlg.status_combo.setCurrentText("Review"))
+        self.assertEqual((self.win.entries[0].status, self.win.entries[0].modify_date),
+                         ("Review", ""))
+
+    def test_text_change_on_an_undated_entry_stamps_today(self):
+        self._load_undated()
+        _browse(self.win, 0, lambda dlg: dlg.trans_edit.setPlainText("Guardar ya"))
+        self.assertEqual(self.win.entries[0].modify_date, TODAY)
+
+
+MIXED ={"Save": "Guardar", "Cancel": "Cancel", "Open": "Abrir"}   # Cancel untranslated
 MARK_DATE = date(2026, 10, 4)
 
 
