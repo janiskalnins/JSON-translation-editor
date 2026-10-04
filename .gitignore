@@ -238,3 +238,5 @@ cython_debug/
 
 # A language file's sidecar at the repo root is the user's own, never committed (tests/data keeps its frozen ones)
 /*.json.meta
+/*.json
+docs/superpowers/
