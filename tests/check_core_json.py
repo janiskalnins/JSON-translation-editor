@@ -194,6 +194,39 @@ class ApplyMetaTests(unittest.TestCase):
                 self.assertEqual(_applied(meta)[1], expected)
 
 
+def _set(status: str = "Complete", translator: str = "", modify_date: str = ""):
+    entries = [cs.bare_entry("Save", "Guardar"), cs.bare_entry("Cancel"), cs.bare_entry("Open", "Abrir")]
+    count = jte.set_translated_metadata(entries, status, translator, modify_date)
+    return entries, count
+
+
+class SetTranslatedMetadataTests(unittest.TestCase):
+    def test_status_goes_to_translated_entries_only(self):
+        for status in jte.STATUSES:
+            with self.subTest(status):
+                entries, _count = _set(status)
+                self.assertEqual([e.status for e in entries], [status, "New", status])
+
+    def test_returns_how_many_were_set(self):
+        self.assertEqual(_set()[1], 2)
+
+    def test_nothing_to_set_returns_zero(self):
+        self.assertEqual(_set("")[1], 0)
+
+    def test_empty_status_leaves_the_status(self):
+        entries, _count = _set("", "Unknown")
+        self.assertEqual([e.status for e in entries], ["New", "New", "New"])
+
+    def test_translator_and_date_go_to_translated_entries_only(self):
+        entries, _count = _set("Complete", "Unknown", SHOWN)
+        self.assertEqual([(e.translator, e.modify_date) for e in entries],
+                         [("Unknown", SHOWN), ("", ""), ("Unknown", SHOWN)])
+
+    def test_count_translated(self):
+        entries = [cs.bare_entry("Save", "Guardar"), cs.bare_entry("Cancel")]
+        self.assertEqual(jte.count_translated(entries), 1)
+
+
 def _built(entries, header=jte.FileHeader("es", "Español", "1.0.0")) -> dict:
     return json.loads(jte.build_sidecar_bytes(entries, header))
 
@@ -314,6 +347,22 @@ class LoadTests(unittest.TestCase):
         path = _pair(PAIRS)
         jte.meta_path_for(path).mkdir()   # reading a folder raises OSError
         self.assertTrue(jte.load_translation_file(path).meta_blocked)
+
+    def test_meta_missing_only_when_there_is_no_sidecar(self):
+        def damaged(path):
+            cs.write_exact(jte.meta_path_for(path), b"{")
+
+        def present(path):
+            cs.write_exact(jte.meta_path_for(path), cs.sidecar_doc())
+
+        cases = {"none": (lambda path: None, True), "present": (present, False),
+                 "damaged": (damaged, False),
+                 "unreadable": (lambda path: jte.meta_path_for(path).mkdir(), False)}
+        for label, (make, expected) in cases.items():
+            with self.subTest(label):
+                path = _pair(PAIRS)
+                make(path)
+                self.assertEqual(jte.load_translation_file(path).meta_missing, expected)
 
     def test_round_trip_flag(self):
         cases = {"canonical": (cs.json_doc(PAIRS), True),

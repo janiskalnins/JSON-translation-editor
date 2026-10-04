@@ -156,8 +156,11 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
     helpers (question/warning/critical/information), a QMessageBox built by hand (exec() records
     its title, clickedButton() returns the button whose text is answers["button"]), both file
     dialogs, QFileDialog.getExistingDirectory (answers["folder"]),
-    QInputDialog.getText (answers["text"], answers["text_ok"]), and the startup
-    translator-name prompt (always rejected)."""
+    QInputDialog.getText (answers["text"], answers["text_ok"]), the startup
+    translator-name prompt (always rejected) and InitialMetadataDialog (answers["initial_meta"]: a
+    dict whose "apply" presses Apply, whose "status" picks that status (None unticks it; absent keeps
+    the default, Complete) and whose "translator" / "date" (a QDate) tick that option with that
+    value; Skip when "apply" is absent)."""
     modals = Modals(answers=dict(answers))
 
     def static(kind: str, default: Any):
@@ -178,6 +181,23 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
         modals.shown.append(("folder", caption))
         return modals.answer("folder", "")
 
+    def fake_initial_meta(dlg) -> int:
+        modals.shown.append(("initial_meta", dlg.windowTitle()))
+        choice = modals.answer("initial_meta", {})
+        if "status" in choice:
+            dlg._status_chk.setChecked(choice["status"] is not None)
+            if choice["status"] is not None:
+                dlg._status_combo.setCurrentText(choice["status"])
+        if "translator" in choice:
+            dlg._translator_chk.setChecked(True)
+            dlg._translator_edit.setText(choice["translator"])
+        if "date" in choice:
+            dlg._date_chk.setChecked(True)
+            dlg._date_field.setDate(choice["date"])
+        result = QDialog.Accepted if choice.get("apply") else QDialog.Rejected
+        dlg.done(result)
+        return result
+
     patches = [
         (QMessageBox, "question", static("question", QMessageBox.Yes)),
         (QMessageBox, "warning", static("warning", QMessageBox.Ok)),
@@ -193,6 +213,7 @@ def patched_modals(**answers: Any) -> Iterator[Modals]:
         (QInputDialog, "getText",
          staticmethod(lambda *a, **k: (modals.answer("text", ""), modals.answer("text_ok", True)))),
         (jte.TranslatorNameDialog, "exec", lambda dlg: QDialog.Rejected),
+        (jte.InitialMetadataDialog, "exec", fake_initial_meta),
     ]
     with ExitStack() as stack:
         for owner, name, value in patches:

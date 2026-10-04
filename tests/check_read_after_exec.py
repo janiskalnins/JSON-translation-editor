@@ -11,7 +11,9 @@ closed by a zero-delay timer:
     glossary_changes_to_apply();
   * RestoreFromBackupDialog: restore_glossary_requested() after accept, with the box ticked and
     with it cleared;
-  * both dialogs are really deleted afterwards (the fix must not drop WA_DeleteOnClose).
+  * InitialMetadataDialog: status(), translator() and modify_date() after Apply with every option
+    ticked and Review picked;
+  * the dialogs are really deleted afterwards (the fix must not drop WA_DeleteOnClose).
 
 Runs from a throwaway folder with the startup modals patched (like check_file_properties.py).
 
@@ -31,7 +33,7 @@ os.chdir(SCRATCH)
 sys.argv[0] = str(SCRATCH / "check_read_after_exec.py")
 sys.path.insert(0, str(REPO))
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QDate, QTimer
 from PySide6.QtWidgets import QApplication, QDialog
 from shiboken6 import isValid
 
@@ -118,6 +120,27 @@ def check_restore(failures, win):
             failures.append(f"restore ({ticked}): reading after exec(): {e}")
 
 
+def check_initial_meta(failures, win):
+    dlg = jte.InitialMetadataDialog("es.json", 2, 3, parent=win)
+
+    def choose(d):
+        d._status_combo.setCurrentText("Review")
+        d._translator_chk.setChecked(True)
+        d._translator_edit.setText("Ann")
+        d._date_chk.setChecked(True)
+        d._date_field.setDate(QDate(2026, 10, 4))
+
+    result = _exec_then(dlg, choose)
+    check(failures, "initial meta: accepted", result == QDialog.Accepted, str(result))
+    check(failures, "initial meta: dialog deleted after exec()", not isValid(dlg))
+    try:
+        got = (dlg.status(), dlg.translator(), dlg.modify_date())
+        want = ("Review", "Ann", jte.format_date_for_storage(QDate(2026, 10, 4)))
+        check(failures, "initial meta: results", got == want, repr(got))
+    except RuntimeError as e:
+        failures.append(f"initial meta: reading after exec(): {e}")
+
+
 def main():
     app = QApplication.instance() or QApplication([])
     app.setStyle("Fusion")
@@ -129,7 +152,7 @@ def main():
     win.settings.data.setdefault("backup", {})["enabled"] = False
     win.show()
     app.processEvents()
-    for step in (check_merge, check_merge_glossary, check_restore):
+    for step in (check_merge, check_merge_glossary, check_restore, check_initial_meta):
         try:
             step(failures, win)
         except Exception as e:

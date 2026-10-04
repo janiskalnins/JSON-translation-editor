@@ -47,9 +47,9 @@ files.
 
 | Check | Tests | Time | What it covers |
 |---|---:|---:|---|
-| `check_core_json` | 56 | 0.4 s | Reading and saving language files: refused files, style detection (indent, line endings, BOM, escaped non-ASCII), byte-for-byte saves; the `.json.meta` sidecar (defaults, orphans, unknown status, bad dates, damaged or unreadable); the load/save pair, save order and a failed sidecar write |
+| `check_core_json` | 63 | 0.4 s | Reading and saving language files: refused files, style detection (indent, line endings, BOM, escaped non-ASCII), byte-for-byte saves; the `.json.meta` sidecar (defaults, orphans, unknown status, bad dates, damaged, unreadable or missing); setting a status, translator and date on the translated strings; the load/save pair, save order and a failed sidecar write |
 | `check_core_merge` | 35 | 1.0 s | Merge (Import's merge path): what counts as an addition, conflict or deletion, which side wins, appending additions, and whole-file merges for every combination of choices; Sync Keys: the diff, where inserted keys land, deletions default to Keep, values untouched |
-| `check_core_workflows` | 113 | 4.8 s | A real main window: Edit dialog (and its source box fitting a multi-line source and growing with the window), bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Export, Import (into the open file, a folder, over stray companions, nothing to import, a plain .json, no temporary folder, a glossary edited or unreadable since opening), the File menu's order, the filter bar's larger check boxes, Restore from Backup (with its sidecar), autosave, the reformat prompt, the Robo-Translate skip rule, the placeholder line, New Language, the trimmed-paste note |
+| `check_core_workflows` | 154 | 6.3 s | A real main window: the Mark Translated Strings question for a translated file opened without a `.json.meta` (and its dialog), Edit dialog (and its source box fitting a multi-line source and growing with the window), bulk status, delete, Close File, Save (sidecar failures, an unreadable sidecar), Save As, Export, Import (into the open file, a folder, over stray companions, nothing to import, a plain .json, no temporary folder, a glossary edited or unreadable since opening), the File menu's order, the filter bar's larger check boxes, Restore from Backup (with its sidecar), autosave, the reformat prompt, the Robo-Translate skip rule, the placeholder line, New Language, the trimmed-paste note |
 | `check_core_export` | 44 | 0.4 s | Export packages (contents byte for byte, export_info.json, names), the package reader's refusals (damaged archives included) and checksums, the glossary diff |
 | `check_core_dates_filter` | 21 | 0.4 s | Date formats, every filter-bar option (the Check filter included) and placeholder detection |
 | `check_core_glossary` | 23 | 0.4 s | Glossary files in any encoding, separator and header layout; bad rows; writing; term matching incl. plurals |
@@ -71,7 +71,7 @@ files.
 | `check_groupbox_title` | 3.4 s | Group-box borders run through the middle of their titles at every font size |
 | `check_merge_compare` | 2.0 s | The Merge row compare pop-up: highlighted differences, choices, keys, sizes; the Glossary tab beside Strings, which leaves the Strings toolbar on one row; the tabs' colours and contrast, and their size following the font |
 | `check_notifications` | 7.4 s | The info bar's message queue, colours, history pop-up and startup messages |
-| `check_read_after_exec` | 0.5 s | Merge (strings and glossary results) and Restore dialogs still hand over their results after they close |
+| `check_read_after_exec` | 0.5 s | Merge (strings and glossary results), Restore and Mark Translated Strings dialogs still hand over their results after they close |
 | `check_scrollbar` | 0.9 s | Scrollbar handle stays clear of the arrows, keeps a minimum length, arrows drawn |
 | `check_shortcuts_fit` | 1.9 s | Keyboard Shortcuts: buttons fit their text and the columns line up |
 | `check_spinbox_arrows` | 0.7 s | Spin-box arrows visible and large enough, enabled and disabled |

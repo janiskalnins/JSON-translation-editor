@@ -1505,6 +1505,28 @@ def apply_sidecar_meta(entries: List[StringEntry], meta: Dict[str, Dict[str, str
     return warnings
 
 
+def count_translated(entries: List[StringEntry]) -> int:
+    """Entries whose value differs from their key: the key is the untranslated English."""
+    return sum(1 for e in entries if e.text != e.name)
+
+
+def set_translated_metadata(entries: List[StringEntry], status: str, translator: str,
+                            modify_date: str) -> int:
+    """Give every translated entry *status*, *translator* and *modify_date* (shown format); "" leaves
+    that field as it is. The untranslated entries are not touched. Returns how many entries were
+    set, 0 when there is nothing to set."""
+    if not (status or translator or modify_date):
+        return 0
+    count = 0
+    for e in entries:
+        if e.text != e.name:
+            e.status = status or e.status
+            e.translator = translator or e.translator
+            e.modify_date = modify_date or e.modify_date
+            count += 1
+    return count
+
+
 def build_sidecar_bytes(entries: List[StringEntry], header: FileHeader) -> bytes:
     """The sidecar for *entries*: only entries whose metadata differs from a fresh one (New, no
     translator, no date) are listed, in file order, so its diffs line up with the language file's."""
@@ -1553,6 +1575,7 @@ class LoadedFile:
     header: FileHeader
     notices: List[Tuple[str, str]]    # (text, level) for the info bar, in order
     meta_blocked: bool                # the sidecar exists but could not be read: never overwrite it
+    meta_missing: bool = False        # there is no sidecar at all (not a damaged or locked one)
 
 
 class MetadataWriteError(Exception):
@@ -1585,12 +1608,12 @@ def load_translation_file(path: Path, keep_damaged: bool = True) -> LoadedFile:
     round_trips = dump_json(entries, style) == raw
     header = FileHeader()
     notices: List[Tuple[str, str]] = []
-    blocked = False
+    blocked = missing = False
     meta_path = meta_path_for(path)
     try:
         meta_raw: Optional[bytes] = meta_path.read_bytes()
     except FileNotFoundError:
-        meta_raw = None
+        meta_raw, missing = None, True
     except OSError as e:
         _log_error(f"reading {meta_path}", e)
         notices.append((f"Metadata: {meta_path.name} could not be read — statuses shown as New, "
@@ -1615,7 +1638,7 @@ def load_translation_file(path: Path, keep_damaged: bool = True) -> LoadedFile:
                 else:
                     notices.append((f"Metadata: {meta_path.name} was damaged (kept as {aside.name}) "
                                     "— statuses shown as New", "error"))
-    return LoadedFile(entries, style, round_trips, header, notices, blocked)
+    return LoadedFile(entries, style, round_trips, header, notices, blocked, missing)
 
 
 def save_translation_file(path: Path, entries: List[StringEntry], style: JsonStyle,
@@ -4862,6 +4885,158 @@ class ExportDialog(QDialog):
 
     def mode(self) -> str:
         return self._mode
+
+
+class InitialMetadataDialog(QDialog):
+    """Asked when a file with translated strings opens without a sidecar: what to set on the
+    translated strings -- a status (ticked, Complete, by default), a translator and a date -- or Skip
+    to leave everything New. A sidecar is written either way, so a file is asked about once."""
+
+    DEFAULT_STATUS = "Complete"
+    DEFAULT_TRANSLATOR = "Unknown"
+    FIELD_CHARS = 30   # width of the three fields, in average characters of the UI font
+
+    def __init__(self, file_name: str, translated: int, total: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mark Translated Strings")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        # exec() deletes the dialog before it returns; done() keeps the results.
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self._status = ""
+        self._translator = ""
+        self._modify_date = ""
+        self._build_ui(file_name, translated, total)
+        self._load_values()
+        self._apply_style()
+
+    def _build_ui(self, file_name: str, translated: int, total: int):
+        lay = QVBoxLayout(self)
+        lay.setSpacing(12)
+        lay.setContentsMargins(20, 20, 20, 16)
+        self._intro = QLabel(f"{file_name} has no metadata file. {translated} of {total} strings "
+                             "are translated (their text differs from the source).")
+        self._intro.setWordWrap(True)
+        lay.addWidget(self._intro)
+        lay.addWidget(QLabel("Set for the translated strings:"))
+
+        self._grid = QGridLayout()
+        self._grid.setHorizontalSpacing(10)
+        self._grid.setVerticalSpacing(8)
+        self._status_chk = QCheckBox("Status")
+        self._status_combo = _WidePopupComboBox()
+        self._status_combo.addItems(STATUSES)
+        self._translator_chk = QCheckBox("Translator")
+        self._translator_edit = QLineEdit()
+        self._date_chk = QCheckBox("Date")
+        self._date_field = _DatePickerField()
+        self._date_field.setDisplayFormat(DATE_FMT_QT)
+        rows = ((self._status_chk, self._status_combo),
+                (self._translator_chk, self._translator_edit),
+                (self._date_chk, self._date_field))
+        for row, (chk, field) in enumerate(rows):
+            chk.setProperty("filterChk", True)
+            chk.toggled.connect(field.setEnabled)
+            self._grid.addWidget(chk, row, 0)
+            # Left-aligned at its own width: a stretched field made the window as wide as the screen
+            # text above it, not the other way round.
+            self._grid.addWidget(field, row, 1, Qt.AlignLeft)
+        lay.addLayout(self._grid)
+
+        self._hint = QLabel(f"Untranslated strings stay New. Either way, {file_name}.meta is "
+                            "created next to the file.")
+        self._hint.setWordWrap(True)
+        lay.addWidget(self._hint)
+
+        self._btn_row = QHBoxLayout()
+        self._btn_row.setSpacing(8)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setProperty("role", "primary")
+        apply_btn.clicked.connect(self.accept)
+        skip_btn = QPushButton("Skip")
+        skip_btn.setToolTip("Leave every string New")
+        skip_btn.clicked.connect(self.reject)
+        self._btn_row.addStretch()
+        self._btn_row.addWidget(apply_btn)
+        self._btn_row.addWidget(skip_btn)
+        lay.addLayout(self._btn_row)
+        apply_btn.setDefault(True)   # after the row joins the dialog (default-button pitfall)
+
+    def _load_values(self):
+        self._status_combo.setCurrentText(self.DEFAULT_STATUS)
+        self._translator_edit.setText(self.DEFAULT_TRANSLATOR)
+        self._date_field.setDate(QDate.currentDate())
+        for chk, field, ticked in ((self._status_chk, self._status_combo, True),
+                                   (self._translator_chk, self._translator_edit, False),
+                                   (self._date_chk, self._date_field, False)):
+            chk.setChecked(ticked)
+            field.setEnabled(ticked)
+
+    def _apply_style(self):
+        mw = self.parent()
+        t  = mw._get_theme() if mw and hasattr(mw, "_get_theme") else THEMES["dark"]
+        font = mw.settings.get_font() if mw and hasattr(mw, "settings") else self.font()
+        pt = font.pointSize() or 10
+        self.setStyleSheet(f"""
+            QDialog   {{ background: {t['dlg_bg']}; }}
+            QLabel    {{ color: {t['fg']}; }}
+            QCheckBox {{ color: {t['fg']}; font-size: {pt}pt; }}
+            {_prominent_checkbox_qss(t, pt)}
+            QLineEdit {{ background: {t['dlg_edit_bg']}; color: {t['fg']};
+                         border: 1px solid {t['border']}; border-radius: 3px;
+                         padding: 4px 6px; }}
+            QComboBox {{ background: {t['bg4']}; color: {t['fg']};
+                         border: 1px solid {t['border2']}; border-radius: 3px;
+                         padding: 3px 6px; }}
+            QComboBox QAbstractItemView {{ background: {t['bg2']}; color: {t['fg']};
+                                           selection-background-color: {t['sel_bg']};
+                                           selection-color: {t['sel_fg']}; }}
+            {_combobox_qss(t, pt)}
+            {_button_qss(t, pt)}
+            {_field_state_qss(t)}
+        """)
+        self._hint.setStyleSheet(f"color: {t['fg_dim']}; font-size: {max(8, pt - 1)}pt;")
+        fm = QFontMetrics(font)
+        self._date_field.fit_to_font(fm)
+        self._fit_width(fm)
+
+    def _fit_width(self, fm: QFontMetrics):
+        """The three fields one width (FIELD_CHARS, or the widest field's own); the window as wide
+        as the option rows or the buttons, whichever is wider, with the two texts wrapping to that.
+        Measured after the stylesheet is applied, so padding and arrows are current."""
+        for widget in self.findChildren(QWidget):
+            widget.ensurePolished()
+        fields = (self._status_combo, self._translator_edit, self._date_field)
+        width = max([fm.averageCharWidth() * self.FIELD_CHARS]
+                    + [f.minimumSizeHint().width() for f in fields]
+                    + [f.minimumWidth() for f in fields])
+        for field in fields:
+            field.setFixedWidth(width)
+        self.layout().invalidate()
+        m = self.layout().contentsMargins()
+        self.setFixedWidth(max(self._grid.sizeHint().width(), self._btn_row.sizeHint().width())
+                           + m.left() + m.right())
+
+    def done(self, result: int):
+        """Keep the choices: exec() deletes this dialog, its widgets included, before it returns.
+        Skip keeps nothing; an unticked option gives ""."""
+        applied = result == QDialog.Accepted
+        self._status = (self._status_combo.currentText()
+                        if applied and self._status_chk.isChecked() else "")
+        self._translator = (self._translator_edit.text().strip()
+                            if applied and self._translator_chk.isChecked() else "")
+        self._modify_date = (format_date_for_storage(self._date_field.date())
+                             if applied and self._date_chk.isChecked() else "")
+        super().done(result)
+
+    def status(self) -> str:
+        return self._status
+
+    def translator(self) -> str:
+        return self._translator
+
+    def modify_date(self) -> str:
+        """The chosen date in the shown (system short-date) format, or "" for none."""
+        return self._modify_date
 
 
 # ══════════════════════════════════════════════════════════════
@@ -9132,6 +9307,9 @@ class MainWindow(QMainWindow):
         self._backup_threads: List["BackupThread"] = []
         self._translation_threads: List["TranslationThread"] = []
         self._is_closing = False
+        # A command-line file loaded before show(): its Mark Translated Strings question waits for
+        # the end of _run_startup_prompts().
+        self._pending_initial_sidecar: Optional[Path] = None
         self.header:     FileHeader = FileHeader()          # the open file's sidecar header
         self.json_style: JsonStyle  = DEFAULT_JSON_STYLE    # layout to write the open file back in
         self.round_trips: bool      = True                  # False: the first save asks before reformatting (_confirm_reformat)
@@ -9179,6 +9357,9 @@ class MainWindow(QMainWindow):
         for text, level in self.settings.startup_notices:
             self._show_message(text, 6000, level)
         self._update_translator_status()
+        pending, self._pending_initial_sidecar = self._pending_initial_sidecar, None
+        if pending is not None and pending == self.current_file:
+            self._offer_initial_sidecar(pending)
 
     # ── Translator session ────────────────────────────────────────────────────
 
@@ -10831,9 +11012,47 @@ class MainWindow(QMainWindow):
                 self._show_message("Glossary: " + "; ".join(self.glossary_load_warnings), 5000, "warning")
             for text, level in loaded.notices:
                 self._show_message(text, 5000, level)
+            if loaded.meta_missing and self.isVisible():
+                self._offer_initial_sidecar(path)
+            elif loaded.meta_missing:
+                # A command-line file loads before the window is shown. A timer of our own would
+                # fire inside the startup prompts' nested event loops, on top of them.
+                self._pending_initial_sidecar = path
             self._create_backup(path)
         except Exception as e:
             QMessageBox.critical(self, "Open Error", f"Failed to load file:\n{e}")
+
+    def _offer_initial_sidecar(self, path: Path) -> None:
+        """A file with translated strings opened without a sidecar: ask what to set on them (a
+        status, a translator, a date), then write the sidecar either way, so each file is asked
+        about once. Only the sidecar is written; if that fails the file is left modified, so Save
+        writes it."""
+        translated = count_translated(self.entries)
+        if not translated or self._is_closing:   # a modal now would block the shutdown
+            return
+        dlg = InitialMetadataDialog(path.name, translated, len(self.entries), self)
+        dlg.exec()
+        count = set_translated_metadata(self.entries, dlg.status(), dlg.translator(),
+                                        dlg.modify_date())
+        if count:
+            applied = [text for text in (dlg.status(),
+                                         dlg.translator() and f"translator {dlg.translator()}",
+                                         dlg.modify_date()) if text]
+            summary = f"{count} strings set ({', '.join(applied)})"
+            self._apply_filters()
+        else:
+            summary = "all strings New"
+        meta_path = meta_path_for(path)
+        try:
+            _atomic_write_bytes(meta_path, build_sidecar_bytes(self.entries, self.header))
+        except Exception as e:
+            _log_error(f"creating {meta_path}", e)
+            self.is_modified = True
+            self._update_title()
+            self._show_message(f"Metadata: {meta_path.name} could not be created — Save to retry",
+                               6000, "error")
+            return
+        self._show_message(f"Metadata: created {meta_path.name} — {summary}", 5000)
 
     def _save(self):
         if not self.current_file:

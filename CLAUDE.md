@@ -224,8 +224,9 @@ tests/
   standard `json` module (an independent reader; the app's own is `parse_json_bytes`) must read
   exactly those keys, in order, none twice.
   `cs.open_window(path, backup=False, **answers)` builds a real `MainWindow` inside
-  `cs.patched_modals()`, which answers every `QMessageBox`, both file dialogs and the translator
-  prompt from `answers` and records what was shown (`modals.shown`). Optional coverage, dev-only
+  `cs.patched_modals()`, which answers every `QMessageBox`, both file dialogs, the translator
+  prompt and `InitialMetadataDialog` (`answers["initial_meta"]`, a dict with `apply`, `status`
+  (`None` unticks it), `translator`, `date`; Skip when `apply` is absent) from `answers` and records what was shown (`modals.shown`). Optional coverage, dev-only
   like `pypdf`: `pip install coverage`, then `python -m coverage run tests/check_core_json.py`.
 
 The checks:
@@ -235,7 +236,8 @@ The checks:
   `MergeConflictDialog`'s `accepted_additions()`/`resolved_conflicts()`/`deletions_to_remove()`
   and the glossary results `accepted_glossary_additions()`/`glossary_changes_to_apply()`
   with a changed choice in each category, and `RestoreFromBackupDialog.restore_glossary_requested()`
-  ticked and cleared; it also asserts both dialogs really are deleted, so the fix can't be to drop
+  ticked and cleared, and `InitialMetadataDialog`'s `status()`/`translator()`/`modify_date()`
+  with every option ticked; it also asserts the dialogs really are deleted, so the fix can't be to drop
   `WA_DeleteOnClose`. Runs from a throwaway folder with the startup modals patched.
 - **`check_scrollbar.py`** — offscreen regression check for `_scrollbar_qss()`
   (handle stays clear of the arrow buttons and can still move on a short bar,
@@ -400,12 +402,16 @@ The checks:
   value, a duplicate key, not UTF-8), style detection (indent, compact, CRLF, BOM, trailing
   newline, escaped non-ASCII), writing (the frozen sample byte-identical, one edited line, values
   holding `\n`, `"` and `\\`), the sidecar (parse, defaults, orphans, unknown status, bad date, damaged
-  file moved aside, path and language guess), and `load_translation_file()` /
+  file moved aside, path and language guess, `meta_missing` only for a missing one),
+  `count_translated()` / `set_translated_metadata()`, and `load_translation_file()` /
   `save_translation_file()` including the split failure (JSON written, sidecar not).
 - **`check_core_merge.py`**: `compute_merge_diff`, `_pick_newer_entry`, whole-file merges for every
   choice combination (Import's merge path) through `MainWindow._apply_merge_diff()`, and Sync Keys (`compute_sync_diff`,
   `insert_synced`, the dialog flow through `MainWindow._apply_sync()`).
-- **`check_core_workflows.py`**: a real `MainWindow`: Edit dialog edits, bulk status,
+- **`check_core_workflows.py`**: a real `MainWindow`: the Mark Translated Strings question
+  (`InitialSidecarTests`: when it is asked and when not, Apply/Skip, status, translator and date, the
+  sidecar written at once with the JSON untouched, a failed write; `InitialMetadataDialogTests`: the
+  dialog's defaults and results), Edit dialog edits, bulk status,
   delete, Close File (Save/Discard/Cancel, failed save), Save, Save As, Export, Import (into the open file, a folder, over stray
   companions, nothing to import with a damaged incoming sidecar, a plain .json, no temporary
   folder, a glossary edited or unreadable since the file was opened), Restore
@@ -471,8 +477,9 @@ save_translation_file(path, entries, style, header, write_meta=True)   # JSON, t
   `DEFAULT_JSON_STYLE` (1-space indent, LF, no BOM, trailing newline, literal non-ASCII) is used
   when no file is open.
 - **`LoadedFile`** — `entries`, `style`, `round_trips` (writing the entries back in `style`
-  reproduces the file's bytes), `header`, `notices` (`(text, level)` for the info bar) and
-  `meta_blocked` (the sidecar exists but could not be read, so it must never be overwritten).
+  reproduces the file's bytes), `header`, `notices` (`(text, level)` for the info bar),
+  `meta_blocked` (the sidecar exists but could not be read, so it must never be overwritten) and
+  `meta_missing` (there is no sidecar at all; a damaged or locked one is not "missing").
 - **`StringEntry`** — `name` (the key, the English source), `text` (the value), `translator`,
   `status`, `modify_date` (shown in the system short-date format; ISO in the sidecar) and
   `position` (1-based place in the file when it was loaded). There are no raw segments: a save
@@ -498,7 +505,7 @@ On save, `dump_json()` writes `(entry.name, entry.text)` for every entry through
 |-------|---------------|
 | `StringEntry` (dataclass) | One translation string — key, value, status, translator, date, `position` |
 | `JsonStyle` (frozen dataclass) | How a language file is laid out; saves write it back the same way |
-| `LoadedFile` (dataclass) | What `load_translation_file()` returns: entries, style, `round_trips`, header, notices, `meta_blocked` |
+| `LoadedFile` (dataclass) | What `load_translation_file()` returns: entries, style, `round_trips`, header, notices, `meta_blocked`, `meta_missing` |
 | `FileHeader` (dataclass) | The sidecar's language code, language name and version |
 | `Settings` | JSON settings file: load, save, `get(key, default)` |
 | `TranslationModel` | `QAbstractTableModel` wrapping `_all` / `_vis` entry lists |
@@ -529,6 +536,7 @@ On save, `dump_json()` writes `(entry.name, entry.text)` for every entry through
 | `FontSettingsDialog` | View → Choose UI Font… — family + size + live preview, replaces `QFontDialog.getFont()` |
 | `FilePropertiesDialog` | File → Properties… — edits the sidecar header's language code, language name and version, and shows read-only file facts (see [File Properties](#file-properties)) |
 | `ExportDialog` | File → Export… — ZIP package or translation file only; `mode()` after `exec()` (stored in `done()`) |
+| `InitialMetadataDialog` | "Mark Translated Strings", asked by `_offer_initial_sidecar()` when a file with translated strings opens without a sidecar: three tick boxes, each enabling its field — Status (a `_WidePopupComboBox` of `STATUSES`; ticked, Complete), Translator (prefilled "Unknown") and Date (today), the last two unticked — then Apply (primary, default) / Skip (also Escape). The fields share one width (`FIELD_CHARS` = 30 average characters, or the widest field's own) and the window is fixed to the option rows' or buttons' width, whichever is wider (`_fit_width()`), so the two texts wrap instead of setting the width. `status()`, `translator()` (`""` unticked or blank), `modify_date()` (shown format) after `exec()` (stored in `done()`; all `""` after Skip) |
 | `FileFacts` (dataclass) | Read-only facts for File Properties, built by `compute_file_facts()` |
 | `_WidePopupComboBox` | `QComboBox` whose popup is at least as wide as its widest item — every combo in the app is one (see "Combo box drop-downs and popups") |
 | `_DatePickerField` | Every date field (filter bar From/To, Edit's Date): a read-only `QDateEdit` that opens `_DateDrumPopup`; the wheel, other keys and typing do nothing (see "Date pickers") |
@@ -933,6 +941,7 @@ consistent with the nav button style.  Do not use `"Shortcut: {key}"` format.
 _open()  →  QFileDialog  →  _load(path)
 _load()  →  load_translation_file() → model.load() → _apply_filters()
                                     → _reconfigure_autosave()
+                                    → _offer_initial_sidecar(path)   (meta_missing only)
                                     → _create_backup(path)
 
 _save()  →  _write(current_file)
@@ -1653,6 +1662,29 @@ the file's language code, language name and version. It is JSON in a file whose 
   or a date), in the language file's key order, so the sidecar's diffs line up with the JSON's. An
   unlisted key is `New` with no translator and no date: a file with no sidecar opens entirely
   `New`. A sidecar is written on every successful save, even when it holds only the header.
+- **A missing sidecar is created on open when the file has translated strings.**
+  `MainWindow._offer_initial_sidecar()` runs from `_load()` when `LoadedFile.meta_missing` (no
+  sidecar at all: a damaged or locked one keeps its own handling) and `count_translated()` (value ≠
+  key) is not 0. `InitialMetadataDialog` asks; `set_translated_metadata()` gives the translated
+  entries every ticked option (Complete only, by default; `""` leaves a field as it is, nothing
+  ticked or Skip changes nothing) and the table is refreshed. Either answer then writes the sidecar at once through
+  `_atomic_write_bytes(meta_path_for(path), build_sidecar_bytes(...))` with the empty header (the
+  code is still guessed from the file name), so a file is asked about once; the JSON is not
+  touched and the file stays unmodified. Message: "Metadata: created es.json.meta — N strings
+  set (Review, translator …, date)" (the applied options) or "— all strings New". A failed write is logged, shows
+  the error "Metadata: es.json.meta could not be created — Save to retry" and sets `is_modified`,
+  so Save writes it. It runs before `_create_backup()`, so that open's slot holds the new sidecar —
+  except for a file given on the command line: `main()` loads it before `win.show()`, so
+  `_load()` stores the path in `_pending_initial_sidecar` and `_run_startup_prompts()` asks at its
+  very end (if that file is still the open one), after the settings recovery notice and the
+  translator name; that open's backup slot holds the file as it was found. Not a zero-delay timer:
+  the startup prompts' own `exec()` loops run posted timers, so one fired with the translator
+  prompt still open (`InitialSidecarStartupTests` spins a real nested loop to catch that). The
+  question is never asked while `_is_closing` (a restore finishing during shutdown reloads the
+  file), so a modal cannot block the exit.
+  Every open goes through `_load()` (Open, drop, command line, Import into a folder, Restore);
+  New Language writes its own sidecar and Merge/Sync Keys never call `_load()` on their second
+  file, so neither asks. A file whose values all equal their keys gets no question and no sidecar.
 - Written with `indent=1`, `ensure_ascii=False`, LF and a trailing newline (`build_sidecar_bytes()`).
   Dates are ISO `YYYY-MM-DD` (see [Dates](#dates)).
 - `language` is the auto-translate target and the Merge guard's code. When it is empty,
@@ -2012,7 +2044,10 @@ the file's language code, language name and version. It is JSON in a file whose 
   `_import_into_folder()`: a folder picker, then `<folder>/<stem>.json`. If it exists and is not the
   open file, `_confirm_close_file()` (Save/Discard/Cancel) runs, the target is opened with `_load()`
   and `_import_merge()` follows, so the Language Mismatch prompt comes *after* the target is open:
-  answering No leaves it open. If it does not exist, the current file is closed the same way and
+  answering No leaves it open. A target with translated strings and no sidecar gets the Mark
+  Translated Strings question there too, before the Merge window — kept on purpose (the user's
+  call): its Date option is opt-in, and ticking it makes the open side "newer" for
+  `_pick_newer_entry()`. If it does not exist, the current file is closed the same way and
   `_unpack_package()` writes the package there, then `_load()` opens it and "Imported: es.json
   v1.0.0  (N strings) into <folder>" is shown. Messages name a folder by `_folder_label()`: its
   name, or its path for a drive root such as `D:\`, which has none.
@@ -2753,7 +2788,8 @@ pre-commit hook runs it automatically for code changes. Manual testing checklist
 - [ ] Save after deleting entries — verify the saved JSON no longer contains the deleted keys, every other line is unchanged, and the file reloads cleanly
 - [ ] Open View → Keyboard Shortcuts…, verify "Delete Selected" appears in "Selected Rows Actions", rebind it, restart, and verify the new binding persists and the old `Ctrl+Del` no longer triggers deletion
 - [ ] Apply an active filter, delete a currently-visible entry — verify the table shows one fewer visible row and the total count also drops by one
-- [ ] Open a file whose sidecar is missing — verify every entry is `New`, no sidecar is created by opening, and Save writes `<name>.json.meta` next to it holding the header and only the entries with non-default metadata
+- [ ] Open a file whose sidecar is missing and whose values all equal their keys — verify every entry is `New`, no question, no sidecar is created by opening, and Save writes `<name>.json.meta` next to it holding the header and only the entries with non-default metadata
+- [ ] Open a copy of a translated file with its `.json.meta` deleted — verify "Mark Translated Strings" names the file and "N of M strings", Status ticked on Complete, Translator ("Unknown") and Date (today) unticked and greyed out, the three fields one width and the window no wider than them; pick Review, tick the other two, change the date, **Apply** — verify the translated rows show Review with that translator and date, the untranslated ones New, no ●, "Metadata: created … — N strings set (Review, translator Unknown, <date>)", the `.json.meta` beside it and the `.json` unchanged (`git diff`/hash); reopen — verify no question. Repeat with **Skip**, with Escape and with every box unticked + Apply — verify a `.json.meta` with empty `entries`. Look at the dialog, and the Status drop-down's popup, in both themes at 10 and 14 pt
 - [ ] Make an entry `Complete` with a translator, Save, and open the sidecar — verify only that entry is listed, with an ISO `modified` date, and the JSON file differs from before in that entry's line only (or not at all)
 - [ ] Open a file indented with 4 spaces and a space before each colon — verify "Reformat File" is asked on the first Ctrl+S, No leaves the file untouched and modified, Yes writes it in the app's own style and later saves ask nothing; with autosave on, verify "Autosave paused: save … once with Ctrl+S" appears once and nothing is written until then
 - [ ] Open a file that is invalid JSON, a JSON array, has a number as a value, or repeats a key — verify an "Open Error" dialog names the problem (line and column, or the duplicate key) and nothing opens
@@ -2811,7 +2847,8 @@ automatically keep the hint in sync — do not set its visibility directly elsew
 
 **`is_modified` vs `_write()`** — `is_modified` is set `True` in `_mark_modified()`
 (called from `EditDialog` commit), in the bulk-mutation methods (`_bulk_status()`,
-`_apply_merge_diff()`, `_apply_sync()`, `_delete_entries()`) and in `_open_file_properties()`.  It is set
+`_apply_merge_diff()`, `_apply_sync()`, `_delete_entries()`), in `_open_file_properties()` and when
+`_offer_initial_sidecar()` cannot write the sidecar it just created the statuses for.  It is set
 `False` only when a language file reaches disk (`_after_write()`, called by `_write()`; `_autosave_tick()`)
 and when the open state is replaced (`_load()`, `_close_file()`, and `_new_language()` after its
 Save/Discard prompt).  Do not set it directly elsewhere.

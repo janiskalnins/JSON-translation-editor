@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QMimeData, Qt
+from PySide6.QtCore import QEventLoop, QItemSelection, QItemSelectionModel, QMimeData, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QMessageBox, QStyle, QStyleOptionButton
 
@@ -122,6 +122,279 @@ class EditTests(WindowTestCase):
     def test_file_with_a_sidecar_opens_unmodified(self):
         self.load()
         self.assertFalse(self.win.is_modified)
+
+
+MIXED = {"Save": "Guardar", "Cancel": "Cancel", "Open": "Abrir"}   # Cancel untranslated
+MARK_DATE = date(2026, 10, 4)
+
+
+def _sidecar_entries(path: Path) -> dict:
+    return json.loads(jte.meta_path_for(path).read_bytes())["entries"]
+
+
+class InitialSidecarTests(WindowTestCase):
+    """A translated file opened without a sidecar: the Mark Translated Strings question."""
+
+    def _open_without_sidecar(self, pairs: Dict[str, str] = MIXED, **choice) -> Path:
+        self.modals.answers["initial_meta"] = choice
+        return self.load(pairs, meta=None)
+
+    def _messages(self) -> List[Tuple[str, str]]:
+        return [(n.text, n.level) for n in self.win._notice_history]
+
+    def test_translated_file_without_a_sidecar_asks(self):
+        self._open_without_sidecar()
+        self.assertEqual(self.modals.titles("initial_meta"), ["Mark Translated Strings"])
+
+    def test_apply_lists_only_the_translated_keys(self):
+        path = self._open_without_sidecar(apply=True)
+        bare = {"status": "Complete", "translator": "", "modified": ""}
+        self.assertEqual(_sidecar_entries(path), {"Save": bare, "Open": bare})
+
+    def test_apply_with_the_chosen_status(self):
+        path = self._open_without_sidecar(apply=True, status="Review")
+        self.assertEqual(_sidecar_entries(path)["Save"]["status"], "Review")
+
+    def test_apply_with_translator_and_date(self):
+        path = self._open_without_sidecar(apply=True, translator="Unknown",
+                                          date=jte.QDate(2026, 10, 4))
+        self.assertEqual(_sidecar_entries(path)["Save"],
+                         {"status": "Complete", "translator": "Unknown", "modified": "2026-10-04"})
+
+    def test_apply_translator_without_status_keeps_new(self):
+        path = self._open_without_sidecar(apply=True, status=None, translator="Unknown")
+        self.assertEqual(_sidecar_entries(path)["Save"],
+                         {"status": "New", "translator": "Unknown", "modified": ""})
+
+    def test_applied_statuses_show_in_the_window(self):
+        self._open_without_sidecar(apply=True)
+        self.assertEqual([e.status for e in self.win.entries], ["Complete", "New", "Complete"])
+
+    def test_skip_writes_a_sidecar_with_no_entries(self):
+        path = self._open_without_sidecar()
+        self.assertEqual(_sidecar_entries(path), {})
+
+    def test_apply_with_nothing_ticked_writes_a_sidecar_with_no_entries(self):
+        path = self._open_without_sidecar(apply=True, status=None)
+        self.assertEqual(_sidecar_entries(path), {})
+
+    def test_language_file_is_not_touched(self):
+        path = cs.write_pair(cs.temp_dir(), "es", MIXED)
+        before = path.read_bytes()
+        self.modals.answers["initial_meta"] = {"apply": True}
+        self.win._load(path)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_file_opens_unmodified(self):
+        self._open_without_sidecar(apply=True)
+        self.assertFalse(self.win.is_modified)
+
+    def test_reopening_does_not_ask_again(self):
+        path = self._open_without_sidecar(apply=True)
+        self.modals.shown.clear()
+        self.win._load(path)
+        self.assertEqual(self.modals.titles("initial_meta"), [])
+
+    def test_no_question_for_an_untranslated_file(self):
+        self._open_without_sidecar({"Save": "Save", "Open": "Open"})
+        self.assertEqual(self.modals.titles("initial_meta"), [])
+
+    def test_no_sidecar_for_an_untranslated_file(self):
+        path = self._open_without_sidecar({"Save": "Save", "Open": "Open"})
+        self.assertFalse(jte.meta_path_for(path).exists())
+
+    def test_no_question_when_a_sidecar_exists(self):
+        self.load(MIXED, meta={})
+        self.assertEqual(self.modals.titles("initial_meta"), [])
+
+    def test_no_question_when_the_sidecar_is_damaged(self):
+        path = cs.write_pair(cs.temp_dir(), "es", MIXED)
+        cs.write_exact(jte.meta_path_for(path), b"{")
+        self.win._load(path)
+        self.assertEqual(self.modals.titles("initial_meta"), [])
+
+    def test_message_names_the_count_and_status(self):
+        self._open_without_sidecar(apply=True)
+        self.assertIn(("Metadata: created es.json.meta — 2 strings set (Complete)", "info"),
+                      self._messages())
+
+    def test_message_names_every_applied_option(self):
+        self._open_without_sidecar(apply=True, status="Review", translator="Unknown",
+                                   date=jte.QDate(2026, 10, 4))
+        shown = jte.format_date_for_storage(MARK_DATE)
+        self.assertIn((f"Metadata: created es.json.meta — 2 strings set "
+                       f"(Review, translator Unknown, {shown})", "info"), self._messages())
+
+    def test_message_for_skip(self):
+        self._open_without_sidecar()
+        self.assertIn(("Metadata: created es.json.meta — all strings New", "info"), self._messages())
+
+    def test_no_question_while_closing(self):
+        self.win._is_closing = True
+        self.addCleanup(setattr, self.win, "_is_closing", False)
+        self._open_without_sidecar()
+        self.assertEqual(self.modals.titles("initial_meta"), [])
+
+    def _open_with_failing_write(self) -> Path:
+        with mock.patch.object(jte, "_atomic_write_bytes", side_effect=OSError("disk full")):
+            return self._open_without_sidecar(apply=True)
+
+    def test_failed_write_marks_the_file_modified(self):
+        self._open_with_failing_write()
+        self.assertTrue(self.win.is_modified)
+
+    def test_failed_write_is_an_error_message(self):
+        self._open_with_failing_write()
+        self.assertIn(("Metadata: es.json.meta could not be created — Save to retry", "error"),
+                      self._messages())
+
+    def test_save_after_a_failed_write_stores_the_statuses(self):
+        path = self._open_with_failing_write()
+        self.win._save()
+        self.assertEqual(set(_sidecar_entries(path)), {"Save", "Open"})
+
+    def test_save_after_a_failed_write_keeps_the_file_intact(self):
+        path = self._open_with_failing_write()
+        self.win._save()
+        cs.assert_json_intact(self, path, list(MIXED))
+
+
+class InitialSidecarStartupTests(unittest.TestCase):
+    """A file given on the command line is loaded before the window is shown (main()): the question
+    must wait for the startup prompts (settings recovery, translator name), which come first."""
+
+    def _startup(self, load) -> List[str]:
+        """Build the window the way main() does with a file argument: *load(win)* before show().
+        The translator prompt spins a real nested event loop, as the real dialog's exec() does; that
+        loop is what ran an earlier zero-delay timer while the prompt was still open."""
+        order: List[str] = []
+
+        def ask(win):
+            order.append("translator open")
+            loop = QEventLoop()
+            QTimer.singleShot(50, loop.quit)
+            loop.exec()
+            order.append("translator closed")
+
+        def initial_meta(dlg):
+            order.append("initial meta")
+            dlg.done(QDialog.Rejected)
+            return QDialog.Rejected
+
+        settings_path = cs.temp_dir() / "json_translation_editor_settings.json"
+        with cs.patched_modals(), mock.patch.object(jte, "SETTINGS_FILE", settings_path),                 mock.patch.object(jte.MainWindow, "_ask_translator_name", ask),                 mock.patch.object(jte.InitialMetadataDialog, "exec", initial_meta):
+            win = jte.MainWindow()
+            win.settings.data.setdefault("backup", {})["enabled"] = False
+            load(win)
+            win.show()
+            cs.pump(10)
+            win.is_modified = False
+            win.close()
+            cs.pump()
+        return order
+
+    def test_question_comes_after_the_startup_prompts(self):
+        path = cs.write_pair(cs.temp_dir(), "es", MIXED)
+        self.assertEqual(self._startup(lambda win: win._load(path)),
+                         ["translator open", "translator closed", "initial meta"])
+
+    def test_no_question_for_a_file_no_longer_open(self):
+        first = cs.write_pair(cs.temp_dir(), "es", MIXED)
+        second = cs.write_pair(cs.temp_dir(), "it", MIXED, meta={})
+        order = self._startup(lambda win: (win._load(first), win._load(second)))
+        self.assertNotIn("initial meta", order)
+
+
+class InitialMetadataDialogTests(WindowTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dlg = jte.InitialMetadataDialog("es.json", 2, 3, parent=self.win)
+
+    def tearDown(self):
+        self.dlg.close()
+        cs.pump()
+
+    def test_only_status_starts_ticked(self):
+        self.assertEqual((self.dlg._status_chk.isChecked(), self.dlg._translator_chk.isChecked(),
+                          self.dlg._date_chk.isChecked()), (True, False, False))
+
+    def test_status_defaults_to_complete(self):
+        self.assertEqual(self.dlg._status_combo.currentText(), "Complete")
+
+    def test_status_offers_every_status(self):
+        combo = self.dlg._status_combo
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())], jte.STATUSES)
+
+    def test_status_combo_widens_its_popup(self):
+        self.assertIsInstance(self.dlg._status_combo, jte._WidePopupComboBox)
+
+    def test_translator_defaults_to_unknown(self):
+        self.assertEqual(self.dlg._translator_edit.text(), "Unknown")
+
+    def test_date_defaults_to_today(self):
+        self.assertEqual(self.dlg._date_field.date(), jte.QDate.currentDate())
+
+    def test_fields_follow_their_check_boxes(self):
+        boxes = (self.dlg._status_chk, self.dlg._translator_chk, self.dlg._date_chk)
+        fields = (self.dlg._status_combo, self.dlg._translator_edit, self.dlg._date_field)
+        before = [f.isEnabled() for f in fields]
+        for box in boxes:
+            box.toggle()
+        after = [f.isEnabled() for f in fields]
+        self.assertEqual((before, after), ([True, False, False], [False, True, True]))
+
+    def test_default_apply_gives_complete_only(self):
+        self.dlg.done(QDialog.Accepted)
+        self.assertEqual((self.dlg.status(), self.dlg.translator(), self.dlg.modify_date()),
+                         ("Complete", "", ""))
+
+    def test_ticked_options_give_their_values(self):
+        self.dlg._status_combo.setCurrentText("Review")
+        self.dlg._translator_chk.setChecked(True)
+        self.dlg._date_chk.setChecked(True)
+        self.dlg._date_field.setDate(jte.QDate(2026, 10, 4))
+        self.dlg.done(QDialog.Accepted)
+        self.assertEqual((self.dlg.status(), self.dlg.translator(), self.dlg.modify_date()),
+                         ("Review", "Unknown", jte.format_date_for_storage(MARK_DATE)))
+
+    def test_unticked_status_gives_none(self):
+        self.dlg._status_chk.setChecked(False)
+        self.dlg.done(QDialog.Accepted)
+        self.assertEqual(self.dlg.status(), "")
+
+    def test_blank_translator_means_none(self):
+        self.dlg._translator_chk.setChecked(True)
+        self.dlg._translator_edit.setText("   ")
+        self.dlg.done(QDialog.Accepted)
+        self.assertEqual(self.dlg.translator(), "")
+
+    def test_skip_gives_nothing(self):
+        self.dlg._translator_chk.setChecked(True)
+        self.dlg.done(QDialog.Rejected)
+        self.assertEqual((self.dlg.status(), self.dlg.translator(), self.dlg.modify_date()),
+                         ("", "", ""))
+
+    def test_escape_skips(self):
+        self.dlg.show()
+        cs.pump()
+        QTest.keyClick(self.dlg, Qt.Key_Escape)
+        self.assertEqual(self.dlg.status(), "")
+
+    def test_message_names_the_counts(self):
+        self.assertIn("2 of 3 strings", self.dlg._intro.text())
+
+    def test_intro_wraps_rather_than_widening_the_window(self):
+        self.dlg.show()
+        cs.pump()
+        one_line = self.dlg._intro.fontMetrics().horizontalAdvance(self.dlg._intro.text())
+        self.assertLess(self.dlg.width(), one_line)
+
+    def test_fields_share_one_width(self):
+        self.dlg.show()
+        cs.pump()
+        widths = {f.width() for f in (self.dlg._status_combo, self.dlg._translator_edit,
+                                      self.dlg._date_field)}
+        self.assertEqual(len(widths), 1)
 
 
 MULTILINE_SOURCE = ("Line one of the source.\n\nLine three of the source.\nLine four of the source.\n"
@@ -297,9 +570,10 @@ class CloseFileTests(WindowTestCase):
 class SaveTests(WindowTestCase):
     def _save_with_sidecar_blocked(self) -> Path:
         """Load, edit, make the sidecar path a folder (so its write fails) and Save."""
-        path = self.load(meta=None)
+        path = self.load()
         self.win.entries[0].text = "Changed"
         self.win.is_modified = True
+        jte.meta_path_for(path).unlink()
         jte.meta_path_for(path).mkdir()
         self.win._save()
         return path
@@ -947,9 +1221,10 @@ class AutosaveTests(WindowTestCase):
         self.assertFalse(self.win.is_modified)
 
     def _autosave_with_sidecar_blocked(self) -> Path:
-        path = self.load(meta=None)
+        path = self.load()
         self.win.entries[0].text = "Changed"
         self.win.is_modified = True
+        jte.meta_path_for(path).unlink()
         jte.meta_path_for(path).mkdir()
         self.win._autosave_tick()
         return path

@@ -100,7 +100,11 @@ The dynamic zone has a fixed minimum width so the Language and Version labels st
 
 #### Opening a file
 
-Use **File → Open…** (`Ctrl+O`) or pass the file path as a command-line argument. The file must be one flat JSON object of text (see [File Formats](#file-formats)); anything else is refused with a message naming the problem, and nothing opens. Status, translator and date are read from `<name>.json.meta` beside it; with no such file every string starts as `New`. The language code (from the `.json.meta`, or guessed from the file name — `pt-BR.json` is `pt-BR`) is used as the target language for auto-translation; the language name and version are displayed in the info bar. A [backup](#backup) is created automatically when a file is opened, unless one was already taken for that file within the last few minutes.
+Use **File → Open…** (`Ctrl+O`) or pass the file path as a command-line argument. The file must be one flat JSON object of text (see [File Formats](#file-formats)); anything else is refused with a message naming the problem, and nothing opens. Status, translator and date are read from `<name>.json.meta` beside it; with no such file every string starts as `New`.
+
+When a file has no `.json.meta` but some of its strings are already translated (their text differs from the source), the app asks **Mark Translated Strings** what to set on those strings (the untranslated ones always stay `New`). Each of three options has its own tick box: **Status** (`New`, `Review` or `Complete`; ticked, with `Complete`, to begin with), **Translator** (filled in with `Unknown`, change it as you like) and **Date** (today, or pick another). Translator and Date start unticked, so by default only the status is set. **Apply** sets the ticked options; **Skip** (or Escape) leaves every string `New`. Whichever button you press, the `.json.meta` is created at once and the info bar says so, e.g. "Metadata: created es.json.meta — 812 strings set (Complete)", so the file is asked about only once. The JSON file itself is not touched and the file opens without unsaved changes. If the `.json.meta` cannot be written, a red message says so and the file is marked as modified, so your next Save writes it. A file whose strings are all untranslated opens without the question, as do files whose `.json.meta` is damaged or locked.
+
+The language code (from the `.json.meta`, or guessed from the file name — `pt-BR.json` is `pt-BR`) is used as the target language for auto-translation; the language name and version are displayed in the info bar. A [backup](#backup) is created automatically when a file is opened, unless one was already taken for that file within the last few minutes.
 
 #### Saving
 
@@ -660,7 +664,7 @@ Status pill colours adapt per theme (every text and background pair meets WCAG A
 
 The application reads the **Windows regional short date format** from system settings (Control Panel → Region → Short date) and uses it everywhere: the table, the Edit window date picker, the filter panel date range pickers, and dates stamped on save.
 
-In the `.json.meta` file dates are stored in the fixed ISO form `YYYY-MM-DD`, so the file means the same on every machine; the app converts them to your regional format on open and back to ISO on save. Opening a file never changes it or marks it as having unsaved changes.
+In the `.json.meta` file dates are stored in the fixed ISO form `YYYY-MM-DD`, so the file means the same on every machine; the app converts them to your regional format on open and back to ISO on save. Opening a file never changes it or marks it as having unsaved changes (the one file it can create is a missing `.json.meta`; see [Opening a file](#opening-a-file)).
 
 A date in the `.json.meta` that is not ISO (for example, edited by hand) is shown exactly as stored, counted in one amber "Metadata: N unrecognized date(s)" message, and written back unchanged unless you edit that entry's date. For the date-range filter, an entry whose date cannot be read is never filtered out. Slash-separated dates that could be either day-first or month-first are resolved using *this machine's own* convention.
 
@@ -845,7 +849,7 @@ JSON cannot hold a status, translator or date without changing what your program
 | `translator` | Name of the last editor or translation engine |
 | `modified` | Last modification date, `YYYY-MM-DD` |
 
-With no `.json.meta`, every string is `New`. A `.json.meta` is written on every successful save, even when it holds only the header. Entries listed for keys that are no longer in the language file are dropped on the next save, with a warning when the file opens.
+With no `.json.meta`, every string is `New` (when some strings are translated, opening the file offers to mark them Complete and creates the `.json.meta`; see [Opening a file](#opening-a-file)). A `.json.meta` is written on every successful save, even when it holds only the header. Entries listed for keys that are no longer in the language file are dropped on the next save, with a warning when the file opens.
 
 ---
 
